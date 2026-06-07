@@ -108,6 +108,7 @@
               filterable
               size="small"
               class="nav-ai-route-select"
+              @change="() => scheduleProjectSettingsSave(false)"
               @visible-change="(visible) => onAiRouteSelectVisible(visible)"
             >
               <el-option label="自动" value="" />
@@ -225,13 +226,13 @@
                   class="story-textarea"
                 />
                 <div class="row gap" style="margin-top: 10px; flex-wrap: wrap;">
-                  <el-select v-model="storyStyle" placeholder="故事风格" clearable style="width: 120px" @change="() => saveProjectSettings(false)">
+                  <el-select v-model="storyStyle" placeholder="故事风格" clearable style="width: 120px" @change="() => scheduleProjectSettingsSave(false)">
                     <el-option label="现代" value="modern" />
                     <el-option label="古风" value="ancient" />
                     <el-option label="奇幻" value="fantasy" />
                     <el-option label="日常" value="daily" />
                   </el-select>
-                  <el-select v-model="storyType" placeholder="剧本类型" clearable style="width: 120px" @change="() => saveProjectSettings(false)">
+                  <el-select v-model="storyType" placeholder="剧本类型" clearable style="width: 120px" @change="() => scheduleProjectSettingsSave(false)">
                     <el-option label="剧情" value="drama" />
                     <el-option label="喜剧" value="comedy" />
                     <el-option label="冒险" value="adventure" />
@@ -386,7 +387,7 @@
           <span class="settings-block-title">项目整体设置</span>
           <label class="project-setting-field">
             <span>项目画幅</span>
-            <el-select v-model="projectAspectRatio" style="width: 130px" @change="() => saveProjectSettings(false)">
+            <el-select v-model="projectAspectRatio" style="width: 130px" @change="() => scheduleProjectSettingsSave(false)">
               <el-option label="16:9 横屏" value="16:9" />
               <el-option label="9:16 竖屏" value="9:16" />
               <el-option label="3:4 竖版" value="3:4" />
@@ -397,7 +398,7 @@
           </label>
           <label class="project-setting-field">
             <span>默认每段时长</span>
-            <el-select v-model="videoClipDuration" style="width: 110px" @change="() => saveProjectSettings(false)">
+            <el-select v-model="videoClipDuration" style="width: 110px" @change="() => scheduleProjectSettingsSave(false)">
               <el-option label="4秒/段" :value="4" />
               <el-option label="5秒/段" :value="5" />
               <el-option label="8秒/段" :value="8" />
@@ -408,7 +409,7 @@
           </label>
           <label class="project-setting-field">
             <span>默认语言</span>
-            <el-select v-model="scriptLanguage" placeholder="默认语言" style="width: 105px" @change="() => saveProjectSettings(false)">
+            <el-select v-model="scriptLanguage" placeholder="默认语言" style="width: 105px" @change="() => scheduleProjectSettingsSave(false)">
               <el-option label="中文" value="zh" />
               <el-option label="英文" value="en" />
             </el-select>
@@ -418,7 +419,7 @@
             <StylePickerButton
               v-model="generationStyle"
               :options="generationStyleOptions"
-              @change="() => saveProjectSettings(true)"
+              @change="() => scheduleProjectSettingsSave(true)"
             />
           </label>
         </div>
@@ -861,10 +862,10 @@
                 <el-input-number v-model="videoDuration" :min="10" :max="600" :step="5" placeholder="自动" class="sb-config-input" />
                 <span class="sb-config-hint sb-config-hint--estimate" :title="scriptEstimateVideoDurationTitle">自动{{ scriptEstimateVideoDurationHint }}</span>
               </label>
-              <el-checkbox v-model="storyboardUniversalOmni" @change="() => saveProjectSettings(false)">
+              <el-checkbox v-model="storyboardUniversalOmni" @change="() => scheduleProjectSettingsSave(false)">
                 全能分镜模式
               </el-checkbox>
-              <el-checkbox v-model="storyboardIncludeNarration" @change="() => saveProjectSettings(false)">
+              <el-checkbox v-model="storyboardIncludeNarration" @change="() => scheduleProjectSettingsSave(false)">
                 生成解说旁白
               </el-checkbox>
             </div>
@@ -2756,6 +2757,53 @@ const selectedAiConfigIds = reactive({
   video: '',
   tts: '',
 })
+const AI_ROUTE_METADATA_KEY = 'ai_route_config_ids'
+const PROJECT_SETTINGS_SAVE_DELAY_MS = 500
+let projectSettingsHydrating = false
+let projectSettingsSaveTimer = null
+let pendingProjectStyleSave = false
+
+function normalizeAiRouteId(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? String(Math.trunc(n)) : ''
+}
+
+function projectAiRouteSelectionForSave() {
+  return Object.fromEntries(
+    aiRouteTypes.map(({ key }) => [key, normalizeAiRouteId(selectedAiConfigIds[key])])
+  )
+}
+
+function applyProjectAiRouteSelection(metadata = {}) {
+  const saved =
+    metadata?.[AI_ROUTE_METADATA_KEY] ||
+    metadata?.ai_routes ||
+    metadata?.ai_config_ids ||
+    {}
+  aiRouteTypes.forEach(({ key }) => {
+    selectedAiConfigIds[key] = normalizeAiRouteId(saved?.[key])
+  })
+}
+
+function scheduleProjectSettingsSave(includeGenerationStyle = false) {
+  if (projectSettingsHydrating || !store.dramaId) return
+  pendingProjectStyleSave = pendingProjectStyleSave || !!includeGenerationStyle
+  if (projectSettingsSaveTimer) clearTimeout(projectSettingsSaveTimer)
+  projectSettingsSaveTimer = setTimeout(() => {
+    projectSettingsSaveTimer = null
+    const shouldSaveStyle = pendingProjectStyleSave
+    pendingProjectStyleSave = false
+    saveProjectSettings(shouldSaveStyle)
+  }, PROJECT_SETTINGS_SAVE_DELAY_MS)
+}
+
+function clearPendingProjectSettingsSave() {
+  if (projectSettingsSaveTimer) {
+    clearTimeout(projectSettingsSaveTimer)
+    projectSettingsSaveTimer = null
+  }
+  pendingProjectStyleSave = false
+}
 
 function configOptionLabel(cfg) {
   const name = cfg?.name || cfg?.provider || '未命名配置'
@@ -3683,7 +3731,7 @@ function onStoryboardUseFirstLastFrameChange() {
     gridMode.value = 'single'
     ElMessage.info('首尾帧模式已开启，序列图已切换为单张')
   }
-  saveProjectSettings(false)
+  scheduleProjectSettingsSave(false)
 }
 
 function uploadingSbImageSlot(sbId) {
@@ -4668,20 +4716,28 @@ async function loadDrama({ force = false } = {}) {
     let d = await dramaAPI.get(store.dramaId)
     d = await backfillDramaStylePromptMetadataIfNeeded(dramaAPI, store.dramaId, d)
     store.setDrama(d)
-    // 恢复「故事生成」框的梗概（项目 description 存的是故事梗概）
-    storyInput.value = (d.description || '').toString().trim()
-    storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
-    storyType.value = d.genre || ''
-    generationStyle.value = d.style || ''
-    projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
-    videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
-    scriptLanguage.value = (d.metadata && d.metadata.script_language) ? d.metadata.script_language : 'zh'
-    storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
-    storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
-    storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
-    lastFrameUseFirstLayoutLock.value = d.metadata?.last_frame_use_first_layout_lock !== false
-    if (storyboardUseFirstLastFrame.value && gridMode.value !== 'single') {
-      gridMode.value = 'single'
+    projectSettingsHydrating = true
+    try {
+      // 恢复「故事生成」框的梗概（项目 description 存的是故事梗概）和项目级生成设置
+      storyInput.value = (d.description || '').toString().trim()
+      storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
+      storyType.value = d.genre || ''
+      generationStyle.value = d.style || ''
+      projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
+      videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
+      scriptLanguage.value = (d.metadata && d.metadata.script_language) ? d.metadata.script_language : 'zh'
+      storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
+      storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
+      storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
+      lastFrameUseFirstLayoutLock.value = d.metadata?.last_frame_use_first_layout_lock !== false
+      applyProjectAiRouteSelection(d.metadata || {})
+      if (storyboardUseFirstLastFrame.value && gridMode.value !== 'single') {
+        gridMode.value = 'single'
+      }
+    } finally {
+      nextTick(() => {
+        projectSettingsHydrating = false
+      })
     }
     const list = d.episodes || []
     // 优先保持当前选中的集（按 id 在最新列表中查找），避免 AI 生成角色等操作后误切到其他集
@@ -4821,7 +4877,7 @@ async function onStoryboardCharacterChange(sbId) {
 }
 
 function onLastFrameLayoutLockChange() {
-  saveProjectSettings()
+  scheduleProjectSettingsSave(false)
 }
 
 function onStoryboardSceneChange(sbId) {
@@ -4985,6 +5041,7 @@ async function saveScriptToBackend(content) {
       style: generationStyle.value || undefined,
       metadata: {
         ...projectStylePromptMetadata(),
+        [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
         video_clip_duration: videoClipDuration.value || 5,
@@ -5025,6 +5082,7 @@ async function saveScriptToBackend(content) {
         style: generationStyle.value || undefined,
         metadata: {
           ...projectStylePromptMetadata(),
+          [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
           story_style: storyStyle.value || undefined,
           aspect_ratio: projectAspectRatio.value || '16:9',
           video_clip_duration: videoClipDuration.value || 5,
@@ -5065,6 +5123,7 @@ async function saveScriptToBackend(content) {
       style: generationStyle.value || undefined,
       metadata: {
         ...projectStylePromptMetadata(),
+        [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
         video_clip_duration: videoClipDuration.value || 5,
@@ -5083,6 +5142,7 @@ async function saveScriptToBackend(content) {
 async function saveProjectSettings(includeGenerationStyle = false) {
   if (!store.dramaId) return
   const metadata = {
+    [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
     story_style: storyStyle.value || undefined,
     aspect_ratio: projectAspectRatio.value || '16:9',
     video_clip_duration: videoClipDuration.value || 5,
@@ -8145,9 +8205,11 @@ async function runRepairPipeline() {
 
 
 onBeforeUnmount(() => {
+  clearPendingProjectSettingsSave()
 })
 
 function applyRouteToStore() {
+  clearPendingProjectSettingsSave()
   const id = route.params.id
   if (id && id !== 'new') {
     store.setDrama({ id: Number(id) })
@@ -8166,6 +8228,7 @@ function applyRouteToStore() {
     scriptLanguage.value = 'zh'
     scriptStoryboardStyle.value = ''
     generationStyle.value = ''
+    applyProjectAiRouteSelection({})
   }
 }
 
@@ -8209,6 +8272,31 @@ watch(
       onEpisodeSelect(newVal)
     }
   }
+)
+
+watch(
+  () => [
+    storyStyle.value,
+    storyType.value,
+    projectAspectRatio.value,
+    videoClipDuration.value,
+    scriptLanguage.value,
+    storyboardIncludeNarration.value,
+    storyboardUniversalOmni.value,
+    storyboardUseFirstLastFrame.value,
+    lastFrameUseFirstLayoutLock.value,
+  ],
+  () => scheduleProjectSettingsSave(false)
+)
+
+watch(
+  () => generationStyle.value,
+  () => scheduleProjectSettingsSave(true)
+)
+
+watch(
+  () => aiRouteTypes.map(({ key }) => selectedAiConfigIds[key]).join('|'),
+  () => scheduleProjectSettingsSave(false)
 )
 </script>
 

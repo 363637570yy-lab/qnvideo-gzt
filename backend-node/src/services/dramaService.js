@@ -519,7 +519,8 @@ function saveOutline(db, log, dramaId, req) {
   const drama = getDramaById(db, Number(dramaId));
   if (!drama) return false;
   const now = new Date().toISOString();
-  const tagsStr = Array.isArray(req.tags) ? JSON.stringify(req.tags) : null;
+  const hasTags = Object.prototype.hasOwnProperty.call(req, 'tags');
+  const tagsStr = hasTags ? (Array.isArray(req.tags) ? JSON.stringify(req.tags) : null) : drama.tags;
   // Merge new metadata with existing metadata
   let existingMetadata = {};
   if (drama.metadata) {

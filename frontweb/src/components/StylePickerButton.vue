@@ -54,13 +54,13 @@
             >
               <div class="spd-thumb" :style="thumbStyle(opt)">
                 <img
-                  v-if="opt.thumb"
+                  v-if="hasThumb(opt)"
                   :src="opt.thumb"
                   :alt="opt.label"
                   loading="lazy"
-                  @error="(e) => e.target.style.display = 'none'"
+                  @error="() => markThumbFailed(opt)"
                 />
-                <span v-if="!opt.thumb" class="spd-thumb-text">{{ opt.label.slice(0, 2) }}</span>
+                <span v-if="!hasThumb(opt)" class="spd-thumb-text">{{ opt.label.slice(0, 2) }}</span>
               </div>
               <div class="spd-name">{{ opt.label }}</div>
               <div v-if="modelValue === opt.value" class="spd-check">✓</div>
@@ -92,6 +92,7 @@ const emit = defineEmits(['update:modelValue', 'change'])
 
 const visible = ref(false)
 const search = ref('')
+const failedThumbs = ref(new Set())
 
 const allOptions = computed(() => props.options.flatMap((g) => g.options))
 const selectedOption = computed(() => allOptions.value.find((o) => o.value === props.modelValue) || null)
@@ -104,8 +105,17 @@ const filteredGroups = computed(() => {
     .filter((g) => g.options.length > 0)
 })
 
+function hasThumb(opt) {
+  return !!(opt?.thumb && !failedThumbs.value.has(opt.thumb))
+}
+
+function markThumbFailed(opt) {
+  if (!opt?.thumb) return
+  failedThumbs.value = new Set([...failedThumbs.value, opt.thumb])
+}
+
 function thumbStyle(opt) {
-  if (opt.thumb) return {}
+  if (hasThumb(opt)) return {}
   return { background: opt.color || 'linear-gradient(135deg,#667eea,#764ba2)' }
 }
 
