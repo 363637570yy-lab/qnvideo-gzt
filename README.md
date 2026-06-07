@@ -59,6 +59,7 @@
 - Docker 24+ 和 Docker Compose v2。
 - PostgreSQL 14+。账号、角色、权限和项目归属映射需要 PostgreSQL。
 - 如需本地开发，建议使用 Node.js 20；最低要求 Node.js 18。
+- Docker 部署会在后端镜像内安装 FFmpeg；本地开发如需合成视频，请先把 FFmpeg 安装到系统 PATH，或设置 `FFMPEG_PATH` / `FFPROBE_PATH`。
 - 如需调用国外 AI 服务商，可在 `.env` 中配置 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`；不需要代理时留空即可。
 
 ## Docker 部署
