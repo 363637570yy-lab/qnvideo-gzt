@@ -438,7 +438,7 @@ function recordConfigFailure(db, configId, err) {
 
 /**
  * 测试连接：与 Go AIService.TestConnection 对齐，根据 provider 发最小请求验证 base_url + api_key
- * @param opts { base_url, api_key, model (string|string[]), provider?, endpoint?, settings? }
+ * @param opts { base_url, api_key, model (string|string[]), default_model?, provider?, endpoint?, settings? }
  * @returns Promise<void> 成功 resolve，失败 reject(error)
  */
 async function testConnection(opts) {
@@ -446,7 +446,8 @@ async function testConnection(opts) {
   if (!base) throw new Error('base_url 必填');
   if (!opts.api_key) throw new Error('api_key 必填');
   const models = Array.isArray(opts.model) ? opts.model : opts.model != null ? [opts.model] : [];
-  const model = models[0] || '';
+  const defaultModel = String(opts.default_model || '').trim();
+  const model = defaultModel || models[0] || '';
   if (!model && (opts.provider === 'gemini' || opts.provider === 'google')) throw new Error('model 必填');
   const provider = (opts.provider || 'openai').toLowerCase();
   const serviceType = (opts.service_type || '').toLowerCase();

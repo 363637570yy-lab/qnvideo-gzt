@@ -1972,7 +1972,8 @@ async function openTest(row) {
     await aiAPI.testConnection({
       base_url: row.base_url,
       api_key: row.api_key,
-      model: Array.isArray(row.model) ? row.model[0] : row.model,
+      model: row.default_model || (Array.isArray(row.model) ? row.model[0] : row.model),
+      default_model: row.default_model,
       provider: row.provider,
       endpoint: row.endpoint,
       service_type: row.service_type,

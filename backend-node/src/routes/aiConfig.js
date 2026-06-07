@@ -135,6 +135,7 @@ function testConnection(log) {
         base_url: body.base_url,
         api_key: body.api_key,
         model: body.model,
+        default_model: body.default_model,
         provider: body.provider,
         endpoint: body.endpoint,
         service_type: body.service_type,
