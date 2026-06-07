@@ -7,4 +7,9 @@ export const taskAPI = {
   listByResource(resourceId) {
     return request.get('/tasks', { params: { resource_id: String(resourceId) } })
   },
+  listByResources(resourceIds) {
+    const ids = (resourceIds || []).map((id) => String(id)).filter(Boolean)
+    if (ids.length === 0) return Promise.resolve([])
+    return request.get('/tasks', { params: { resource_ids: ids.join(',') } })
+  },
 }

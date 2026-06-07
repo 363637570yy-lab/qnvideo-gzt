@@ -3,6 +3,14 @@ import { dramaAPI } from '@/api/drama'
 import { generationAPI } from '@/api/generation'
 import { stylePromptMetadataForSave } from '@/constants/styleOptions'
 
+const MAX_STORY_EPISODE_COUNT = 100
+
+function normalizeEpisodeCount(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 1
+  return Math.max(1, Math.min(MAX_STORY_EPISODE_COUNT, Math.trunc(n)))
+}
+
 /**
  * 从故事梗概调用 AI 生成多集剧本并写入 drama（与 FilmCreate.onGenerateStory 一致）
  * @returns {Promise<{ ok: boolean, dramaId?: number, episodeCount?: number, error?: string }>}
@@ -38,11 +46,12 @@ export async function runGenerateStoryFromPremise({
 
   storyGenerating.value = true
   try {
+    const episodeCount = normalizeEpisodeCount(storyEpisodeCount || 1)
     const res = await generationAPI.generateStory({
       premise: text,
       style: storyStyle || undefined,
       type: storyType || undefined,
-      episode_count: storyEpisodeCount || 1,
+      episode_count: episodeCount,
       ...aiConfigPayload,
     })
 

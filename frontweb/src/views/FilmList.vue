@@ -111,7 +111,7 @@
               <p v-if="isAdminUser" class="project-owner">创建人：{{ dramaCreatorLabel(d) }}</p>
               <div class="project-badges">
                 <span class="badge badge-status" :class="'badge-status--' + (d.status || 'draft')">{{ formatStatus(d.status) }}</span>
-                <span v-if="d.episodes?.length" class="badge badge-episodes">{{ d.episodes.length }} 集</span>
+                <span v-if="episodeCount(d) > 0" class="badge badge-episodes">{{ episodeCount(d) }} 集</span>
                 <span v-if="totalStoryboards(d) > 0" class="badge badge-storyboards">{{ totalStoryboards(d) }} 分镜</span>
                 <span v-if="d.metadata?.aspect_ratio" class="badge badge-ratio">{{ d.metadata.aspect_ratio }}</span>
                 <span v-if="d.style" class="badge badge-style">{{ formatStyle(d.style) }}</span>
@@ -784,7 +784,13 @@ function formatGenre(genre) {
 }
 
 function totalStoryboards(d) {
-  return (d.episodes || []).reduce((sum, ep) => sum + (ep.storyboards?.length || 0), 0)
+  if (d?.storyboard_count != null) return Number(d.storyboard_count) || 0
+  return (d.episodes || []).reduce((sum, ep) => sum + (ep.storyboard_count || ep.storyboards?.length || 0), 0)
+}
+
+function episodeCount(d) {
+  if (d?.episode_count != null) return Number(d.episode_count) || 0
+  return d?.episodes?.length || 0
 }
 
 function goNewProject() {

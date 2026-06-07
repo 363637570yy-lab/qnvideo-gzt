@@ -4,6 +4,23 @@ const promptI18n = require('./promptI18n');
 const { safeParseAIJSON } = require('../utils/safeJson');
 const loadConfig = require('../config').loadConfig;
 
+const MAX_STORY_EPISODE_COUNT = 100;
+const STORY_BATCH_EPISODE_COUNT = 10;
+
+function badRequest(message) {
+  const err = new Error(message);
+  err.statusCode = 400;
+  return err;
+}
+
+function parseEpisodeCount(value) {
+  const raw = value == null || value === '' ? 1 : Number(value);
+  if (!Number.isInteger(raw) || raw < 1 || raw > MAX_STORY_EPISODE_COUNT) {
+    throw badRequest(`生成集数必须是 1-${MAX_STORY_EPISODE_COUNT} 的整数`);
+  }
+  return raw;
+}
+
 async function generateStory(db, log, body) {
   const premise = (body.premise || body.prompt || body.text || '').trim();
   if (!premise) {
@@ -12,14 +29,74 @@ async function generateStory(db, log, body) {
   const cfg = loadConfig();
   const style = body.style || body.genre || null;
   const type = body.type || null;
-  const episodeCount = Math.max(1, Math.min(20, Number(body.episode_count) || 1));
+  const episodeCount = parseEpisodeCount(body.episode_count);
 
-  const systemPrompt = promptI18n.getStoryExpansionSystemPrompt(cfg, episodeCount);
-  const userPrompt = promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, episodeCount);
+  if (episodeCount <= STORY_BATCH_EPISODE_COUNT) {
+    return generateStoryBatch(db, log, {
+      cfg,
+      body,
+      premise,
+      style,
+      type,
+      startEpisode: 1,
+      batchCount: episodeCount,
+      totalEpisodeCount: episodeCount,
+      previousBrief: '',
+    });
+  }
+
+  const episodes = [];
+  for (let startEpisode = 1; startEpisode <= episodeCount; startEpisode += STORY_BATCH_EPISODE_COUNT) {
+    const batchCount = Math.min(STORY_BATCH_EPISODE_COUNT, episodeCount - startEpisode + 1);
+    const previousBrief = episodes
+      .slice(-3)
+      .map((ep) => `第${ep.episode}集《${ep.title}》：${String(ep.content || '').slice(0, 500)}`)
+      .join('\n');
+    const result = await generateStoryBatch(db, log, {
+      cfg,
+      body,
+      premise,
+      style,
+      type,
+      startEpisode,
+      batchCount,
+      totalEpisodeCount: episodeCount,
+      previousBrief,
+    });
+    episodes.push(...(result.episodes || []));
+  }
+  return {
+    episodes: episodes.slice(0, episodeCount),
+    requested_episode_count: episodeCount,
+  };
+}
+
+async function generateStoryBatch(db, log, opts) {
+  const {
+    cfg,
+    body,
+    premise,
+    style,
+    type,
+    startEpisode,
+    batchCount,
+    totalEpisodeCount,
+    previousBrief,
+  } = opts;
+
+  const endEpisode = startEpisode + batchCount - 1;
+  const systemPrompt = promptI18n.getStoryExpansionSystemPrompt(cfg, batchCount);
+  let userPrompt = promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, batchCount);
+  if (totalEpisodeCount > batchCount) {
+    userPrompt += `\n\n长剧本分批生成要求：整部剧共 ${totalEpisodeCount} 集，本次只生成第 ${startEpisode} 到第 ${endEpisode} 集。JSON 中 episode 字段必须使用真实集数编号（${startEpisode}-${endEpisode}），不要从 1 重新编号。`;
+    if (previousBrief) {
+      userPrompt += `\n\n前情摘要（保持连续性，不要重复生成）：\n${previousBrief}`;
+    }
+  }
 
   // 每集约 800 字（中文）≈ 1600 token，多留余量作为最低需求；
   // 不使用 max_tokens 硬上限，而是用 min_max_tokens 确保即使用户 AI 配置了小上限也能保证基本输出量。
-  const minTokensNeeded = Math.max(2000, episodeCount * 2200);
+  const minTokensNeeded = Math.max(2000, batchCount * 2200);
 
   // 注意：不使用 json_mode=true，因为 response_format:json_object 要求返回 JSON 对象而非数组，
   // 会导致模型将数组包成 {"episodes":[...]} 对象，破坏解析逻辑。依靠 prompt 本身约束格式即可。
@@ -33,7 +110,9 @@ async function generateStory(db, log, body) {
 
   log && log.info && log.info('Story raw response', {
     text_length: (rawText || '').length,
-    episode_count: episodeCount,
+    episode_count: batchCount,
+    start_episode: startEpisode,
+    total_episode_count: totalEpisodeCount,
     text_preview: (rawText || '').slice(0, 200),
   });
 
@@ -65,11 +144,17 @@ async function generateStory(db, log, body) {
   }
 
   if (episodeList && episodeList.length > 0) {
-    const result = episodeList.map((ep, i) => ({
-      episode: Number(ep.episode ?? i + 1),
-      title: (ep.title || `第${Number(ep.episode ?? i + 1)}集`).trim(),
-      content: (ep.content || ep.script || ep.text || ep.body || '').trim(),
-    })).filter(ep => ep.content.length > 0);
+    const result = episodeList.slice(0, batchCount).map((ep, i) => {
+      let epNumber = Number(ep.episode);
+      if (!Number.isInteger(epNumber) || epNumber < startEpisode || epNumber > endEpisode) {
+        epNumber = startEpisode + i;
+      }
+      return {
+        episode: epNumber,
+        title: (ep.title || `第${epNumber}集`).trim(),
+        content: (ep.content || ep.script || ep.text || ep.body || '').trim(),
+      };
+    }).filter(ep => ep.content.length > 0);
 
     if (result.length > 0) {
       log && log.info && log.info('Story episodes parsed', { count: result.length });
@@ -84,8 +169,8 @@ async function generateStory(db, log, body) {
   const fallbackContent = (rawText || '').trim();
   return {
     episodes: [{
-      episode: 1,
-      title: '第1集',
+      episode: startEpisode,
+      title: `第${startEpisode}集`,
       content: fallbackContent,
     }],
   };
@@ -93,4 +178,5 @@ async function generateStory(db, log, body) {
 
 module.exports = {
   generateStory,
+  MAX_STORY_EPISODE_COUNT,
 };

@@ -90,29 +90,35 @@
         </div>
       </div>
 
-      <div v-if="!navCollapsed" class="nav-ai-routes" v-loading="aiRouteLoading">
-        <div class="nav-ai-routes-title">本次生成模型</div>
-        <div
-          v-for="routeItem in aiRouteTypes"
-          :key="routeItem.key"
-          class="nav-ai-route-row"
-        >
-          <span class="nav-ai-route-label">{{ routeItem.label }}</span>
-          <el-select
-            v-model="selectedAiConfigIds[routeItem.key]"
-            placeholder="自动"
-            filterable
-            size="small"
-            class="nav-ai-route-select"
+      <div v-if="!navCollapsed" class="nav-ai-routes" :class="{ collapsed: !aiRoutesExpanded }">
+        <button type="button" class="nav-ai-routes-head" @click="toggleAiRoutesExpanded">
+          <span class="nav-ai-routes-title">本次生成模型</span>
+          <span class="nav-ai-routes-summary">{{ aiRouteSummary }}</span>
+        </button>
+        <div v-show="aiRoutesExpanded" class="nav-ai-routes-body" v-loading="aiRouteLoading">
+          <div
+            v-for="routeItem in aiRouteTypes"
+            :key="routeItem.key"
+            class="nav-ai-route-row"
           >
-            <el-option label="自动" value="" />
-            <el-option
-              v-for="cfg in runtimeAiConfigs[routeItem.key]"
-              :key="cfg.id"
-              :label="configOptionLabel(cfg)"
-              :value="String(cfg.id)"
-            />
-          </el-select>
+            <span class="nav-ai-route-label">{{ routeItem.label }}</span>
+            <el-select
+              v-model="selectedAiConfigIds[routeItem.key]"
+              placeholder="自动"
+              filterable
+              size="small"
+              class="nav-ai-route-select"
+              @visible-change="(visible) => onAiRouteSelectVisible(visible)"
+            >
+              <el-option label="自动" value="" />
+              <el-option
+                v-for="cfg in runtimeAiConfigs[routeItem.key]"
+                :key="cfg.id"
+                :label="configOptionLabel(cfg)"
+                :value="String(cfg.id)"
+              />
+            </el-select>
+          </div>
         </div>
       </div>
 
@@ -230,14 +236,20 @@
                     <el-option label="喜剧" value="comedy" />
                     <el-option label="冒险" value="adventure" />
                   </el-select>
-                  <el-select v-model="storyEpisodeCount" placeholder="生成集数" style="width: 120px">
-                    <el-option label="生成 1 集" :value="1" />
-                    <el-option label="生成 2 集" :value="2" />
-                    <el-option label="生成 3 集" :value="3" />
-                    <el-option label="生成 4 集" :value="4" />
-                    <el-option label="生成 5 集" :value="5" />
-                    <el-option label="生成 6 集" :value="6" />
-                  </el-select>
+                  <div class="story-episode-count">
+                    <span>生成</span>
+                    <el-input-number
+                      v-model="storyEpisodeCount"
+                      :min="1"
+                      :max="MAX_STORY_EPISODE_COUNT"
+                      :step="1"
+                      :precision="0"
+                      controls-position="right"
+                      aria-label="生成集数"
+                      @change="normalizeStoryEpisodeCount"
+                    />
+                    <span>集</span>
+                  </div>
                   <el-button type="primary" :loading="storyGenerating" @click="onGenerateStory">
                     生成剧本
                   </el-button>
@@ -2693,10 +2705,15 @@ const showAiConfigDialog = ref(false)
 watch(showAiConfigDialog, (open) => {
   if (!open) {
     invalidateActiveVideoAiConfigCache()
-    loadRuntimeAiConfigs()
+    if (aiRoutesLoaded.value) {
+      loadRuntimeAiConfigs(true)
+    }
   }
 })
+const MAX_STORY_EPISODE_COUNT = 100
 const aiRouteLoading = ref(false)
+const aiRoutesLoaded = ref(false)
+const aiRoutesExpanded = ref(false)
 const aiRouteTypes = [
   { key: 'text', label: '文本' },
   { key: 'image', label: '素材图' },
@@ -2726,6 +2743,11 @@ function configOptionLabel(cfg) {
   return `${name}${model ? ' · ' + model : ''}${status}`
 }
 
+const aiRouteSummary = computed(() => {
+  const selected = aiRouteTypes.filter(({ key }) => selectedAiConfigIds[key]).length
+  return selected > 0 ? `${selected}项指定` : '自动'
+})
+
 function aiRoutePayload(type, field = 'ai_config_id') {
   const id = Number(selectedAiConfigIds[type])
   if (!Number.isFinite(id) || id <= 0) return {}
@@ -2752,29 +2774,51 @@ function ttsAiPayload() {
   return aiRoutePayload('tts', 'tts_config_id')
 }
 
-async function loadRuntimeAiConfigs() {
+async function loadRuntimeAiConfigs(force = false) {
+  if (aiRoutesLoaded.value && !force) return
   aiRouteLoading.value = true
   try {
-    await Promise.all(aiRouteTypes.map(async ({ key }) => {
-      try {
-        const res = await aiAPI.runtimeList(key)
-        const rows = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : [])
-        runtimeAiConfigs[key] = rows
-        if (selectedAiConfigIds[key] && !rows.some((cfg) => String(cfg.id) === String(selectedAiConfigIds[key]))) {
-          selectedAiConfigIds[key] = ''
-        }
-      } catch (_) {
-        runtimeAiConfigs[key] = []
+    const res = await aiAPI.runtimeRoutes()
+    const groups = res?.options || res?.items || {}
+    aiRouteTypes.forEach(({ key }) => {
+      const rows = Array.isArray(groups[key]) ? groups[key] : []
+      runtimeAiConfigs[key] = rows
+      if (selectedAiConfigIds[key] && !rows.some((cfg) => String(cfg.id) === String(selectedAiConfigIds[key]))) {
+        selectedAiConfigIds[key] = ''
       }
-    }))
+    })
+    aiRoutesLoaded.value = true
+  } catch (_) {
+    aiRouteTypes.forEach(({ key }) => {
+      runtimeAiConfigs[key] = []
+    })
   } finally {
     aiRouteLoading.value = false
   }
 }
+
+function toggleAiRoutesExpanded() {
+  aiRoutesExpanded.value = !aiRoutesExpanded.value
+  if (aiRoutesExpanded.value) loadRuntimeAiConfigs()
+}
+
+function onAiRouteSelectVisible(visible) {
+  if (visible) loadRuntimeAiConfigs()
+}
+
 const storyInput = ref('')
 const storyStyle = ref('')
 const storyType = ref('')
 const storyEpisodeCount = ref(1)
+
+function normalizeStoryEpisodeCount() {
+  const n = Number(storyEpisodeCount.value)
+  if (!Number.isFinite(n)) {
+    storyEpisodeCount.value = 1
+    return
+  }
+  storyEpisodeCount.value = Math.max(1, Math.min(MAX_STORY_EPISODE_COUNT, Math.trunc(n)))
+}
 const storyGenerating = ref(false)
 /** 剧本工作台：create 创作 | select 选择预览 */
 const scriptWorkbenchMode = ref('create')
@@ -3806,34 +3850,61 @@ function getSbVideoError(storyboardId) {
   return failed[0].error_msg
 }
 
-async function loadStoryboardMedia() {
+let storyboardMediaPromise = null
+let storyboardMediaKey = ''
+
+function groupByStoryboardId(items) {
+  const map = {}
+  for (const item of items || []) {
+    const sid = item?.storyboard_id
+    if (sid == null) continue
+    if (!map[sid]) map[sid] = []
+    map[sid].push(item)
+  }
+  return map
+}
+
+async function loadStoryboardMedia({ force = false } = {}) {
   const boards = store.storyboards || []
   if (boards.length === 0) {
     sbImages.value = {}
     sbVideos.value = {}
     return
   }
-  const nextImages = { ...sbImages.value }
-  const nextVideos = { ...sbVideos.value }
-  await Promise.all(
-    boards.map(async (sb) => {
-      try {
-        const [imgRes, vidRes] = await Promise.all([
-          imagesAPI.list({ storyboard_id: sb.id, page: 1, page_size: 100 }),
-          videosAPI.list({ storyboard_id: sb.id, page: 1, page_size: 50 })
-        ])
-        nextImages[sb.id] = (imgRes && imgRes.items) ? imgRes.items : []
-        nextVideos[sb.id] = (vidRes && vidRes.items) ? vidRes.items : []
-      } catch (_) {
-        nextImages[sb.id] = []
-        nextVideos[sb.id] = []
+  const ids = boards.map((sb) => Number(sb.id)).filter((id) => Number.isFinite(id) && id > 0)
+  const key = ids.join(',')
+  if (!force && storyboardMediaPromise && storyboardMediaKey === key) return storyboardMediaPromise
+  storyboardMediaKey = key
+  storyboardMediaPromise = (async () => {
+    const nextImages = {}
+    const nextVideos = {}
+    for (const id of ids) {
+      nextImages[id] = []
+      nextVideos[id] = []
+    }
+    try {
+      const [imgRes, vidRes] = await Promise.all([
+        imagesAPI.list({ storyboard_ids: key, page: 1, page_size: 500 }),
+        videosAPI.list({ storyboard_ids: key, page: 1, page_size: 500 })
+      ])
+      const imgMap = groupByStoryboardId(imgRes?.items || [])
+      const vidMap = groupByStoryboardId(vidRes?.items || [])
+      for (const id of ids) {
+        nextImages[id] = imgMap[id] || []
+        nextVideos[id] = vidMap[id] || []
       }
-    })
-  )
-  sbImages.value = nextImages
-  sbVideos.value = nextVideos
-  // 从后端恢复主图选择
-  restoreSelectionsFromBackend()
+    } catch (_) {
+      // 保留空数组，避免单次媒体加载失败时旧数据误显示到新剧集。
+    }
+    if (storyboardMediaKey === key) {
+      sbImages.value = nextImages
+      sbVideos.value = nextVideos
+      restoreSelectionsFromBackend()
+    }
+  })()
+  return storyboardMediaPromise.finally(() => {
+    if (storyboardMediaKey === key) storyboardMediaPromise = null
+  })
 }
 
 function getGeneratingSetsBag() {
@@ -3864,33 +3935,42 @@ function buildSbGenMeta(sb, resourceType, labelPrefix) {
   }
 }
 
+const recoveringEpisodeTaskKeys = new Set()
+
 async function recoverAndSyncEpisodeTasks(epId) {
   const did = dramaId.value
   const eid = epId ?? currentEpisodeId.value
   if (!did || !eid) return
+  const key = `${did}:${eid}`
+  if (recoveringEpisodeTaskKeys.has(key)) return
+  recoveringEpisodeTaskKeys.add(key)
   const ctx = buildEpisodeContext(store, did, eid)
-  await genStore.recoverPendingForEpisode({
-    ...ctx,
-    ElMessage,
-    callbacks: {
-      onStoryboardMedia: (sbId) => loadSingleStoryboardMedia(sbId),
-      onDramaRefresh: () => loadDrama(),
-      onEpisodeMergeComplete: () => {
-        store.setVideoStatus('done', did, eid)
-        store.setVideoProgress(100, did, eid)
+  try {
+    await genStore.recoverPendingForEpisode({
+      ...ctx,
+      ElMessage,
+      callbacks: {
+        onStoryboardMedia: (sbId) => loadSingleStoryboardMedia(sbId),
+        onDramaRefresh: () => loadDrama(),
+        onEpisodeMergeComplete: () => {
+          store.setVideoStatus('done', did, eid)
+          store.setVideoProgress(100, did, eid)
+        },
+        onEpisodeMergeFailed: (err) => {
+          store.setVideoStatus('error', did, eid)
+          videoErrorMsg.value = err || '视频生成失败'
+        },
       },
-      onEpisodeMergeFailed: (err) => {
-        store.setVideoStatus('error', did, eid)
-        videoErrorMsg.value = err || '视频生成失败'
-      },
-    },
-  })
-  syncGeneratingSetsFromStore(genStore, did, eid, getGeneratingSetsBag())
-  const mergeRunning = genStore.getRunningForEpisode(did, eid).some(
-    (t) => t.resourceType === GEN_RESOURCE.EPISODE_MERGE
-  )
-  if (mergeRunning) {
-    store.setVideoStatus('generating', did, eid)
+    })
+    syncGeneratingSetsFromStore(genStore, did, eid, getGeneratingSetsBag())
+    const mergeRunning = genStore.getRunningForEpisode(did, eid).some(
+      (t) => t.resourceType === GEN_RESOURCE.EPISODE_MERGE
+    )
+    if (mergeRunning) {
+      store.setVideoStatus('generating', did, eid)
+    }
+  } finally {
+    recoveringEpisodeTaskKeys.delete(key)
   }
 }
 
@@ -4558,9 +4638,12 @@ function onEpisodeSelect(epId) {
   recoverAndSyncEpisodeTasks(epId)
 }
 
-async function loadDrama() {
+let loadDramaPromise = null
+
+async function loadDrama({ force = false } = {}) {
   if (!store.dramaId) return
-  try {
+  if (!force && loadDramaPromise) return loadDramaPromise
+  loadDramaPromise = (async () => {
     let d = await dramaAPI.get(store.dramaId)
     d = await backfillDramaStylePromptMetadataIfNeeded(dramaAPI, store.dramaId, d)
     store.setDrama(d)
@@ -4599,8 +4682,13 @@ async function loadDrama() {
     syncStoryboardStateFromEpisode(ep)
     await loadStoryboardMedia()
     await recoverAndSyncEpisodeTasks(ep?.id)
+  })()
+  try {
+    return await loadDramaPromise
   } catch (e) {
     ElMessage.error(e.message || '加载失败')
+  } finally {
+    loadDramaPromise = null
   }
 }
 
@@ -4990,6 +5078,7 @@ async function saveProjectSettings(includeGenerationStyle = false) {
 
 async function onGenerateStory() {
   trackFilmCreateAction('generate_script_click')
+  normalizeStoryEpisodeCount()
   await runGenerateStoryFromPremise({
     premise: storyInput.value,
     storyStyle: storyStyle.value,
@@ -8031,7 +8120,7 @@ function applyRouteToStore() {
     if (route.query.episode) {
       selectedEpisodeId.value = Number(route.query.episode)
     }
-    loadDrama()
+    loadDrama({ force: true })
   } else {
     store.reset()
     storyInput.value = ''
@@ -8048,7 +8137,6 @@ function applyRouteToStore() {
 
 onMounted(async () => {
   loadPipelineConcurrency()
-  loadRuntimeAiConfigs()
   applyRouteToStore()
 })
 
@@ -8545,24 +8633,48 @@ html.light .nav-step:hover { background: rgba(99,102,241,0.05); }
 
 .nav-ai-routes {
   margin: 8px 8px 6px;
-  padding: 8px;
+  padding: 6px 8px;
   border-top: 1px solid rgba(255,255,255,0.06);
   border-bottom: 1px solid rgba(255,255,255,0.04);
   background: rgba(255,255,255,0.025);
   border-radius: 8px;
+}
+.nav-ai-routes.collapsed {
+  padding-bottom: 6px;
 }
 html.light .nav-ai-routes {
   border-top-color: rgba(139, 92, 246, 0.12);
   border-bottom-color: rgba(139, 92, 246, 0.08);
   background: rgba(139, 92, 246, 0.035);
 }
+.nav-ai-routes-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
 .nav-ai-routes-title {
-  margin-bottom: 6px;
   font-size: 12px;
   font-weight: 700;
   color: #a78bfa;
 }
 html.light .nav-ai-routes-title { color: #6d28d9; }
+.nav-ai-routes-summary {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+html.light .nav-ai-routes-summary { color: #8b5cf6; }
+.nav-ai-routes-body {
+  min-height: 28px;
+  padding-top: 2px;
+}
 .nav-ai-route-row {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
@@ -9182,6 +9294,23 @@ html.light .resource-block-title {
 html.light .section-desc { color: #6b7280; }
 .story-textarea {
   margin-bottom: 12px;
+}
+.story-episode-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  color: #52525b;
+  font-size: 14px;
+}
+html.light .story-episode-count {
+  color: #4b5563;
+}
+.story-episode-count :deep(.el-input-number) {
+  width: 116px;
+}
+.story-episode-count :deep(.el-input__inner) {
+  text-align: center;
 }
 .row { display: flex; flex-wrap: wrap; align-items: center; }
 .gap { gap: 12px; }

@@ -1,7 +1,26 @@
-const { spawnSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { Worker } = require('worker_threads');
 
-const workerPath = path.join(__dirname, 'pgCompatWorker.js');
+const workerPath = path.join(__dirname, 'pgCompatThread.js');
+const queryTimeoutMs = Number(process.env.PG_COMPAT_QUERY_TIMEOUT_MS || 15000);
+let worker = null;
+let workerSeq = 0;
+
+function ensureWorker() {
+  if (worker) return worker;
+  worker = new Worker(workerPath, {
+    env: process.env,
+  });
+  worker.once('exit', () => {
+    worker = null;
+  });
+  worker.once('error', () => {
+    worker = null;
+  });
+  return worker;
+}
 
 const tablesWithSerialId = new Set([
   'dramas',
@@ -111,21 +130,37 @@ function transformSql(sql, mode) {
 }
 
 function runWorker(sql, params) {
-  const child = spawnSync(process.execPath, [workerPath], {
-    input: JSON.stringify({ sql, params }),
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-    env: process.env,
+  const activeWorker = ensureWorker();
+  const id = `${process.pid}_${Date.now()}_${++workerSeq}`;
+  const resultPath = path.join(os.tmpdir(), `qnvideo_pgcompat_${id}.json`);
+  const signalBuffer = new SharedArrayBuffer(4);
+  const signal = new Int32Array(signalBuffer);
+
+  activeWorker.postMessage({
+    id,
+    sql,
+    params,
+    resultPath,
+    signal,
   });
-  const raw = child.stdout || '';
+
+  const waitResult = Atomics.wait(signal, 0, 0, queryTimeoutMs);
+  if (waitResult === 'timed-out') {
+    throw new Error(`PG query timeout after ${queryTimeoutMs}ms`);
+  }
+
+  const raw = fs.existsSync(resultPath) ? fs.readFileSync(resultPath, 'utf8') : '';
+  try {
+    fs.unlinkSync(resultPath);
+  } catch (_) {}
   let payload = null;
   try {
     payload = raw ? JSON.parse(raw) : null;
   } catch (err) {
     throw new Error(`PG worker returned invalid JSON: ${raw.slice(0, 500)}`);
   }
-  if (child.status !== 0 || !payload?.ok) {
-    const msg = payload?.error || child.stderr || `PG worker failed with status ${child.status}`;
+  if (!payload?.ok) {
+    const msg = payload?.error || 'PG worker failed';
     throw new Error(msg);
   }
   return payload;

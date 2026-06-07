@@ -530,39 +530,45 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         break
       }
 
-      const attachResourceTask = (resourceId, resourceType, label) => {
-        return taskAPI.listByResource(String(resourceId)).then((tasks) => {
-          for (const t of tasks || []) {
-            if (!isActiveTaskStatus(t.status)) continue
-            const meta = {
-              dramaId,
-              episodeId,
-              dramaTitle,
-              episodeNumber,
-              resourceType,
-              resourceId: Number(resourceId),
-              label,
-              taskId: t.id,
-            }
-            _recoverAttachTask(t.id, meta, () => callbacks.onDramaRefresh?.(), pollOpts)
-          }
-        }).catch(() => {})
+      const resourceIds = [...new Set([...charIdSet, ...propIdSet, ...sceneIdSet].map((id) => String(id)))]
+      const resourceTasks = resourceIds.length
+        ? await taskAPI.listByResources(resourceIds).catch(() => [])
+        : []
+      const tasksByResource = new Map()
+      for (const t of resourceTasks || []) {
+        if (!isActiveTaskStatus(t.status)) continue
+        const key = String(t.resource_id)
+        const list = tasksByResource.get(key) || []
+        list.push(t)
+        tasksByResource.set(key, list)
       }
-
-      await Promise.all([
-        ...[...charIdSet].map((id) => {
-          const c = characters.find((x) => Number(x.id) === Number(id))
-          return attachResourceTask(id, GEN_RESOURCE.CHAR_IMAGE, `${epLabel} 角色图: ${c?.name || id}`)
-        }),
-        ...[...propIdSet].map((id) => {
-          const p = props.find((x) => Number(x.id) === Number(id))
-          return attachResourceTask(id, GEN_RESOURCE.PROP_IMAGE, `${epLabel} 道具图: ${p?.name || id}`)
-        }),
-        ...[...sceneIdSet].map((id) => {
-          const s = scenes.find((x) => Number(x.id) === Number(id))
-          return attachResourceTask(id, GEN_RESOURCE.SCENE_IMAGE, `${epLabel} 场景图: ${s?.location || id}`)
-        }),
-      ])
+      const attachResourceTasks = (resourceId, resourceType, label) => {
+        for (const t of tasksByResource.get(String(resourceId)) || []) {
+          const meta = {
+            dramaId,
+            episodeId,
+            dramaTitle,
+            episodeNumber,
+            resourceType,
+            resourceId: Number(resourceId),
+            label,
+            taskId: t.id,
+          }
+          _recoverAttachTask(t.id, meta, () => callbacks.onDramaRefresh?.(), pollOpts)
+        }
+      }
+      for (const id of charIdSet) {
+        const c = characters.find((x) => Number(x.id) === Number(id))
+        attachResourceTasks(id, GEN_RESOURCE.CHAR_IMAGE, `${epLabel} 角色图: ${c?.name || id}`)
+      }
+      for (const id of propIdSet) {
+        const p = props.find((x) => Number(x.id) === Number(id))
+        attachResourceTasks(id, GEN_RESOURCE.PROP_IMAGE, `${epLabel} 道具图: ${p?.name || id}`)
+      }
+      for (const id of sceneIdSet) {
+        const s = scenes.find((x) => Number(x.id) === Number(id))
+        attachResourceTasks(id, GEN_RESOURCE.SCENE_IMAGE, `${epLabel} 场景图: ${s?.location || id}`)
+      }
 
       await reconcileRunningTasks(reconcileAssets)
     } catch (e) {

@@ -22,6 +22,13 @@ function runtimeListPublic(db) {
   };
 }
 
+function runtimeRoutesPublic(db) {
+  return (req, res) => {
+    const routes = aiConfigService.getRuntimeModelRoutes(db);
+    response.success(res, routes);
+  };
+}
+
 function get(db) {
   return (req, res) => {
     const id = parseInt(req.params.id, 10);
@@ -201,6 +208,7 @@ module.exports = function aiConfigRoutes(db, log, cfg) {
     list: list(db),
     activePublic: activePublic(db),
     runtimeListPublic: runtimeListPublic(db),
+    runtimeRoutesPublic: runtimeRoutesPublic(db),
     get: get(db),
     vendorLock: vendorLock(cfg),
     create: create(db, log, cfg),

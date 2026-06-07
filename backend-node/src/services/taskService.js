@@ -25,6 +25,16 @@ function getTasksByResource(db, resourceId) {
   return rows.map(rowToTask);
 }
 
+function getTasksByResources(db, resourceIds) {
+  const ids = [...new Set((resourceIds || []).map((id) => String(id)).filter(Boolean))];
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT * FROM async_tasks WHERE resource_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY created_at DESC`
+  ).all(...ids);
+  return rows.map(rowToTask);
+}
+
 function updateTaskStatus(db, taskId, status, progress, message) {
   const now = new Date().toISOString();
   let completedAt = null;
@@ -78,6 +88,7 @@ module.exports = {
   createTask,
   getTask,
   getTasksByResource,
+  getTasksByResources,
   updateTaskStatus,
   updateTaskError,
   updateTaskResult,

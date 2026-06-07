@@ -231,12 +231,19 @@ function getStoryboardsForEpisode(db, episodeId) {
       'SELECT * FROM storyboards WHERE episode_id = ? AND deleted_at IS NULL ORDER BY storyboard_number ASC, id ASC'
     ).all(episodeId)
   );
+  const sceneIds = [...new Set(rows.map((r) => Number(r.scene_id)).filter((n) => Number.isFinite(n) && n > 0))];
+  const sceneMap = new Map();
+  if (sceneIds.length > 0) {
+    try {
+      const placeholders = sceneIds.map(() => '?').join(',');
+      const sceneRows = db.prepare(
+        `SELECT * FROM scenes WHERE id IN (${placeholders}) AND deleted_at IS NULL`
+      ).all(...sceneIds);
+      for (const row of sceneRows) sceneMap.set(Number(row.id), rowToScene(row));
+    } catch (_) {}
+  }
   return rows.map((r) => {
-    let background = null;
-    if (r.scene_id != null) {
-      const sceneRow = db.prepare('SELECT * FROM scenes WHERE id = ? AND deleted_at IS NULL').get(r.scene_id);
-      if (sceneRow) background = rowToScene(sceneRow);
-    }
+    const background = r.scene_id != null ? (sceneMap.get(Number(r.scene_id)) || null) : null;
     return {
       id: r.id,
       episode_id: r.episode_id,

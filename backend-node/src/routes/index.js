@@ -53,6 +53,7 @@ function setupRouter(cfg, db, log) {
   // ---------- auth ----------
   r.use('/auth', authRoutes(log, db));
   r.use(requireAuth(log));
+  r.get('/runtime/model-routes', aiConfig.runtimeRoutesPublic);
   r.get('/runtime/ai-configs', aiConfig.runtimeListPublic);
   r.get('/runtime/ai-configs/active', aiConfig.activePublic);
   r.use('/ai-configs', requireAdmin());
@@ -139,6 +140,9 @@ function setupRouter(cfg, db, log) {
       response.success(res, result);
     } catch (err) {
       log.error('generation/story', { error: err.message });
+      if (err.statusCode === 400) {
+        return response.badRequest(res, err.message);
+      }
       if (err.message && err.message.includes('未配置')) {
         return response.badRequest(res, err.message);
       }

@@ -43,7 +43,6 @@ function ensureSingleDefaultPerType(db) {
 }
 
 function listConfigs(db, serviceType) {
-  ensureSingleDefaultPerType(db);
   const order = 'ORDER BY priority DESC, is_default DESC, created_at DESC';
   let sql = 'SELECT * FROM ai_service_configs WHERE deleted_at IS NULL ' + order;
   const params = [];
@@ -82,6 +81,45 @@ function toPublicRuntimeConfig(cfg) {
 function listRuntimePublicConfigs(db, serviceType) {
   return getRuntimeConfigCandidates(db, serviceType, { includeCoolingDown: true })
     .map(toPublicRuntimeConfig);
+}
+
+const RUNTIME_ROUTE_TYPES = [
+  { key: 'text', label: '文本' },
+  { key: 'image', label: '素材图' },
+  { key: 'storyboard_image', label: '分镜图' },
+  { key: 'video', label: '视频' },
+  { key: 'tts', label: '音频' },
+];
+
+function getRuntimeModelRoutes(db) {
+  const keys = RUNTIME_ROUTE_TYPES.map((item) => item.key);
+  const placeholders = keys.map(() => '?').join(', ');
+  const rows = db.prepare(
+    `SELECT * FROM ai_service_configs
+     WHERE deleted_at IS NULL AND service_type IN (${placeholders})
+     ORDER BY service_type ASC, priority DESC, is_default DESC, created_at DESC`
+  ).all(...keys);
+  const nowMs = Date.now();
+  const options = Object.fromEntries(keys.map((key) => [key, []]));
+  for (const row of rows) {
+    const cfg = rowToConfig(row);
+    if (cfg.is_active === false) continue;
+    options[cfg.service_type] = options[cfg.service_type] || [];
+    options[cfg.service_type].push(toPublicRuntimeConfig(cfg));
+  }
+  const defaults = {};
+  for (const key of keys) {
+    const candidates = options[key] || [];
+    defaults[key] = candidates.find((cfg) => !isInCooldown(cfg, nowMs) && cfg.is_default)
+      || candidates.find((cfg) => !isInCooldown(cfg, nowMs))
+      || null;
+  }
+  return {
+    service_types: RUNTIME_ROUTE_TYPES,
+    options,
+    defaults,
+    selected: Object.fromEntries(keys.map((key) => [key, ''])),
+  };
 }
 
 function clearOtherDefault(db, serviceType, exceptId) {
@@ -728,6 +766,7 @@ module.exports = {
   listConfigs,
   getActivePublicConfig,
   listRuntimePublicConfigs,
+  getRuntimeModelRoutes,
   getRuntimeConfigCandidates,
   recordConfigSuccess,
   recordConfigFailure,

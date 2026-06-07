@@ -18,6 +18,12 @@ function list(db, query) {
   if (query.storyboard_id) {
     sql += ' AND storyboard_id = ?';
     params.push(query.storyboard_id);
+  } else if (query.storyboard_ids) {
+    const ids = parseIds(query.storyboard_ids);
+    if (ids.length > 0) {
+      sql += ` AND storyboard_id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
   }
   if (query.frame_type) {
     sql += ' AND frame_type = ?';
@@ -30,10 +36,15 @@ function list(db, query) {
   const countRow = db.prepare('SELECT COUNT(*) as total ' + sql).get(...params);
   const total = countRow.total || 0;
   const page = Math.max(1, parseInt(query.page, 10) || 1);
-  const pageSize = Math.min(100, Math.max(1, parseInt(query.page_size, 10) || 20));
+  const pageSize = Math.min(500, Math.max(1, parseInt(query.page_size, 10) || 20));
   const offset = (page - 1) * pageSize;
   const rows = db.prepare('SELECT * ' + sql + ' ORDER BY created_at DESC LIMIT ? OFFSET ?').all(...params, pageSize, offset);
   return { items: rows.map(rowToItem), total, page, pageSize };
+}
+
+function parseIds(value) {
+  const raw = Array.isArray(value) ? value : String(value || '').split(',');
+  return [...new Set(raw.map((id) => Number(String(id).trim())).filter((n) => Number.isFinite(n) && n > 0))];
 }
 
 function rowToItem(r) {

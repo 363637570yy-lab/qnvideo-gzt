@@ -498,6 +498,39 @@ function createSql(def) {
   return `CREATE TABLE IF NOT EXISTS ${quoteIdent(def.name)} (${parts.join(', ')})`;
 }
 
+const performanceIndexes = [
+  ['idx_dramas_owner_deleted_updated', 'dramas', ['owner_user_id', 'deleted_at', 'updated_at']],
+  ['idx_dramas_deleted_updated', 'dramas', ['deleted_at', 'updated_at']],
+  ['idx_episodes_drama_deleted_number', 'episodes', ['drama_id', 'deleted_at', 'episode_number']],
+  ['idx_storyboards_episode_deleted_number_id', 'storyboards', ['episode_id', 'deleted_at', 'storyboard_number', 'id']],
+  ['idx_storyboards_scene_deleted', 'storyboards', ['scene_id', 'deleted_at']],
+  ['idx_storyboard_props_storyboard', 'storyboard_props', ['storyboard_id']],
+  ['idx_storyboard_props_prop', 'storyboard_props', ['prop_id']],
+  ['idx_episode_characters_episode', 'episode_characters', ['episode_id']],
+  ['idx_episode_characters_character', 'episode_characters', ['character_id']],
+  ['idx_characters_drama_deleted_sort', 'characters', ['drama_id', 'deleted_at', 'sort_order', 'name']],
+  ['idx_scenes_drama_deleted_id', 'scenes', ['drama_id', 'deleted_at', 'id']],
+  ['idx_scenes_episode_deleted_id', 'scenes', ['episode_id', 'deleted_at', 'id']],
+  ['idx_props_drama_deleted_id', 'props', ['drama_id', 'deleted_at', 'id']],
+  ['idx_props_episode_deleted_id', 'props', ['episode_id', 'deleted_at', 'id']],
+  ['idx_image_generations_drama_status_created', 'image_generations', ['drama_id', 'status', 'created_at']],
+  ['idx_image_generations_storyboard_created', 'image_generations', ['storyboard_id', 'created_at']],
+  ['idx_image_generations_task', 'image_generations', ['task_id']],
+  ['idx_video_generations_drama_status_created', 'video_generations', ['drama_id', 'status', 'created_at']],
+  ['idx_video_generations_storyboard_created', 'video_generations', ['storyboard_id', 'created_at']],
+  ['idx_video_generations_task', 'video_generations', ['task_id']],
+  ['idx_async_tasks_resource_created', 'async_tasks', ['resource_id', 'created_at']],
+  ['idx_async_tasks_status_updated', 'async_tasks', ['status', 'updated_at']],
+  ['idx_ai_service_configs_runtime', 'ai_service_configs', ['service_type', 'deleted_at', 'is_active', 'priority', 'is_default']],
+  ['idx_character_libraries_owner_created', 'character_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
+  ['idx_scene_libraries_owner_created', 'scene_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
+  ['idx_prop_libraries_owner_created', 'prop_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
+];
+
+function createIndexSql([name, table, columns]) {
+  return `CREATE INDEX IF NOT EXISTS ${quoteIdent(name)} ON ${quoteIdent(table)} (${columns.map(quoteIdent).join(', ')})`;
+}
+
 function ensurePgSchema(db) {
   for (const def of tableDefs) {
     db.exec(createSql(def));
@@ -515,6 +548,9 @@ function ensurePgSchema(db) {
         db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${quoteIdent(idx)} ON ${quoteIdent(def.name)} (${quoteIdent(name)})`);
       }
     }
+  }
+  for (const idx of performanceIndexes) {
+    db.exec(createIndexSql(idx));
   }
 }
 

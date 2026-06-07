@@ -12,12 +12,18 @@ function getTaskStatus(db, log) {
 function getResourceTasks(db, log) {
   return (req, res) => {
     const resourceId = req.query.resource_id;
-    if (!resourceId) return response.badRequest(res, '缺少resource_id参数');
+    const resourceIds = req.query.resource_ids;
+    if (!resourceId && !resourceIds) return response.badRequest(res, '缺少resource_id参数');
     try {
-      const tasks = taskService.getTasksByResource(db, resourceId);
+      const tasks = resourceIds
+        ? taskService.getTasksByResources(
+          db,
+          String(resourceIds).split(',').map((id) => id.trim()).filter(Boolean)
+        )
+        : taskService.getTasksByResource(db, resourceId);
       response.success(res, tasks);
     } catch (err) {
-      log.errorw('Get resource tasks failed', { error: err.message });
+      log.error('Get resource tasks failed', { error: err.message });
       response.internalError(res, err.message);
     }
   };

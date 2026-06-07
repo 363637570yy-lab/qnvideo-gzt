@@ -66,90 +66,118 @@ function getDramaById(db, id) {
   return row ? rowToDrama(row) : null;
 }
 
+function placeholders(items) {
+  return items.map(() => '?').join(',');
+}
+
+function groupBy(rows, key) {
+  const map = new Map();
+  for (const row of rows || []) {
+    const groupKey = row[key];
+    const list = map.get(groupKey) || [];
+    list.push(row);
+    map.set(groupKey, list);
+  }
+  return map;
+}
+
 function getDrama(db, dramaId, baseUrl) {
   const drama = getDramaById(db, Number(dramaId));
   if (!drama) return null;
-  // 加载 episodes、characters、scenes、props、storyboards（简化：只查当前 drama 的）
+  // 加载 episodes、characters、scenes、props、storyboards（详情页需要完整数据，但用批量查询避免 N+1）
   const episodes = db.prepare(
     'SELECT * FROM episodes WHERE drama_id = ? AND deleted_at IS NULL ORDER BY episode_number ASC'
   ).all(drama.id);
   drama.episodes = episodes.map((e) => rowToEpisode(e));
   const { dedupeStoryboardRowsByNumber } = require('./episodeStoryboardService');
+
+  const episodeIds = drama.episodes.map((ep) => ep.id);
+  const epById = new Map(drama.episodes.map((ep) => [Number(ep.id), ep]));
   for (const ep of drama.episodes) {
-    const storyboards = dedupeStoryboardRowsByNumber(
-      db.prepare(
-        'SELECT * FROM storyboards WHERE episode_id = ? AND deleted_at IS NULL ORDER BY storyboard_number ASC, id ASC'
-      ).all(ep.id)
-    );
-    ep.storyboards = storyboards.map((s) => rowToStoryboard(s));
-    // 批量加载 storyboard_props，附加到对应分镜
+    ep.storyboards = [];
+    ep.characters = [];
+    ep.scenes = [];
+    ep.props = [];
+  }
+
+  if (episodeIds.length > 0) {
+    const epPh = placeholders(episodeIds);
+    const storyboardRows = db.prepare(
+      `SELECT * FROM storyboards WHERE episode_id IN (${epPh}) AND deleted_at IS NULL ORDER BY episode_id ASC, storyboard_number ASC, id ASC`
+    ).all(...episodeIds);
+    const storyboardsByEpisode = groupBy(storyboardRows, 'episode_id');
+    for (const ep of drama.episodes) {
+      const storyboards = dedupeStoryboardRowsByNumber(storyboardsByEpisode.get(ep.id) || []);
+      ep.storyboards = storyboards.map((s) => rowToStoryboard(s));
+    }
+
     try {
-      const sbIds = ep.storyboards.map((s) => s.id);
+      const sbIds = drama.episodes.flatMap((ep) => ep.storyboards.map((s) => s.id));
       if (sbIds.length > 0) {
-        const placeholders = sbIds.map(() => '?').join(',');
-        const spRows = db.prepare(`SELECT storyboard_id, prop_id FROM storyboard_props WHERE storyboard_id IN (${placeholders})`).all(...sbIds);
-        const spMap = {};
-        for (const row of spRows) {
-          if (!spMap[row.storyboard_id]) spMap[row.storyboard_id] = [];
-          spMap[row.storyboard_id].push(row.prop_id);
-        }
-        for (const sb of ep.storyboards) {
-          sb.prop_ids = spMap[sb.id] || [];
+        const spRows = db.prepare(
+          `SELECT storyboard_id, prop_id FROM storyboard_props WHERE storyboard_id IN (${placeholders(sbIds)})`
+        ).all(...sbIds);
+        const spMap = groupBy(spRows, 'storyboard_id');
+        for (const ep of drama.episodes) {
+          for (const sb of ep.storyboards) {
+            sb.prop_ids = (spMap.get(sb.id) || []).map((row) => row.prop_id);
+          }
         }
       }
     } catch (_) {}
-    ep.duration = ep.storyboards.reduce((sum, s) => sum + (s.duration || 0), 0);
-    if (ep.duration > 0) ep.duration = Math.ceil(ep.duration / 60); // 转为分钟
-    // 本集关联的角色（与 Go Preload("Episodes.Characters") 一致）
+
     try {
       const epChars = db.prepare(
-        `SELECT c.* FROM characters c
+        `SELECT ec.episode_id AS _episode_id, c.* FROM characters c
          INNER JOIN episode_characters ec ON c.id = ec.character_id
-         WHERE ec.episode_id = ? AND c.deleted_at IS NULL
-         ORDER BY c.sort_order ASC, c.name ASC`
-      ).all(ep.id);
-      ep.characters = epChars.map((c) => rowToCharacter(c));
-    } catch (_) {
-      ep.characters = [];
-    }
-    // 本集关联的场景（与 Go Preload("Episodes.Scenes") 一致，用于提取完成后展示）
+         WHERE ec.episode_id IN (${epPh}) AND c.deleted_at IS NULL
+         ORDER BY ec.episode_id ASC, c.sort_order ASC, c.name ASC`
+      ).all(...episodeIds);
+      for (const row of epChars) {
+        const ep = epById.get(Number(row._episode_id));
+        if (ep) ep.characters.push(rowToCharacter(row));
+      }
+    } catch (_) {}
+
     try {
       const epScenes = db.prepare(
-        'SELECT * FROM scenes WHERE episode_id = ? AND deleted_at IS NULL ORDER BY id ASC'
-      ).all(ep.id);
-      ep.scenes = epScenes.map((s) => rowToScene(s));
-    } catch (_) {
-      ep.scenes = [];
-    }
-    // 本集关联的道具：本集提取的（episode_id=本集）+ 本集分镜中出现的（storyboard_props），合并去重
+        `SELECT * FROM scenes WHERE episode_id IN (${epPh}) AND deleted_at IS NULL ORDER BY episode_id ASC, id ASC`
+      ).all(...episodeIds);
+      for (const row of epScenes) {
+        const ep = epById.get(Number(row.episode_id));
+        if (ep) ep.scenes.push(rowToScene(row));
+      }
+    } catch (_) {}
+
     try {
       const byEpisode = db.prepare(
-        'SELECT * FROM props WHERE episode_id = ? AND deleted_at IS NULL ORDER BY id ASC'
-      ).all(ep.id);
+        `SELECT * FROM props WHERE episode_id IN (${epPh}) AND deleted_at IS NULL ORDER BY episode_id ASC, id ASC`
+      ).all(...episodeIds);
       const byStoryboard = db.prepare(
-        `SELECT DISTINCT p.* FROM props p
+        `SELECT DISTINCT sb.episode_id AS _episode_id, p.* FROM props p
          INNER JOIN storyboard_props sp ON p.id = sp.prop_id
-         INNER JOIN storyboards sb ON sb.id = sp.storyboard_id AND sb.episode_id = ? AND sb.deleted_at IS NULL
-         WHERE p.deleted_at IS NULL ORDER BY p.id ASC`
-      ).all(ep.id);
-      const seen = new Set();
-      ep.props = [];
-      for (const p of byEpisode) {
-        if (!seen.has(p.id)) {
-          seen.add(p.id);
-          ep.props.push(rowToProp(p));
-        }
-      }
-      for (const p of byStoryboard) {
-        if (!seen.has(p.id)) {
-          seen.add(p.id);
-          ep.props.push(rowToProp(p));
-        }
-      }
-      ep.props.sort((a, b) => a.id - b.id);
-    } catch (_) {
-      ep.props = [];
-    }
+         INNER JOIN storyboards sb ON sb.id = sp.storyboard_id AND sb.episode_id IN (${epPh}) AND sb.deleted_at IS NULL
+         WHERE p.deleted_at IS NULL ORDER BY _episode_id ASC, p.id ASC`
+      ).all(...episodeIds);
+      const seenByEpisode = new Map();
+      const pushProp = (epId, propRow) => {
+        const ep = epById.get(Number(epId));
+        if (!ep) return;
+        const seen = seenByEpisode.get(ep.id) || new Set();
+        if (seen.has(Number(propRow.id))) return;
+        seen.add(Number(propRow.id));
+        seenByEpisode.set(ep.id, seen);
+        ep.props.push(rowToProp(propRow));
+      };
+      for (const row of byEpisode) pushProp(row.episode_id, row);
+      for (const row of byStoryboard) pushProp(row._episode_id, row);
+      for (const ep of drama.episodes) ep.props.sort((a, b) => a.id - b.id);
+    } catch (_) {}
+  }
+
+  for (const ep of drama.episodes) {
+    ep.duration = ep.storyboards.reduce((sum, s) => sum + (s.duration || 0), 0);
+    if (ep.duration > 0) ep.duration = Math.ceil(ep.duration / 60); // 转为分钟
   }
   const characters = db.prepare(
     'SELECT * FROM characters WHERE drama_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC, name ASC'
@@ -198,36 +226,44 @@ function listDramas(db, query) {
     'SELECT * ' + sql + ' ORDER BY updated_at DESC LIMIT ? OFFSET ?'
   ).all(...params, pageSize, offset);
   const dramas = list.map((r) => rowToDrama(r));
+  const dramaIds = dramas.map((d) => d.id);
   for (const d of dramas) {
-    const episodes = db.prepare(
-      'SELECT * FROM episodes WHERE drama_id = ? AND deleted_at IS NULL ORDER BY episode_number ASC'
-    ).all(d.id);
-    d.episodes = episodes.map((e) => {
-      const ep = rowToEpisode(e);
-      const { dedupeStoryboardRowsByNumber } = require('./episodeStoryboardService');
-      const storyboards = dedupeStoryboardRowsByNumber(
-        db.prepare(
-          'SELECT * FROM storyboards WHERE episode_id = ? AND deleted_at IS NULL ORDER BY storyboard_number ASC, id ASC'
-        ).all(ep.id)
-      );
-      ep.storyboards = storyboards.map((s) => rowToStoryboard(s));
-      try {
-        const sbIds = ep.storyboards.map((s) => s.id);
-        if (sbIds.length > 0) {
-          const placeholders = sbIds.map(() => '?').join(',');
-          const spRows = db.prepare(`SELECT storyboard_id, prop_id FROM storyboard_props WHERE storyboard_id IN (${placeholders})`).all(...sbIds);
-          const spMap = {};
-          for (const row of spRows) {
-            if (!spMap[row.storyboard_id]) spMap[row.storyboard_id] = [];
-            spMap[row.storyboard_id].push(row.prop_id);
-          }
-          for (const sb of ep.storyboards) sb.prop_ids = spMap[sb.id] || [];
-        }
-      } catch (_) {}
-      ep.duration = ep.storyboards.reduce((sum, s) => sum + (s.duration || 0), 0);
-      if (ep.duration > 0) ep.duration = Math.ceil(ep.duration / 60);
-      return ep;
-    });
+    d.episodes = [];
+    d.episode_count = 0;
+    d.storyboard_count = 0;
+  }
+  if (dramaIds.length > 0) {
+    const idsPh = placeholders(dramaIds);
+    const epRows = db.prepare(
+      `SELECT id, drama_id, episode_number, title, NULL AS script_content, description, duration, video_url, thumbnail, status, created_at, updated_at
+       FROM episodes
+       WHERE drama_id IN (${idsPh}) AND deleted_at IS NULL
+       ORDER BY drama_id ASC, episode_number ASC`
+    ).all(...dramaIds);
+    const aggRows = db.prepare(
+      `SELECT e.id AS episode_id,
+              COUNT(DISTINCT COALESCE(NULLIF(sb.storyboard_number, 0), sb.id)) AS storyboard_count,
+              COALESCE(SUM(COALESCE(sb.duration, 0)), 0) AS storyboard_duration
+       FROM episodes e
+       LEFT JOIN storyboards sb ON sb.episode_id = e.id AND sb.deleted_at IS NULL
+       WHERE e.drama_id IN (${idsPh}) AND e.deleted_at IS NULL
+       GROUP BY e.id`
+    ).all(...dramaIds);
+    const aggByEpisode = new Map(aggRows.map((row) => [Number(row.episode_id), row]));
+    const byDrama = groupBy(epRows, 'drama_id');
+    for (const d of dramas) {
+      d.episodes = (byDrama.get(d.id) || []).map((row) => {
+        const ep = rowToEpisode(row);
+        const agg = aggByEpisode.get(Number(ep.id));
+        ep.storyboard_count = Number(agg?.storyboard_count || 0);
+        ep.duration = ep.storyboard_count > 0
+          ? Math.ceil(Number(agg?.storyboard_duration || 0) / 60)
+          : (ep.duration || 0);
+        return ep;
+      });
+      d.episode_count = d.episodes.length;
+      d.storyboard_count = d.episodes.reduce((sum, ep) => sum + Number(ep.storyboard_count || 0), 0);
+    }
   }
   return { dramas, total, page, pageSize };
 }

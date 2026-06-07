@@ -45,6 +45,12 @@ function pushResolved(ids, value) {
   if (n) ids.push(n);
 }
 
+function parseIds(value) {
+  if (Array.isArray(value)) return value;
+  if (value == null) return [];
+  return String(value).split(',');
+}
+
 function selectDramaId(db, sql, id) {
   const n = finiteNumber(id);
   if (!n) return null;
@@ -94,8 +100,8 @@ function lookupDramaIds(db, req) {
   pushResolved(ids, resolveImageDramaId(db, body.image_gen_id || query.image_gen_id));
   pushResolved(ids, resolveVideoDramaId(db, body.video_gen_id || query.video_gen_id));
   pushResolved(ids, resolveAssetDramaId(db, body.asset_id || query.asset_id || body.resource_id || query.resource_id));
-  if (Array.isArray(body.storyboard_ids)) {
-    for (const id of body.storyboard_ids) pushResolved(ids, resolveStoryboardDramaId(db, id));
+  for (const id of parseIds(body.storyboard_ids || query.storyboard_ids)) {
+    pushResolved(ids, resolveStoryboardDramaId(db, id));
   }
 
   const directDrama = pathNumber(p, /^\/dramas\/(\d+)(?:\/|$)/);

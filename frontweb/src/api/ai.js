@@ -10,6 +10,9 @@ export const aiAPI = {
   runtimeList(serviceType) {
     return request.get('/runtime/ai-configs', { params: serviceType ? { service_type: serviceType } : {} })
   },
+  runtimeRoutes() {
+    return request.get('/runtime/model-routes')
+  },
   get(id) {
     return request.get(`/ai-configs/${id}`)
   },
