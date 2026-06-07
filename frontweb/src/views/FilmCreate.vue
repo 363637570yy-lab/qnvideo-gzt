@@ -90,6 +90,32 @@
         </div>
       </div>
 
+      <div v-if="!navCollapsed" class="nav-ai-routes" v-loading="aiRouteLoading">
+        <div class="nav-ai-routes-title">本次生成模型</div>
+        <div
+          v-for="routeItem in aiRouteTypes"
+          :key="routeItem.key"
+          class="nav-ai-route-row"
+        >
+          <span class="nav-ai-route-label">{{ routeItem.label }}</span>
+          <el-select
+            v-model="selectedAiConfigIds[routeItem.key]"
+            placeholder="自动"
+            filterable
+            size="small"
+            class="nav-ai-route-select"
+          >
+            <el-option label="自动" value="" />
+            <el-option
+              v-for="cfg in runtimeAiConfigs[routeItem.key]"
+              :key="cfg.id"
+              :label="configOptionLabel(cfg)"
+              :value="String(cfg.id)"
+            />
+          </el-select>
+        </div>
+      </div>
+
       <!-- 分镜子列表 -->
       <div v-if="!navCollapsed && storyboards.length > 0" class="nav-group">
         <div class="nav-sub-toggle" @click="storyboardMenuExpanded = !storyboardMenuExpanded">
@@ -371,26 +397,6 @@
             :options="generationStyleOptions"
             @change="() => saveProjectSettings(true)"
           />
-          <div class="ai-route-selects">
-            <el-select
-              v-for="routeItem in aiRouteTypes"
-              :key="routeItem.key"
-              v-model="selectedAiConfigIds[routeItem.key]"
-              :placeholder="routeItem.label + '配置'"
-              :loading="aiRouteLoading"
-              clearable
-              filterable
-              class="ai-route-select"
-            >
-              <el-option label="按排序自动" value="" />
-              <el-option
-                v-for="cfg in runtimeAiConfigs[routeItem.key]"
-                :key="cfg.id"
-                :label="configOptionLabel(cfg)"
-                :value="String(cfg.id)"
-              />
-            </el-select>
-          </div>
           <el-button
             type="primary"
             :loading="pipelineRunning && !pipelinePaused"
@@ -8357,12 +8363,13 @@ html.light .quick-nav {
   padding: 12px 0;
 }
 .quick-nav.collapsed .nav-steps,
-.quick-nav.collapsed .nav-group {
+.quick-nav.collapsed .nav-group,
+.quick-nav.collapsed .nav-ai-routes {
   display: none;
 }
 @media (max-width: 768px) {
   .quick-nav { width: 48px; padding: 12px 0; }
-  .quick-nav .nav-steps, .quick-nav .nav-group { display: none; }
+  .quick-nav .nav-steps, .quick-nav .nav-group, .quick-nav .nav-ai-routes { display: none; }
   .quick-nav .nav-sidebar-title { display: none; }
   .quick-nav .nav-sidebar-header { justify-content: center; padding: 0 4px 8px; }
   .header, .main { margin-left: 48px !important; }
@@ -8535,6 +8542,51 @@ html.light .nav-toggle:hover { color: #374151; background: rgba(0,0,0,0.05); }
 }
 .nav-step:hover { background: rgba(255,255,255,0.04); }
 html.light .nav-step:hover { background: rgba(99,102,241,0.05); }
+
+.nav-ai-routes {
+  margin: 8px 8px 6px;
+  padding: 8px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.025);
+  border-radius: 8px;
+}
+html.light .nav-ai-routes {
+  border-top-color: rgba(139, 92, 246, 0.12);
+  border-bottom-color: rgba(139, 92, 246, 0.08);
+  background: rgba(139, 92, 246, 0.035);
+}
+.nav-ai-routes-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #a78bfa;
+}
+html.light .nav-ai-routes-title { color: #6d28d9; }
+.nav-ai-route-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.nav-ai-route-label {
+  font-size: 12px;
+  color: #a1a1aa;
+  white-space: nowrap;
+}
+html.light .nav-ai-route-label { color: #6b7280; }
+.nav-ai-route-select {
+  width: 100%;
+}
+.nav-ai-route-select :deep(.el-select__wrapper) {
+  min-height: 28px;
+  padding: 3px 7px;
+  border-radius: 7px;
+}
+.nav-ai-route-select :deep(.el-select__placeholder) {
+  font-size: 12px;
+}
 
 /* connector column */
 .step-connector-wrap {
@@ -8750,16 +8802,6 @@ html.light .section-title { color: #1e1b4b; }
   color: var(--el-text-color-primary);
   white-space: nowrap;
   font-weight: 600;
-}
-.ai-route-selects {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-}
-.ai-route-select {
-  width: 150px;
 }
 .pipeline-status {
   margin-top: 12px;
