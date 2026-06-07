@@ -4,6 +4,9 @@ services:
     build:
       context: ./backend-node
       dockerfile: Dockerfile.codex
+      args:
+        APT_DEBIAN_MIRROR: ${APT_DEBIAN_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian}
+        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian-security}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
