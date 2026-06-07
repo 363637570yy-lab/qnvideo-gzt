@@ -874,6 +874,7 @@ onMounted(async () => {
 }
 .header-inner {
   max-width: min(1400px, 96vw);
+  width: 100%;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -1028,6 +1029,8 @@ html.light .btn-import {
 .main {
   flex: 1;
   max-width: min(1400px, 96vw);
+  width: 100%;
+  box-sizing: border-box;
   margin: 0 auto;
   padding: 24px 16px 48px;
 }
@@ -1054,6 +1057,7 @@ html.light .btn-import {
 }
 .projects-wrap {
   min-height: 200px;
+  width: 100%;
 }
 .empty {
   text-align: center;
@@ -1071,8 +1075,10 @@ html.light .btn-import {
 }
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   gap: 18px;
+  align-items: stretch;
+  width: 100%;
 }
 .project-card {
   position: relative;
