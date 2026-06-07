@@ -285,6 +285,7 @@ function generateStoryboard(db, log) {
         storyboard_count: body.storyboard_count,
         video_duration: body.video_duration,
         aspect_ratio: body.aspect_ratio,
+        language: body.language,
         include_narration: body.include_narration,
         universal_omni_storyboard: body.universal_omni_storyboard,
         ai_config_id: body.ai_config_id || body.text_config_id || null,

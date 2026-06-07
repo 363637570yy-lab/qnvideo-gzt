@@ -388,7 +388,11 @@ function routes(db, log) {
           log,
           req.params.episode_id,
           req.query.model,
-          req.query.style
+          req.query.style,
+          undefined,
+          undefined,
+          undefined,
+          req.query.language || 'zh'
         );
         response.success(res, { task_id: taskId, status: 'pending', message: '分镜头生成任务已创建，正在后台处理...' });
       } catch (err) {

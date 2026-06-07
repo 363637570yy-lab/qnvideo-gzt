@@ -21,6 +21,18 @@ function parseEpisodeCount(value) {
   return raw;
 }
 
+function normalizeOutputLanguage(language) {
+  const value = String(language || '').trim().toLowerCase();
+  if (['en', 'english'].includes(value)) return 'en';
+  return 'zh';
+}
+
+function outputLanguageInstruction(language) {
+  return normalizeOutputLanguage(language) === 'en'
+    ? '\n\nOutput language: English. Write every episode title and content in English.'
+    : '\n\n输出语言：简体中文。每集标题和正文都请使用简体中文。';
+}
+
 async function generateStory(db, log, body) {
   const premise = (body.premise || body.prompt || body.text || '').trim();
   if (!premise) {
@@ -87,6 +99,7 @@ async function generateStoryBatch(db, log, opts) {
   const endEpisode = startEpisode + batchCount - 1;
   const systemPrompt = promptI18n.getStoryExpansionSystemPrompt(cfg, batchCount);
   let userPrompt = promptI18n.buildStoryExpansionUserPrompt(cfg, premise, style, type, batchCount);
+  userPrompt += outputLanguageInstruction(body.language);
   if (totalEpisodeCount > batchCount) {
     userPrompt += `\n\n长剧本分批生成要求：整部剧共 ${totalEpisodeCount} 集，本次只生成第 ${startEpisode} 到第 ${endEpisode} 集。JSON 中 episode 字段必须使用真实集数编号（${startEpisode}-${endEpisode}），不要从 1 重新编号。`;
     if (previousBrief) {

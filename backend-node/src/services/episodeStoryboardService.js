@@ -1107,7 +1107,19 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
   }
 }
 
-function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni, aiConfigId) {
+function normalizeOutputLanguage(language) {
+  const value = String(language || '').trim().toLowerCase();
+  if (['en', 'english'].includes(value)) return 'en';
+  return 'zh';
+}
+
+function outputLanguageInstruction(language) {
+  return normalizeOutputLanguage(language) === 'en'
+    ? '\nOutput language: write all storyboard text fields in English, including title, description, action, dialogue, narration, image_prompt and video_prompt.'
+    : '\n输出语言：所有分镜文本字段请使用简体中文，包括标题、描述、动作、对白、旁白、图片提示词和视频提示词。';
+}
+
+function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, language, includeNarration, universalOmni, aiConfigId) {
   const cfg = loadConfig();
   const episode = db.prepare(
     'SELECT id, script_content, description, drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL'
@@ -1188,7 +1200,7 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   const taskInstruction = promptI18n.formatUserPrompt(cfg, 'task_instruction');
   
   // 处理分镜数量和时长约束
-  let extraConstraint = '';
+  let extraConstraint = outputLanguageInstruction(language);
   // 宽松判断：只要有值（包括字符串形式的数字），就尝试转换并添加约束
   if (storyboardCount) {
     const countVal = Number(storyboardCount);

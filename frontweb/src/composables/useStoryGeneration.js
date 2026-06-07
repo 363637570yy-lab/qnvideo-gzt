@@ -23,6 +23,8 @@ export async function runGenerateStoryFromPremise({
   scriptTitle,
   generationStyle,
   projectAspectRatio,
+  videoClipDuration,
+  scriptLanguage,
   store,
   router,
   route,
@@ -51,6 +53,7 @@ export async function runGenerateStoryFromPremise({
       premise: text,
       style: storyStyle || undefined,
       type: storyType || undefined,
+      language: scriptLanguage || 'zh',
       episode_count: episodeCount,
       ...aiConfigPayload,
     })
@@ -74,6 +77,8 @@ export async function runGenerateStoryFromPremise({
             ...stylePromptMetadataForSave(generationStyle),
             story_style: storyStyle || undefined,
             aspect_ratio: projectAspectRatio || '16:9',
+            video_clip_duration: videoClipDuration || 5,
+            script_language: scriptLanguage || 'zh',
           },
         })
         store.setDrama(drama)
@@ -99,6 +104,8 @@ export async function runGenerateStoryFromPremise({
           ...stylePromptMetadataForSave(generationStyle),
           story_style: storyStyle || undefined,
           aspect_ratio: projectAspectRatio || '16:9',
+          video_clip_duration: videoClipDuration || 5,
+          script_language: scriptLanguage || 'zh',
         },
       }).catch(() => {})
 

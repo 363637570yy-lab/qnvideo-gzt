@@ -380,35 +380,50 @@
         </div>
       </el-dialog>
 
-      <!-- 一键全流程生成 -->
+      <!-- 项目整体设置与一键全流程 -->
       <section class="section card pipeline-section">
+        <div class="project-settings-block">
+          <span class="settings-block-title">项目整体设置</span>
+          <label class="project-setting-field">
+            <span>项目画幅</span>
+            <el-select v-model="projectAspectRatio" style="width: 130px" @change="() => saveProjectSettings(false)">
+              <el-option label="16:9 横屏" value="16:9" />
+              <el-option label="9:16 竖屏" value="9:16" />
+              <el-option label="3:4 竖版" value="3:4" />
+              <el-option label="1:1 方形" value="1:1" />
+              <el-option label="4:3" value="4:3" />
+              <el-option label="21:9 宽银幕" value="21:9" />
+            </el-select>
+          </label>
+          <label class="project-setting-field">
+            <span>默认每段时长</span>
+            <el-select v-model="videoClipDuration" style="width: 110px" @change="() => saveProjectSettings(false)">
+              <el-option label="4秒/段" :value="4" />
+              <el-option label="5秒/段" :value="5" />
+              <el-option label="8秒/段" :value="8" />
+              <el-option label="10秒/段" :value="10" />
+              <el-option label="12秒/段" :value="12" />
+              <el-option label="15秒/段" :value="15" />
+            </el-select>
+          </label>
+          <label class="project-setting-field">
+            <span>默认语言</span>
+            <el-select v-model="scriptLanguage" placeholder="默认语言" style="width: 105px" @change="() => saveProjectSettings(false)">
+              <el-option label="中文" value="zh" />
+              <el-option label="英文" value="en" />
+            </el-select>
+          </label>
+          <label class="project-setting-field project-setting-field--style">
+            <span>主画风</span>
+            <StylePickerButton
+              v-model="generationStyle"
+              :options="generationStyleOptions"
+              @change="() => saveProjectSettings(true)"
+            />
+          </label>
+        </div>
         <div class="one-click-actions">
-          <span class="one-click-label">🚀 一键全流程</span>
-          <el-select v-model="projectAspectRatio" style="width: 130px" @change="() => saveProjectSettings(false)">
-            <el-option label="16:9 横屏" value="16:9" />
-            <el-option label="9:16 竖屏" value="9:16" />
-            <el-option label="3:4 竖版" value="3:4" />
-            <el-option label="1:1 方形" value="1:1" />
-            <el-option label="4:3" value="4:3" />
-            <el-option label="21:9 宽银幕" value="21:9" />
-          </el-select>
-          <el-select v-model="videoClipDuration" style="width: 105px" @change="() => saveProjectSettings(false)">
-            <el-option label="4秒/段" :value="4" />
-            <el-option label="5秒/段" :value="5" />
-            <el-option label="8秒/段" :value="8" />
-            <el-option label="10秒/段" :value="10" />
-            <el-option label="12秒/段" :value="12" />
-            <el-option label="15秒/段" :value="15" />
-          </el-select>
-          <el-select v-model="scriptLanguage" placeholder="分镜语言" clearable style="width: 105px">
-            <el-option label="中文" value="zh" />
-            <el-option label="英文" value="en" />
-          </el-select>
-          <StylePickerButton
-            v-model="generationStyle"
-            :options="generationStyleOptions"
-            @change="() => saveProjectSettings(true)"
-          />
+          <span class="one-click-label">🚀 一键动作</span>
           <el-button
             type="primary"
             :loading="pipelineRunning && !pipelinePaused"
@@ -832,62 +847,68 @@
           <span>5. 分镜生成</span>
           <span class="step-desc">根据剧本、角色、场景自动生成分镜头脚本</span>
         </h2>
-        <div class="sb-config-row">
-          <label class="sb-config-item">
-            <span class="sb-config-label">分镜数量</span>
-            <el-input-number v-model="storyboardCount" :min="1" :max="200" :step="5" placeholder="自动" class="sb-config-input" />
-            <span class="sb-config-hint sb-config-hint--estimate" :title="scriptEstimateStoryboardTitle">留空由 AI 决定{{ scriptEstimateStoryboardHint }}</span>
-          </label>
-          <span class="sb-config-divider">｜</span>
-          <label class="sb-config-item">
-            <span class="sb-config-label">视频总时长(秒)</span>
-            <el-input-number v-model="videoDuration" :min="10" :max="600" :step="5" placeholder="自动" class="sb-config-input" />
-            <span class="sb-config-hint sb-config-hint--estimate" :title="scriptEstimateVideoDurationTitle">留空由 AI 决定{{ scriptEstimateVideoDurationHint }}</span>
-          </label>
-          <span class="sb-config-divider">｜</span>
-          <label class="sb-config-item">
-            <span class="sb-config-label">序列图模式</span>
-            <el-select v-model="gridMode" size="small" style="width:110px" :disabled="storyboardUseFirstLastFrame">
-              <el-option label="单张" value="single" />
-              <el-option label="四宫格" value="quad_grid" />
-              <el-option label="九宫格" value="nine_grid" />
-            </el-select>
-            <span class="sb-config-hint">四/九宫格自动按视角拆分</span>
-          </label>
-        </div>
-        <div class="sb-config-row sb-narration-export-row" style="margin-top:10px;flex-wrap:wrap;align-items:center;gap:12px">
-          <el-checkbox v-model="storyboardUseFirstLastFrame" @change="onStoryboardUseFirstLastFrameChange">
-            首尾帧参考图（经典模式双槽；图生前先走专业帧提示词模块 first/last，再生图；视频绑定 first/last_frame_url）
-          </el-checkbox>
-          <el-checkbox v-model="storyboardUniversalOmni" @change="() => saveProjectSettings(false)">
-            全能分镜模式（每镜输出多子分镜段落式 universal_segment_text，与「生成/润色全能提示词」同版式）
-          </el-checkbox>
-          <el-checkbox v-model="storyboardIncludeNarration" @change="() => saveProjectSettings(false)">
-            生成分镜时生成解说旁白（narration，与对白分开，便于后期 TTS）
-          </el-checkbox>
-          <el-button
-            v-if="storyboards.length > 0"
-            class="sb-export-srt-btn"
-            size="small"
-            plain
-            type="primary"
-            :disabled="!currentEpisodeId"
-            :loading="exportingStoryboardSheet"
-            @click="onExportStoryboardSheet"
-          >
-            导出分镜表excel
-          </el-button>
-          <el-button
-            v-if="storyboards.length > 0"
-            class="sb-export-srt-btn"
-            size="small"
-            plain
-            type="primary"
-            :disabled="!currentEpisodeId"
-            @click="onExportNarrationSrt"
-          >
-            导出解说 SRT
-          </el-button>
+        <div class="sb-setting-groups">
+          <div class="sb-setting-group">
+            <div class="sb-setting-group-title">分镜脚本设置</div>
+            <div class="sb-config-row">
+              <label class="sb-config-item">
+                <span class="sb-config-label">本次镜数</span>
+                <el-input-number v-model="storyboardCount" :min="1" :max="200" :step="5" placeholder="自动" class="sb-config-input" />
+                <span class="sb-config-hint sb-config-hint--estimate" :title="scriptEstimateStoryboardTitle">自动{{ scriptEstimateStoryboardHint }}</span>
+              </label>
+              <label class="sb-config-item">
+                <span class="sb-config-label">本次总时长(秒)</span>
+                <el-input-number v-model="videoDuration" :min="10" :max="600" :step="5" placeholder="自动" class="sb-config-input" />
+                <span class="sb-config-hint sb-config-hint--estimate" :title="scriptEstimateVideoDurationTitle">自动{{ scriptEstimateVideoDurationHint }}</span>
+              </label>
+              <el-checkbox v-model="storyboardUniversalOmni" @change="() => saveProjectSettings(false)">
+                全能分镜模式
+              </el-checkbox>
+              <el-checkbox v-model="storyboardIncludeNarration" @change="() => saveProjectSettings(false)">
+                生成解说旁白
+              </el-checkbox>
+            </div>
+          </div>
+          <div class="sb-setting-group">
+            <div class="sb-setting-group-title">分镜图/视频设置</div>
+            <div class="sb-config-row">
+              <label class="sb-config-item">
+                <span class="sb-config-label">序列图模式</span>
+                <el-select v-model="gridMode" size="small" style="width:110px" :disabled="storyboardUseFirstLastFrame">
+                  <el-option label="单张" value="single" />
+                  <el-option label="四宫格" value="quad_grid" />
+                  <el-option label="九宫格" value="nine_grid" />
+                </el-select>
+                <span class="sb-config-hint">四/九宫格按视角拆分</span>
+              </label>
+              <el-checkbox v-model="storyboardUseFirstLastFrame" @change="onStoryboardUseFirstLastFrameChange">
+                首尾帧参考图
+              </el-checkbox>
+            </div>
+          </div>
+          <div v-if="storyboards.length > 0" class="sb-export-actions">
+            <el-button
+              class="sb-export-srt-btn"
+              size="small"
+              plain
+              type="primary"
+              :disabled="!currentEpisodeId"
+              :loading="exportingStoryboardSheet"
+              @click="onExportStoryboardSheet"
+            >
+              导出分镜表 excel
+            </el-button>
+            <el-button
+              class="sb-export-srt-btn"
+              size="small"
+              plain
+              type="primary"
+              :disabled="!currentEpisodeId"
+              @click="onExportNarrationSrt"
+            >
+              导出解说 SRT
+            </el-button>
+          </div>
         </div>
         <div class="asset-actions sb-batch-actions">
           <div class="flex">
@@ -4654,6 +4675,7 @@ async function loadDrama({ force = false } = {}) {
     generationStyle.value = d.style || ''
     projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
     videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
+    scriptLanguage.value = (d.metadata && d.metadata.script_language) ? d.metadata.script_language : 'zh'
     storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
     storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
     storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
@@ -4965,6 +4987,8 @@ async function saveScriptToBackend(content) {
         ...projectStylePromptMetadata(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
+        video_clip_duration: videoClipDuration.value || 5,
+        script_language: scriptLanguage.value || 'zh',
       },
     })
     store.setDrama(drama)
@@ -5003,6 +5027,8 @@ async function saveScriptToBackend(content) {
           ...projectStylePromptMetadata(),
           story_style: storyStyle.value || undefined,
           aspect_ratio: projectAspectRatio.value || '16:9',
+          video_clip_duration: videoClipDuration.value || 5,
+          script_language: scriptLanguage.value || 'zh',
         },
       }).catch(() => {})
     }
@@ -5041,6 +5067,8 @@ async function saveScriptToBackend(content) {
         ...projectStylePromptMetadata(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
+        video_clip_duration: videoClipDuration.value || 5,
+        script_language: scriptLanguage.value || 'zh',
       },
     }).catch(() => {})
   }
@@ -5058,6 +5086,7 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     story_style: storyStyle.value || undefined,
     aspect_ratio: projectAspectRatio.value || '16:9',
     video_clip_duration: videoClipDuration.value || 5,
+    script_language: scriptLanguage.value || 'zh',
     storyboard_include_narration: !!storyboardIncludeNarration.value,
     storyboard_universal_omni: !!storyboardUniversalOmni.value,
     storyboard_use_first_last_frame: !!storyboardUseFirstLastFrame.value,
@@ -5087,6 +5116,8 @@ async function onGenerateStory() {
     scriptTitle: scriptTitle.value,
     generationStyle: generationStyle.value,
     projectAspectRatio: projectAspectRatio.value,
+    videoClipDuration: videoClipDuration.value,
+    scriptLanguage: scriptLanguage.value,
     store,
     router,
     route,
@@ -6811,6 +6842,7 @@ async function onGenerateStoryboard() {
       storyboard_count: getStoryboardCountForApi(),
       video_duration: getVideoDurationForApi(),
       aspect_ratio: projectAspectRatio.value || '16:9',
+      language: scriptLanguage.value || 'zh',
       include_narration: !!storyboardIncludeNarration.value,
       universal_omni_storyboard: !!storyboardUniversalOmni.value,
       ...textAiPayload(),
@@ -7451,6 +7483,7 @@ async function runOneClickPipeline(textOnly = false) {
         const res = await dramaAPI.generateStoryboard(episodeId, {
           style,
           aspect_ratio: projectAspectRatio.value || '16:9',
+          language: scriptLanguage.value || 'zh',
           storyboard_count: getStoryboardCountForApi(),
           video_duration: getVideoDurationForApi(),
           include_narration: !!storyboardIncludeNarration.value,
@@ -7964,6 +7997,7 @@ async function runRepairPipeline() {
       try {
         const res = await dramaAPI.generateStoryboard(episodeId, {
           aspect_ratio: projectAspectRatio.value || '16:9',
+          language: scriptLanguage.value || 'zh',
           storyboard_count: getStoryboardCountForApi(),
           video_duration: getVideoDurationForApi(),
           include_narration: !!storyboardIncludeNarration.value,
@@ -8902,6 +8936,34 @@ html.light .card:hover {
 html.light .section-title { color: #1e1b4b; }
 .pipeline-section {
   padding: 12px 16px !important;
+}
+.project-settings-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+.settings-block-title {
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+  white-space: nowrap;
+  font-weight: 600;
+}
+.project-setting-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.project-setting-field > span {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+.project-setting-field--style {
+  min-width: 220px;
 }
 .one-click-actions {
   display: flex;
@@ -10538,7 +10600,38 @@ html.light .sb-video-placeholder {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.sb-setting-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   margin-bottom: 14px;
+}
+.sb-setting-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sb-setting-group-title {
+  min-width: 108px;
+  font-size: 0.9rem;
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+.sb-setting-group :deep(.el-checkbox__label) {
+  color: #e4e4e7;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+html.light .sb-setting-group :deep(.el-checkbox__label) {
+  color: #374151;
+}
+.sb-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .sb-config-item {
