@@ -6,7 +6,7 @@ const propService = require('./propService');
 const { safeParseAIJSON, extractFirstArray } = require('../utils/safeJson');
 let _cfg = null; // 由 extractPropsForEpisode 注入，供异步任务使用
 
-async function processPropExtraction(db, log, taskId, episodeId) {
+async function processPropExtraction(db, log, taskId, episodeId, aiConfigId) {
   taskService.updateTaskStatus(db, taskId, 'processing', 0, '正在分析剧本...');
 
   const episode = db.prepare(
@@ -49,6 +49,7 @@ async function processPropExtraction(db, log, taskId, episodeId) {
   try {
     response = await aiClient.generateText(db, log, 'text', prompt, systemPrompt, {
       scene_key: 'prop_extraction',
+      ai_config_id: aiConfigId || undefined,
       max_tokens: 2000,
       temperature: 0.3,
     });
@@ -130,7 +131,7 @@ async function processPropExtraction(db, log, taskId, episodeId) {
   });
 }
 
-function extractPropsForEpisode(db, log, episodeId, cfg) {
+function extractPropsForEpisode(db, log, episodeId, cfg, aiConfigId) {
   if (cfg) _cfg = cfg;
   const episode = db.prepare(
     'SELECT id, drama_id, script_content FROM episodes WHERE id = ? AND deleted_at IS NULL'
@@ -142,7 +143,7 @@ function extractPropsForEpisode(db, log, episodeId, cfg) {
 
   const task = taskService.createTask(db, log, 'prop_extraction', String(episodeId));
   setImmediate(() => {
-    processPropExtraction(db, log, task.id, episodeId).catch((err) => {
+    processPropExtraction(db, log, task.id, episodeId, aiConfigId).catch((err) => {
       log.error('processPropExtraction fatal', { error: err.message, task_id: task.id });
     });
   });

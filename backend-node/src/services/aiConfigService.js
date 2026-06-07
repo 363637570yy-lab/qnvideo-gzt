@@ -44,7 +44,7 @@ function ensureSingleDefaultPerType(db) {
 
 function listConfigs(db, serviceType) {
   ensureSingleDefaultPerType(db);
-  const order = 'ORDER BY is_default DESC, priority DESC, created_at DESC';
+  const order = 'ORDER BY priority DESC, is_default DESC, created_at DESC';
   let sql = 'SELECT * FROM ai_service_configs WHERE deleted_at IS NULL ' + order;
   const params = [];
   if (serviceType) {
@@ -56,10 +56,12 @@ function listConfigs(db, serviceType) {
 }
 
 function getActivePublicConfig(db, serviceType) {
-  const list = listConfigs(db, serviceType);
-  const active = list.filter((cfg) => cfg.is_active !== false);
-  const cfg = active.find((item) => item.is_default) || active[0] || null;
+  const cfg = getRuntimeConfigCandidates(db, serviceType)[0] || null;
   if (!cfg) return null;
+  return toPublicRuntimeConfig(cfg);
+}
+
+function toPublicRuntimeConfig(cfg) {
   return {
     id: cfg.id,
     service_type: cfg.service_type,
@@ -70,7 +72,16 @@ function getActivePublicConfig(db, serviceType) {
     default_model: cfg.default_model,
     is_default: cfg.is_default,
     is_active: cfg.is_active,
+    priority: cfg.priority || 0,
+    health_status: cfg.health_status || 'ok',
+    disabled_until: cfg.disabled_until || null,
+    last_error_at: cfg.last_error_at || null,
   };
+}
+
+function listRuntimePublicConfigs(db, serviceType) {
+  return getRuntimeConfigCandidates(db, serviceType, { includeCoolingDown: true })
+    .map(toPublicRuntimeConfig);
 }
 
 function clearOtherDefault(db, serviceType, exceptId) {
@@ -206,6 +217,15 @@ function updateConfig(db, log, id, req) {
   if (typeof req.is_active === 'boolean') {
     updates.push('is_active = ?');
     params.push(req.is_active ? 1 : 0);
+    if (req.is_active) {
+      updates.push('health_status = ?');
+      params.push('ok');
+      updates.push('disabled_until = ?');
+      params.push(null);
+    } else {
+      updates.push('health_status = ?');
+      params.push('disabled');
+    }
   }
   if (updates.length === 0) return existing;
   params.push(new Date().toISOString(), id);
@@ -239,6 +259,11 @@ function rowToConfig(r) {
     priority: r.priority ?? 0,
     is_default: !!r.is_default,
     is_active: r.is_active == null ? true : !!r.is_active,
+    health_status: r.health_status || 'ok',
+    disabled_until: r.disabled_until || null,
+    last_error: r.last_error || null,
+    last_error_at: r.last_error_at || null,
+    failure_count: Number(r.failure_count || 0),
     settings: r.settings,
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -252,6 +277,125 @@ function rowToConfig(r) {
     } catch (_) {}
   }
   return cfg;
+}
+
+function isInCooldown(cfg, nowMs = Date.now()) {
+  if (!cfg || !cfg.disabled_until) return false;
+  const until = Date.parse(cfg.disabled_until);
+  return Number.isFinite(until) && until > nowMs;
+}
+
+function getRuntimeConfigCandidates(db, serviceType, options = {}) {
+  const list = listConfigs(db, serviceType);
+  const nowMs = Date.now();
+  const includeCoolingDown = !!options.includeCoolingDown;
+  const includeInactive = !!options.includeInactive;
+  const requestedId = options.config_id != null || options.ai_config_id != null
+    ? Number(options.config_id ?? options.ai_config_id)
+    : null;
+  const preferredModel = options.model || options.preferredModel || null;
+
+  let candidates = list.filter((cfg) => {
+    if (!includeInactive && cfg.is_active === false) return false;
+    if (!includeCoolingDown && isInCooldown(cfg, nowMs)) return false;
+    return true;
+  });
+
+  if (requestedId && Number.isFinite(requestedId)) {
+    const requested = list.find((cfg) => Number(cfg.id) === requestedId);
+    if (!requested || (!includeInactive && requested.is_active === false)) return [];
+    if (!includeCoolingDown && isInCooldown(requested, nowMs)) return [];
+    const rest = options.fallback === false
+      ? []
+      : candidates.filter((cfg) => Number(cfg.id) !== requestedId);
+    return [requested, ...rest];
+  }
+
+  if (preferredModel) {
+    const model = String(preferredModel).trim();
+    const matched = candidates.filter((cfg) => {
+      const models = Array.isArray(cfg.model) ? cfg.model : (cfg.model != null ? [cfg.model] : []);
+      return models.includes(model);
+    });
+    const rest = candidates.filter((cfg) => !matched.some((m) => Number(m.id) === Number(cfg.id)));
+    return [...matched, ...rest];
+  }
+
+  return candidates;
+}
+
+function sanitizeErrorMessage(err) {
+  const raw = typeof err === 'string' ? err : (err?.message || String(err || ''));
+  return raw
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer ***')
+    .replace(/sk-[A-Za-z0-9_-]{12,}/gi, 'sk-***')
+    .slice(0, 500);
+}
+
+function classifyAiFailure(err) {
+  const msg = sanitizeErrorMessage(err);
+  const lower = msg.toLowerCase();
+  const statusMatch = msg.match(/\bhttp\s+(\d{3})\b/i) || msg.match(/\bstatus(?:Code)?[:= ]+(\d{3})\b/i);
+  const status = statusMatch ? Number(statusMatch[1]) : 0;
+  const now = Date.now();
+  const until = (minutes) => new Date(now + minutes * 60 * 1000).toISOString();
+
+  if (
+    /quota|insufficient_quota|billing|balance|credit|resource exhausted/i.test(msg)
+    || /额度|余额|欠费|用量|账单|资源已耗尽/.test(msg)
+  ) {
+    return { message: msg, health_status: 'disabled', disabled_until: null, disableActive: true, fallbackable: true, reason: 'quota' };
+  }
+  if (status === 401 || status === 403 || /invalid api key|unauthorized|forbidden|permission denied|api key.*invalid|鉴权|认证|无权限/i.test(msg)) {
+    return { message: msg, health_status: 'disabled', disabled_until: null, disableActive: true, fallbackable: true, reason: 'auth' };
+  }
+  if (status === 429 || /rate limit|too many requests|限流|请求过多/i.test(msg)) {
+    return { message: msg, health_status: 'cooldown', disabled_until: until(30), disableActive: false, fallbackable: true, reason: 'rate_limit' };
+  }
+  if (status >= 500 || /timeout|timed out|fetch failed|network|econnreset|etimedout|socket hang up|超时|网络/i.test(msg)) {
+    return { message: msg, health_status: 'cooldown', disabled_until: until(10), disableActive: false, fallbackable: true, reason: 'transient' };
+  }
+  if (/返回内容为空|empty|未返回|no image|no video/i.test(msg)) {
+    return { message: msg, health_status: 'cooldown', disabled_until: until(5), disableActive: false, fallbackable: true, reason: 'empty_result' };
+  }
+  return { message: msg, health_status: 'failed', disabled_until: null, disableActive: false, fallbackable: false, reason: 'request_error' };
+}
+
+function recordConfigSuccess(db, configId) {
+  if (!configId) return;
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE ai_service_configs
+     SET health_status = 'ok', disabled_until = NULL, failure_count = 0, updated_at = ?
+     WHERE id = ? AND deleted_at IS NULL`
+  ).run(now, configId);
+}
+
+function recordConfigFailure(db, configId, err) {
+  if (!configId) return classifyAiFailure(err);
+  const info = classifyAiFailure(err);
+  const now = new Date().toISOString();
+  const updates = [
+    'failure_count = COALESCE(failure_count, 0) + 1',
+    'health_status = ?',
+    'disabled_until = ?',
+    'last_error = ?',
+    'last_error_at = ?',
+    'updated_at = ?',
+  ];
+  const params = [
+    info.health_status,
+    info.disabled_until,
+    info.message,
+    now,
+    now,
+  ];
+  if (info.disableActive) {
+    updates.push('is_active = 0');
+  }
+  params.push(configId);
+  db.prepare(`UPDATE ai_service_configs SET ${updates.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...params);
+  return info;
 }
 
 /**
@@ -583,6 +727,11 @@ function bulkUpdateApiKey(db, log, newKey) {
 module.exports = {
   listConfigs,
   getActivePublicConfig,
+  listRuntimePublicConfigs,
+  getRuntimeConfigCandidates,
+  recordConfigSuccess,
+  recordConfigFailure,
+  classifyAiFailure,
   getConfig,
   createConfig,
   updateConfig,

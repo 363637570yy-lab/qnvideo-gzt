@@ -791,17 +791,14 @@ function parseKlingOmniPollVideoUrl(data) {
 
 // ??????????????????listConfigs ?? is_default DESC, priority DESC ??
 function getDefaultVideoConfig(db, preferredModel) {
-  const configs = aiConfigService.listConfigs(db, 'video');
-  const active = configs.filter((c) => c.is_active);
-  if (active.length === 0) return null;
-  if (preferredModel) {
-    for (const c of active) {
-      const models = Array.isArray(c.model) ? c.model : (c.model != null ? [c.model] : []);
-      if (models.includes(preferredModel)) return c;
-    }
-  }
-  const defaultOne = active.find((c) => c.is_default);
-  return defaultOne != null ? defaultOne : active[0];
+  return getVideoConfigCandidates(db, preferredModel)[0] || null;
+}
+
+function getVideoConfigCandidates(db, preferredModel, configId) {
+  return aiConfigService.getRuntimeConfigCandidates(db, 'video', {
+    model: preferredModel,
+    config_id: configId,
+  });
 }
 
 // ?????? API ????? /contents/generations/tasks?base ???????????????
@@ -2947,6 +2944,49 @@ function resolveVolcClassicImage(rawUrl, files_base_url, storage_local_path, log
  * @returns {Promise<{ task_id?: string, video_url?: string, error?: string }>}
  */
 async function callVideoApi(db, log, opts) {
+  const candidates = getVideoConfigCandidates(
+    db,
+    opts.model,
+    opts.ai_config_id || opts.video_config_id || opts.config_id
+  );
+  if (candidates.length === 0) {
+    throw new Error('未配置视频模型，请在「AI 配置」中添加 video 类型且已启用的配置');
+  }
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const config = candidates[i];
+    try {
+      const result = await callVideoApiWithConfig(db, log, opts, config);
+      if (result?.error) {
+        lastError = new Error(result.error);
+        const failure = aiConfigService.recordConfigFailure(db, config.id, lastError);
+        log.warn('[视频] 当前配置失败，尝试下一个可用配置', {
+          config_id: config.id,
+          reason: failure.reason,
+          fallbackable: failure.fallbackable,
+          error: failure.message,
+        });
+        if (failure.fallbackable && i < candidates.length - 1) continue;
+        return result;
+      }
+      aiConfigService.recordConfigSuccess(db, config.id);
+      return result;
+    } catch (err) {
+      lastError = err;
+      const failure = aiConfigService.recordConfigFailure(db, config.id, err);
+      log.warn('[视频] 当前配置异常，尝试下一个可用配置', {
+        config_id: config.id,
+        reason: failure.reason,
+        fallbackable: failure.fallbackable,
+        error: failure.message,
+      });
+      if (!failure.fallbackable || i === candidates.length - 1) break;
+    }
+  }
+  return { error: lastError?.message || '视频生成失败' };
+}
+
+async function callVideoApiWithConfig(db, log, opts, config) {
   const {
     prompt,
     model: preferredModel,
@@ -2965,9 +3005,8 @@ async function callVideoApi(db, log, opts) {
     storage_local_path,
     video_gen_id
   } = opts;
-  const config = getDefaultVideoConfig(db, preferredModel);
   if (!config) {
-    throw new Error('???????????AI ?????? video ?????????');
+    throw new Error('未配置视频模型，请在「AI 配置」中添加 video 类型且已启用的配置');
   }
   const model = getModelFromConfig(config, preferredModel);
   const provider = (config.provider || '').toLowerCase();
@@ -3624,6 +3663,7 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
 
 module.exports = {
   getDefaultVideoConfig,
+  getVideoConfigCandidates,
   callVideoApi,
   pollVideoTask,
   normalizeAspectRatioForApi,

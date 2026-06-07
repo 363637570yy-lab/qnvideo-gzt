@@ -109,28 +109,27 @@ function inferProtocol(provider, model) {
  * @param {string} [imageServiceType] - 'image' 文本生成图片（角色/场景/道具），'storyboard_image' 分镜图片生成（支持参考图）；缺省为 'image'
  */
 function getDefaultImageConfig(db, preferredModel, preferredProvider, imageServiceType) {
+  return getImageConfigCandidates(db, preferredModel, preferredProvider, imageServiceType)[0] || null;
+}
+
+function getImageConfigCandidates(db, preferredModel, preferredProvider, imageServiceType, configId) {
   const serviceType = imageServiceType || 'image';
-  let configs = aiConfigService.listConfigs(db, serviceType);
-  if (configs.length === 0 && serviceType === 'storyboard_image') {
-    configs = aiConfigService.listConfigs(db, 'image');
+  let active = aiConfigService.getRuntimeConfigCandidates(db, serviceType, {
+    model: preferredModel,
+    config_id: configId,
+  });
+  if (active.length === 0 && serviceType === 'storyboard_image') {
+    active = aiConfigService.getRuntimeConfigCandidates(db, 'image', {
+      model: preferredModel,
+      config_id: configId,
+    });
   }
-  let active = configs.filter((c) => c.is_active);
-  if (active.length === 0) return null;
   if (preferredProvider && String(preferredProvider).trim()) {
     const want = String(preferredProvider).trim().toLowerCase();
     const byProvider = active.filter((c) => (c.provider || '').toLowerCase() === want);
     if (byProvider.length > 0) active = byProvider;
   }
-  if (preferredModel) {
-    for (const c of active) {
-      const models = Array.isArray(c.model) ? c.model : (c.model != null ? [c.model] : []);
-      if (models.includes(preferredModel)) return c;
-    }
-  }
-  // 显式使用前端设置的「默认」：优先 is_default，再按 priority 降序（listConfigs 已按 is_default DESC, priority DESC 排序，取第一个即可）
-  const defaultOne = active.find((c) => c.is_default);
-  if (defaultOne) return defaultOne;
-  return active[0];
+  return active;
 }
 
 // 与 Go image_generation_service 一致：openai/chatfire 使用 "/images/generations"，base_url 通常已含 /v1
@@ -1313,6 +1312,52 @@ async function callGeminiImageApi(db, config, log, opts) {
  * @returns {Promise<{ image_url?: string, error?: string }>}
  */
 async function callImageApi(db, log, opts) {
+  const preferredProvider = opts.preferred_provider ?? opts.preferredProvider;
+  const candidates = getImageConfigCandidates(
+    db,
+    opts.model,
+    preferredProvider,
+    opts.imageServiceType,
+    opts.ai_config_id || opts.image_config_id || opts.config_id
+  );
+  if (candidates.length === 0) {
+    throw new Error('未配置图片模型，请在「AI 配置」中添加 image 类型且已启用的配置');
+  }
+  let lastError = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const config = candidates[i];
+    try {
+      const result = await callImageApiWithConfig(db, log, opts, config);
+      if (result?.error) {
+        lastError = new Error(result.error);
+        const failure = aiConfigService.recordConfigFailure(db, config.id, lastError);
+        log.warn('[图生] 当前配置失败，尝试下一个可用配置', {
+          config_id: config.id,
+          reason: failure.reason,
+          fallbackable: failure.fallbackable,
+          error: failure.message,
+        });
+        if (failure.fallbackable && i < candidates.length - 1) continue;
+        return result;
+      }
+      aiConfigService.recordConfigSuccess(db, config.id);
+      return result;
+    } catch (err) {
+      lastError = err;
+      const failure = aiConfigService.recordConfigFailure(db, config.id, err);
+      log.warn('[图生] 当前配置异常，尝试下一个可用配置', {
+        config_id: config.id,
+        reason: failure.reason,
+        fallbackable: failure.fallbackable,
+        error: failure.message,
+      });
+      if (!failure.fallbackable || i === candidates.length - 1) break;
+    }
+  }
+  return { error: lastError?.message || '图片生成失败' };
+}
+
+async function callImageApiWithConfig(db, log, opts, config) {
   const {
     prompt,
     model: preferredModel,
@@ -1330,8 +1375,6 @@ async function callImageApi(db, log, opts) {
     system_prompt,
     user_negative_prompt,
   } = opts;
-  const preferredProvider = preferred_provider ?? opts.preferredProvider;
-  const config = getDefaultImageConfig(db, preferredModel, preferredProvider, imageServiceType);
   if (!config) {
     throw new Error('未配置图片模型，请在「AI 配置」中添加 image 类型且已启用的配置');
   }
@@ -1529,6 +1572,8 @@ function createAndGenerateImage(db, log, opts) {
     size,
     quality,
     provider,
+    ai_config_id,
+    image_config_id,
     user_negative_prompt,
   } = opts;
   const negRow = (user_negative_prompt && String(user_negative_prompt).trim()) || null;
@@ -1547,8 +1592,8 @@ function createAndGenerateImage(db, log, opts) {
   let imageGenId;
   try {
     const info = db.prepare(
-      `INSERT INTO image_generations (drama_id, character_id, scene_id, provider, prompt, negative_prompt, model, size, quality, status, task_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+      `INSERT INTO image_generations (drama_id, character_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, size, quality, status, task_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
     ).run(
       dramaIdNum,
       charIdNum,
@@ -1557,6 +1602,7 @@ function createAndGenerateImage(db, log, opts) {
       prompt || '',
       negRow,
       model || null,
+      ai_config_id || image_config_id || null,
       size || null,
       quality || null,
       taskId,
@@ -1567,9 +1613,9 @@ function createAndGenerateImage(db, log, opts) {
   } catch (e) {
     if ((e.message || '').includes('scene_id') || (e.message || '').includes('character_id')) {
       const info = db.prepare(
-        `INSERT INTO image_generations (drama_id, provider, prompt, model, size, quality, status, task_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
-      ).run(dramaIdNum, provider || 'openai', prompt || '', model || null, size || null, quality || null, taskId, now, now);
+        `INSERT INTO image_generations (drama_id, provider, prompt, model, ai_config_id, size, quality, status, task_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+      ).run(dramaIdNum, provider || 'openai', prompt || '', model || null, ai_config_id || image_config_id || null, size || null, quality || null, taskId, now, now);
       imageGenId = info.lastInsertRowid;
     } else {
       throw e;
@@ -1588,6 +1634,7 @@ function createAndGenerateImage(db, log, opts) {
         character_id: character_id,
         image_type,
         image_gen_id: imageGenId,
+        ai_config_id: ai_config_id || image_config_id || undefined,
         user_negative_prompt: user_negative_prompt || undefined,
       });
       const now2 = new Date().toISOString();

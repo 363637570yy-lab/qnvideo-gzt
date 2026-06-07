@@ -92,7 +92,7 @@ export function useScenes(deps) {
 
 
   // ── 函数 ──────────────────────────────────────────────
-  async function onExtractScenes() {
+  async function onExtractScenes(options = {}) {
     if (!currentEpisodeId.value) return
     const epId = currentEpisodeId.value
     const meta = buildExtractTaskMeta(store, dramaId.value, epId, GEN_RESOURCE.EXTRACT_SCENES, '提取场景')
@@ -101,7 +101,8 @@ export function useScenes(deps) {
       const res = await dramaAPI.extractBackgrounds(epId, {
         model: undefined,
         style: getSelectedStyle(),
-        language: scriptLanguage.value
+        language: scriptLanguage.value,
+        ...options,
       })
       const taskId = res?.task_id
       if (taskId) {
@@ -309,7 +310,7 @@ export function useScenes(deps) {
     }
   }
 
-  async function onGenerateSceneImage(scene, useQuadGrid = false) {
+  async function onGenerateSceneImage(scene, useQuadGrid = false, options = {}) {
     scene.errorMsg = ''
     scene.error_msg = ''
     const meta = buildSceneImageMeta(scene)
@@ -320,7 +321,8 @@ export function useScenes(deps) {
         scene_id: scene.id,
         model: undefined,
         style: getSelectedStyle(),
-        use_quad_grid: !!useQuadGrid
+        use_quad_grid: !!useQuadGrid,
+        ...options,
       })
       const taskId = res?.image_generation?.task_id ?? res?.task_id
       if (taskId) {

@@ -76,6 +76,7 @@ async function processCharacterGeneration(db, cfg, log, taskID, req) {
     text = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
       scene_key: 'role_extraction',
       model: req.model || undefined,
+      ai_config_id: req.ai_config_id || req.text_config_id || undefined,
       temperature,
       max_tokens: maxTokensForChars,
     });
@@ -200,6 +201,8 @@ function generateCharacters(db, cfg, log, req) {
       outline: req.outline,
       temperature: req.temperature,
       model: req.model,
+      ai_config_id: req.ai_config_id,
+      text_config_id: req.text_config_id,
     }).catch((err) => {
       log.error('processCharacterGeneration fatal', { error: err.message, task_id: task.id });
     });

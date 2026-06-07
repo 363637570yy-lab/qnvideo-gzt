@@ -103,7 +103,7 @@ export function useCharacters(deps) {
   function charRoleLabel(role) { return CHAR_ROLE_LABEL[role] || role || '' }
 
   // ── 核心函数 ──────────────────────────────────────────
-  async function onGenerateCharacters() {
+  async function onGenerateCharacters(options = {}) {
     if (!store.dramaId) return
     const epId = currentEpisodeId.value
     if (!epId) {
@@ -117,7 +117,8 @@ export function useCharacters(deps) {
         (store.scriptContent || '').toString().trim() || undefined
       const res = await generationAPI.generateCharacters(store.dramaId, {
         episode_id: epId,
-        outline: outline || undefined
+        outline: outline || undefined,
+        ...options,
       })
       const taskId = res?.task_id
       if (taskId) {
@@ -332,14 +333,14 @@ export function useCharacters(deps) {
     }
   }
 
-  async function onGenerateCharacterImage(char) {
+  async function onGenerateCharacterImage(char, options = {}) {
     char.errorMsg = ''
     char.error_msg = ''
     const meta = buildCharImageMeta(char)
     generatingCharIds.add(char.id)
     genStore.markRunning(meta)
     try {
-      const res = await characterAPI.generateImage(char.id, undefined, getSelectedStyle())
+      const res = await characterAPI.generateImage(char.id, undefined, getSelectedStyle(), options)
       const taskId = res?.image_generation?.task_id ?? res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)

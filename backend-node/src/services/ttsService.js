@@ -116,53 +116,74 @@ async function synthesizeWithOpenai(text, voice, apiKey, baseUrl, model, speed) 
  * 合成 TTS 并保存到本地文件
  * @returns {{ local_path: string, audio_url: string }}
  */
-async function synthesize(db, log, { text, storyboard_id, config, storage_base, voice_id, speed }) {
+async function synthesize(db, log, { text, storyboard_id, config, storage_base, voice_id, speed, ai_config_id, tts_config_id }) {
   if (!text || !text.trim()) throw new Error('text 不能为空');
   const aiConfigService = require('./aiConfigService');
-  const ttsConfig = config || (() => {
-    const configs = aiConfigService.listConfigs(db, 'tts');
-    const active = configs.filter((c) => c.is_active);
-    return active.find((c) => c.is_default) || active[0];
-  })();
-  if (!ttsConfig) throw new Error('未配置 TTS 模型，请在「AI 配置」中添加 service_type=tts 的配置');
-
-  const provider = (ttsConfig.provider || '').toLowerCase();
-  let ttsSettings = {};
-  try { ttsSettings = JSON.parse(ttsConfig.settings || '{}'); } catch (_) {}
-  // 外部传入的 voice_id / speed 优先（海外化场景），否则取配置值
-  const voiceId = voice_id || ttsConfig.voice_id || ttsSettings.voice_id || '';
-  const groupId = ttsConfig.group_id || ttsSettings.group_id || '';
-  const ttsModel = ttsConfig.default_model || (Array.isArray(ttsConfig.model) ? ttsConfig.model[0] : ttsConfig.model) || '';
-  const finalSpeed = speed || ttsSettings.speed || 1.0;
-  let audioBuffer;
-
-  if (provider === 'minimax') {
-    audioBuffer = await synthesizeWithMinimax(
-      text,
-      voiceId || 'female-shaonv',
-      ttsConfig.api_key,
-      groupId,
-      ttsModel || 'speech-02-hd'
-    );
-  } else if (provider === 'openai' || ttsConfig.base_url) {
-    log?.info?.('TTS synthesize with OpenAI-compatible provider', {
-      provider: provider || 'openai-compatible',
-      voice: voiceId || null,
-      base_url: ttsConfig.base_url || null,
-      model: ttsModel || null,
-      text_length: text.length,
+  const candidates = config
+    ? [config]
+    : aiConfigService.getRuntimeConfigCandidates(db, 'tts', {
+      config_id: ai_config_id || tts_config_id || null,
     });
-    audioBuffer = await synthesizeWithOpenai(
-      text,
-      voiceId || 'alloy',
-      ttsConfig.api_key,
-      ttsConfig.base_url,
-      ttsModel || 'tts-1',
-      finalSpeed
-    );
-  } else {
-    throw new Error(`不支持的 TTS provider: ${provider}，目前支持 openai、minimax`);
+  if (!candidates.length) throw new Error('未配置 TTS 模型，请在「AI 配置」中添加 service_type=tts 的配置');
+  let audioBuffer;
+  let provider = '';
+  let ttsModel = '';
+  let lastError = null;
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const ttsConfig = candidates[i];
+    provider = (ttsConfig.provider || '').toLowerCase();
+    let ttsSettings = {};
+    try { ttsSettings = JSON.parse(ttsConfig.settings || '{}'); } catch (_) {}
+    const voiceId = voice_id || ttsConfig.voice_id || ttsSettings.voice_id || '';
+    const groupId = ttsConfig.group_id || ttsSettings.group_id || '';
+    ttsModel = ttsConfig.default_model || (Array.isArray(ttsConfig.model) ? ttsConfig.model[0] : ttsConfig.model) || '';
+    const finalSpeed = speed || ttsSettings.speed || 1.0;
+
+    try {
+      if (provider === 'minimax') {
+        audioBuffer = await synthesizeWithMinimax(
+          text,
+          voiceId || 'female-shaonv',
+          ttsConfig.api_key,
+          groupId,
+          ttsModel || 'speech-02-hd'
+        );
+      } else if (provider === 'openai' || ttsConfig.base_url) {
+        log?.info?.('TTS synthesize with OpenAI-compatible provider', {
+          config_id: ttsConfig.id,
+          provider: provider || 'openai-compatible',
+          voice: voiceId || null,
+          base_url: ttsConfig.base_url || null,
+          model: ttsModel || null,
+          text_length: text.length,
+        });
+        audioBuffer = await synthesizeWithOpenai(
+          text,
+          voiceId || 'alloy',
+          ttsConfig.api_key,
+          ttsConfig.base_url,
+          ttsModel || 'tts-1',
+          finalSpeed
+        );
+      } else {
+        throw new Error(`不支持的 TTS provider: ${provider}，目前支持 openai、minimax`);
+      }
+      aiConfigService.recordConfigSuccess(db, ttsConfig.id);
+      break;
+    } catch (err) {
+      lastError = err;
+      const failure = aiConfigService.recordConfigFailure(db, ttsConfig.id, err);
+      log?.warn?.('[TTS] 当前配置失败，尝试下一个可用配置', {
+        config_id: ttsConfig.id,
+        reason: failure.reason,
+        fallbackable: failure.fallbackable,
+        error: failure.message,
+      });
+      if (!failure.fallbackable || i === candidates.length - 1) break;
+    }
   }
+  if (!audioBuffer) throw lastError || new Error('TTS 合成失败');
 
   // 保存到本地
   const audioDir = path.join(storage_base, 'audio');

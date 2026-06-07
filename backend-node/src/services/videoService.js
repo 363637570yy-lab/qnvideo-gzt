@@ -68,6 +68,7 @@ function rowToItem(r) {
     provider: r.provider,
     prompt: r.prompt,
     model: r.model,
+    ai_config_id: r.ai_config_id,
     image_gen_id: r.image_gen_id,
     image_url: r.image_url,
     video_url: r.video_url,
@@ -229,7 +230,7 @@ async function processVideoGeneration(db, log, videoGenId) {
     const storageLocalPath = path.isAbsolute(cfg.storage?.local_path)
       ? cfg.storage.local_path
       : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
-    const config = videoClient.getDefaultVideoConfig(db, row.model);
+    const config = videoClient.getVideoConfigCandidates(db, row.model, row.ai_config_id)[0] || null;
     if (!config) {
       setVideoGenFailed(db, videoGenId, '未配置视频模型', now);
       if (row.task_id) taskService.updateTaskError(db, row.task_id, '未配置视频模型');
@@ -272,6 +273,7 @@ async function processVideoGeneration(db, log, videoGenId) {
     const result = await videoClient.callVideoApi(db, log, {
       prompt: row.prompt,
       model: row.model,
+      ai_config_id: row.ai_config_id || undefined,
       duration: effectiveDuration,
       aspect_ratio: rowForAspect.aspect_ratio,
       resolution: row.resolution,

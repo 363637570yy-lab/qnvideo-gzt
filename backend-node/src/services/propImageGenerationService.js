@@ -73,6 +73,7 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
       drama_id: prop.drama_id,
       model: model || undefined,
       preferred_provider: preferredProvider || undefined,
+      ai_config_id: opts?.ai_config_id || opts?.image_config_id || undefined,
       user_negative_prompt: userNeg || undefined,
     });
   } catch (err) {

@@ -287,6 +287,7 @@ function generateStoryboard(db, log) {
         aspect_ratio: body.aspect_ratio,
         include_narration: body.include_narration,
         universal_omni_storyboard: body.universal_omni_storyboard,
+        ai_config_id: body.ai_config_id || body.text_config_id || null,
       });
       response.success(res, resData);
     } catch (err) {

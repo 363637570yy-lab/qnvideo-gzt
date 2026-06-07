@@ -50,8 +50,9 @@ function generateImage(db, log) {
     if (isNaN(id)) return response.badRequest(res, '无效的ID');
     const model = req.body?.model != null ? String(req.body.model).trim() || null : null;
     const style = req.body?.style != null ? String(req.body.style).trim() || null : null;
+    const aiConfigId = req.body?.ai_config_id || req.body?.image_config_id || null;
     try {
-      const taskId = propImageGenerationService.generatePropImage(db, log, id, { model, style });
+      const taskId = propImageGenerationService.generatePropImage(db, log, id, { model, style, ai_config_id: aiConfigId });
       response.success(res, { task_id: taskId });
     } catch (err) {
       if (err.message === '道具不存在') return response.notFound(res, err.message);
@@ -68,7 +69,14 @@ function extractProps(db, log, cfg) {
     const episodeId = req.params.episode_id;
     if (!episodeId) return response.badRequest(res, '缺少 episode_id');
     try {
-      const taskId = propExtractionService.extractPropsForEpisode(db, log, episodeId, cfg);
+      const body = req.body || {};
+      const taskId = propExtractionService.extractPropsForEpisode(
+        db,
+        log,
+        episodeId,
+        cfg,
+        body.ai_config_id || body.text_config_id || null
+      );
       response.success(res, { task_id: taskId });
     } catch (err) {
       if (err.message === 'episode not found' || err.message?.includes('剧本内容为空')) {

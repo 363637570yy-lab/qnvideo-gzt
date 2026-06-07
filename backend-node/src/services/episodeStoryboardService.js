@@ -61,7 +61,7 @@ function isMaxTokensParamError(errMsg) {
 }
 
 async function generateTextForStoryboard(db, log, userPrompt, systemPrompt, options = {}) {
-  const { model, streamCallback, temperature = 0.7 } = options;
+  const { model, streamCallback, temperature = 0.7, ai_config_id, text_config_id } = options;
 
   // 第一次尝试：带 max_tokens:16384
   log.info('Storyboard generateText attempt 1', { model: model || '(default)', max_tokens: DEFAULT_STORYBOARD_MAX_TOKENS });
@@ -69,6 +69,7 @@ async function generateTextForStoryboard(db, log, userPrompt, systemPrompt, opti
     const text = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
       scene_key: 'storyboard_extraction',
       model: model || undefined,
+      ai_config_id: ai_config_id || text_config_id || undefined,
       temperature,
       max_tokens: DEFAULT_STORYBOARD_MAX_TOKENS,
       streamCallback,
@@ -85,6 +86,7 @@ async function generateTextForStoryboard(db, log, userPrompt, systemPrompt, opti
       const text = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
         scene_key: 'storyboard_extraction',
         model: model || undefined,
+        ai_config_id: ai_config_id || text_config_id || undefined,
         temperature,
         streamCallback,
       });
@@ -840,7 +842,7 @@ ${lastCtx}
 ${originalUserPrompt}`;
 }
 
-async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, model, style, userPrompt, systemPrompt, includeNarration, universalOmni, targetClipDurationSec = null) {
+async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, model, style, userPrompt, systemPrompt, includeNarration, universalOmni, targetClipDurationSec = null, aiConfigId = null) {
   // 增量保存状态放在 try 外，catch 里可用于部分恢复
   const episodeIdNum = Number(episodeId);
   const streamSavedNums = new Set();
@@ -870,6 +872,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
     // {"storyboards":[...]} 或产生乱码 key，改由 extractFirstArray 统一处理任意包装格式。
     const text = await generateTextForStoryboard(db, log, userPrompt, systemPrompt, {
       model: model || undefined,
+      ai_config_id: aiConfigId || undefined,
       // 每积累约 400 字符触发一次增量解析，尝试提前保存已完成的分镜
       streamCallback: (accumulated) => {
         if (accumulated.length - streamThrottle < 400) return;
@@ -984,6 +987,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       try {
         contText = await generateTextForStoryboard(db, log, contPrompt, systemPrompt, {
           model: model || undefined,
+          ai_config_id: aiConfigId || undefined,
           streamCallback: (accumulated) => {
             if (accumulated.length - streamThrottle < 400) return;
             streamThrottle = accumulated.length;
@@ -1096,7 +1100,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
   }
 }
 
-function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni) {
+function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, includeNarration, universalOmni, aiConfigId) {
   const cfg = loadConfig();
   const episode = db.prepare(
     'SELECT id, script_content, description, drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL'
@@ -1310,7 +1314,8 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
       systemPrompt,
       wantNarration,
       wantUniversalOmni,
-      clipSec
+      clipSec,
+      aiConfigId
     );
   });
 

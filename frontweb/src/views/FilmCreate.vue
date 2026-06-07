@@ -371,6 +371,26 @@
             :options="generationStyleOptions"
             @change="() => saveProjectSettings(true)"
           />
+          <div class="ai-route-selects">
+            <el-select
+              v-for="routeItem in aiRouteTypes"
+              :key="routeItem.key"
+              v-model="selectedAiConfigIds[routeItem.key]"
+              :placeholder="routeItem.label + '配置'"
+              :loading="aiRouteLoading"
+              clearable
+              filterable
+              class="ai-route-select"
+            >
+              <el-option label="按排序自动" value="" />
+              <el-option
+                v-for="cfg in runtimeAiConfigs[routeItem.key]"
+                :key="cfg.id"
+                :label="configOptionLabel(cfg)"
+                :value="String(cfg.id)"
+              />
+            </el-select>
+          </div>
           <el-button
             type="primary"
             :loading="pipelineRunning && !pipelinePaused"
@@ -2665,8 +2685,86 @@ function goList() {
 
 const showAiConfigDialog = ref(false)
 watch(showAiConfigDialog, (open) => {
-  if (!open) invalidateActiveVideoAiConfigCache()
+  if (!open) {
+    invalidateActiveVideoAiConfigCache()
+    loadRuntimeAiConfigs()
+  }
 })
+const aiRouteLoading = ref(false)
+const aiRouteTypes = [
+  { key: 'text', label: '文本' },
+  { key: 'image', label: '素材图' },
+  { key: 'storyboard_image', label: '分镜图' },
+  { key: 'video', label: '视频' },
+  { key: 'tts', label: '音频' },
+]
+const runtimeAiConfigs = reactive({
+  text: [],
+  image: [],
+  storyboard_image: [],
+  video: [],
+  tts: [],
+})
+const selectedAiConfigIds = reactive({
+  text: '',
+  image: '',
+  storyboard_image: '',
+  video: '',
+  tts: '',
+})
+
+function configOptionLabel(cfg) {
+  const name = cfg?.name || cfg?.provider || '未命名配置'
+  const model = cfg?.default_model || (Array.isArray(cfg?.model) ? cfg.model[0] : '')
+  const status = cfg?.health_status && cfg.health_status !== 'ok' ? ` · ${cfg.health_status}` : ''
+  return `${name}${model ? ' · ' + model : ''}${status}`
+}
+
+function aiRoutePayload(type, field = 'ai_config_id') {
+  const id = Number(selectedAiConfigIds[type])
+  if (!Number.isFinite(id) || id <= 0) return {}
+  return { [field]: id }
+}
+
+function textAiPayload() {
+  return aiRoutePayload('text', 'text_config_id')
+}
+
+function imageAiPayload() {
+  return aiRoutePayload('image', 'image_config_id')
+}
+
+function storyboardImageAiPayload() {
+  return aiRoutePayload('storyboard_image', 'image_config_id')
+}
+
+function videoAiPayload() {
+  return aiRoutePayload('video', 'video_config_id')
+}
+
+function ttsAiPayload() {
+  return aiRoutePayload('tts', 'tts_config_id')
+}
+
+async function loadRuntimeAiConfigs() {
+  aiRouteLoading.value = true
+  try {
+    await Promise.all(aiRouteTypes.map(async ({ key }) => {
+      try {
+        const res = await aiAPI.runtimeList(key)
+        const rows = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : [])
+        runtimeAiConfigs[key] = rows
+        if (selectedAiConfigIds[key] && !rows.some((cfg) => String(cfg.id) === String(selectedAiConfigIds[key]))) {
+          selectedAiConfigIds[key] = ''
+        }
+      } catch (_) {
+        runtimeAiConfigs[key] = []
+      }
+    }))
+  } finally {
+    aiRouteLoading.value = false
+  }
+}
 const storyInput = ref('')
 const storyStyle = ref('')
 const storyType = ref('')
@@ -2857,7 +2955,7 @@ const {
   editCharLibrarySaving, addingCharToLibraryId, addingCharToMaterialId, addingCharFromLibraryId,
   charRoleLabel, onGenerateCharacters: onGenerateCharactersRaw, openAddCharacter, stopCharacterPromptPoll, editCharacter,
   saveCharRefImageIfAny, submitEditCharacter, doGenerateCharacterPrompt, doExtractCharFromImage,
-  extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter, onGenerateCharacterImage, onSd2CertifyCharacter, onSd2CertifyRefresh, sd2ActionLabel, onSd2PrimaryAction, openCharSd2CertDialog,
+  extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter, onGenerateCharacterImage: onGenerateCharacterImageRaw, onSd2CertifyCharacter, onSd2CertifyRefresh, sd2ActionLabel, onSd2PrimaryAction, openCharSd2CertDialog,
   onSd2VoicePrimaryAction, onSd2VoiceReplace, sd2VoiceActionLabel, playSd2Voice,
   loadCharLibraryList, debouncedLoadCharLibrary, loadDramaAllCharList, debouncedLoadDramaAllCharList,
   onCharLibraryDialogOpen, onCharLibraryTabChange, isCharAddToEpisodeLoading,
@@ -2880,7 +2978,7 @@ const {
   editPropLibrarySaving, addingPropToLibraryId, addingPropToMaterialId, addingPropFromLibraryId,
   onExtractProps: onExtractPropsRaw, stopPropPromptPoll, editProp, doGeneratePropPrompt, savePropRefImageIfAny,
   clearPropRefImage, doExtractPropFromImage, submitEditProp, submitAddProp,
-  onClosePropDialog, onDeleteProp, onGeneratePropImage,
+  onClosePropDialog, onDeleteProp, onGeneratePropImage: onGeneratePropImageRaw,
   loadPropLibraryList, debouncedLoadPropLibrary, loadDramaAllPropList, debouncedLoadDramaAllPropList,
   onPropLibraryDialogOpen, onPropLibraryTabChange, isPropAddToEpisodeLoading,
   openEditPropLibrary, submitEditPropLibrary,
@@ -2902,7 +3000,7 @@ const {
   editSceneLibrarySaving, addingSceneToLibraryId, addingSceneToMaterialId, addingSceneFromLibraryId,
   onExtractScenes: onExtractScenesRaw, openAddScene, stopScenePromptPoll, editScene, doGenerateScenePrompt, doGenerateSceneSinglePrompt,
   saveSceneRefImageIfAny, clearSceneRefImage, doExtractSceneFromImage, submitEditScene,
-  onCloseSceneDialog, onDeleteScene, onGenerateSceneImage,
+  onCloseSceneDialog, onDeleteScene, onGenerateSceneImage: onGenerateSceneImageRaw,
   loadSceneLibraryList, debouncedLoadSceneLibrary, loadDramaAllSceneList, debouncedLoadDramaAllSceneList,
   onSceneLibraryDialogOpen, onSceneLibraryTabChange, isSceneAddToEpisodeLoading,
   openEditSceneLibrary, submitEditSceneLibrary,
@@ -2914,7 +3012,7 @@ async function onGenerateCharacters() {
   trackFilmCreateAction('generate_characters_click')
   const beforeCount = (store.currentEpisode?.characters || []).length
   try {
-    await onGenerateCharactersRaw()
+    await onGenerateCharactersRaw(textAiPayload())
     const afterCount = (store.currentEpisode?.characters || []).length
     trackFilmCreateAction('generate_characters_complete', {
       extra: { before_count: beforeCount, after_count: afterCount },
@@ -2931,7 +3029,7 @@ async function onExtractProps() {
   trackFilmCreateAction('extract_props_click')
   const beforeCount = (store.props || []).length
   try {
-    await onExtractPropsRaw()
+    await onExtractPropsRaw(textAiPayload())
     const afterCount = (store.props || []).length
     trackFilmCreateAction('extract_props_complete', {
       extra: { before_count: beforeCount, after_count: afterCount },
@@ -2948,7 +3046,7 @@ async function onExtractScenes() {
   trackFilmCreateAction('extract_scenes_click')
   const beforeCount = (store.currentEpisode?.scenes || []).length
   try {
-    await onExtractScenesRaw()
+    await onExtractScenesRaw(textAiPayload())
     const afterCount = (store.currentEpisode?.scenes || []).length
     trackFilmCreateAction('extract_scenes_complete', {
       extra: { before_count: beforeCount, after_count: afterCount },
@@ -2959,6 +3057,18 @@ async function onExtractScenes() {
     })
     throw e
   }
+}
+
+async function onGenerateCharacterImage(char) {
+  return onGenerateCharacterImageRaw(char, imageAiPayload())
+}
+
+async function onGeneratePropImage(prop, useQuadGrid = false) {
+  return onGeneratePropImageRaw(prop, useQuadGrid, imageAiPayload())
+}
+
+async function onGenerateSceneImage(scene, useQuadGrid = false) {
+  return onGenerateSceneImageRaw(scene, useQuadGrid, imageAiPayload())
 }
 
 
@@ -4171,6 +4281,7 @@ async function onGenerateSbFrameImage(sb, slot) {
       aspect_ratio: projectAspectRatio.value || '16:9',
       reference_images: refImagesForCreate,
       use_first_frame_layout_lock: isLast ? !!lastFrameUseFirstLayoutLock.value : undefined,
+      ...storyboardImageAiPayload(),
     })
     ElMessage.success(isLast ? '尾帧生成任务已提交' : '首帧生成任务已提交')
     if (res?.task_id) {
@@ -4253,6 +4364,7 @@ async function onGenerateSbImage(sb) {
       style: getSelectedStyle(),
       frame_type: gridMode.value !== 'single' ? gridMode.value : undefined,
       aspect_ratio: projectAspectRatio.value || '16:9',
+      ...storyboardImageAiPayload(),
     })
     ElMessage.success('分镜图生成任务已提交')
     if (res?.task_id) {
@@ -4690,6 +4802,7 @@ async function onRegenAffectedSbImages(assetKey, affectedBoards) {
           style: getSelectedStyle(),
           frame_type: frameTypeForCreate,
           aspect_ratio: projectAspectRatio.value || '16:9',
+          ...storyboardImageAiPayload(),
         })
         if (res?.task_id) {
           const pollRes = await new Promise((resolve) => {
@@ -4888,6 +5001,7 @@ async function onGenerateStory() {
     onEpisodeSelect,
     storyGenerating,
     scriptGenerating,
+    aiConfigPayload: textAiPayload(),
     replaceRouteWhenNew: true,
     skipPostLoad: false,
     onComplete: ({ episodeCount }) => {
@@ -5443,7 +5557,7 @@ async function onTtsSbDialogue(sb) {
     const res = await fetch('/api/v1/audio/extract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ storyboard_id: sb.id, text: sb.dialogue, tts_kind: 'dialogue' }),
+      body: JSON.stringify({ storyboard_id: sb.id, text: sb.dialogue, tts_kind: 'dialogue', ...ttsAiPayload() }),
     })
     const data = await res.json()
     const businessOk = data.success === true || Number(data.code) === 200
@@ -5475,7 +5589,7 @@ async function onTtsSbNarration(sb) {
     const res = await fetch('/api/v1/audio/extract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ storyboard_id: sb.id, text, tts_kind: 'narration' }),
+      body: JSON.stringify({ storyboard_id: sb.id, text, tts_kind: 'narration', ...ttsAiPayload() }),
     })
     const data = await res.json()
     const businessOk = data.success === true || Number(data.code) === 200
@@ -6454,6 +6568,7 @@ async function onGenerateSbVideo(sb) {
       aspect_ratio: projectAspectRatio.value || '16:9',
       resolution: videoResolution.value || undefined,
       duration: getSbVideoDurationForApi(sb),
+      ...videoAiPayload(),
     })
     if (res?.task_id) {
       const pollRes = await pollTask(res.task_id, () => loadSingleStoryboardMedia(sb.id), meta)
@@ -6603,6 +6718,7 @@ async function onGenerateStoryboard() {
       aspect_ratio: projectAspectRatio.value || '16:9',
       include_narration: !!storyboardIncludeNarration.value,
       universal_omni_storyboard: !!storyboardUniversalOmni.value,
+      ...textAiPayload(),
     })
     const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
     if (taskId) {
@@ -6730,6 +6846,7 @@ async function startBatchImageGeneration() {
             style: getSelectedStyle(),
             frame_type: frameTypeForCreate,
             aspect_ratio: projectAspectRatio.value || '16:9',
+            ...storyboardImageAiPayload(),
           })
           if (res?.task_id) {
             const pollRes = await pollTask(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -6863,6 +6980,7 @@ async function startBatchVideoGeneration() {
             aspect_ratio: projectAspectRatio.value || '16:9',
             resolution: videoResolution.value || undefined,
             duration: getSbVideoDurationForApi(sb),
+            ...videoAiPayload(),
           })
           if (res?.task_id) {
             const pollRes = await pollTask(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -7156,7 +7274,7 @@ async function runOneClickPipeline(textOnly = false) {
       setPipelineStep(1, '提取角色...')
       try {
         const outline = (store.scriptContent || '').toString().trim() || (storyInput.value || '').toString().trim() || undefined
-        const res = await generationAPI.generateCharacters(dramaIdVal, { episode_id: store.currentEpisode?.id ?? undefined, outline: outline || undefined })
+        const res = await generationAPI.generateCharacters(dramaIdVal, { episode_id: store.currentEpisode?.id ?? undefined, outline: outline || undefined, ...textAiPayload() })
         const taskId = res?.task_id
         if (taskId) {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7181,7 +7299,7 @@ async function runOneClickPipeline(textOnly = false) {
     if (sceneList.length === 0) {
       setPipelineStep(2, '提取场景...')
       try {
-        const res = await dramaAPI.extractBackgrounds(episodeId, { model: undefined, style, language: scriptLanguage.value })
+        const res = await dramaAPI.extractBackgrounds(episodeId, { model: undefined, style, language: scriptLanguage.value, ...textAiPayload() })
         const taskId = res?.task_id
         if (taskId) {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7206,7 +7324,7 @@ async function runOneClickPipeline(textOnly = false) {
     if (propList.length === 0) {
       setPipelineStep(3, '提取道具...')
       try {
-        const res = await propAPI.extractFromScript(episodeId)
+        const res = await propAPI.extractFromScript(episodeId, textAiPayload())
         const taskId = res?.task_id
         if (taskId) {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7242,6 +7360,7 @@ async function runOneClickPipeline(textOnly = false) {
           video_duration: getVideoDurationForApi(),
           include_narration: !!storyboardIncludeNarration.value,
           universal_omni_storyboard: !!storyboardUniversalOmni.value,
+          ...textAiPayload(),
         })
         const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
         if (taskId) {
@@ -7317,7 +7436,7 @@ async function runOneClickPipeline(textOnly = false) {
         try {
           const stepName = '角色图 ' + (char.name || char.id)
           const ok = await pipelineWithRetry(stepName, async () => {
-            const res = await characterAPI.generateImage(char.id, undefined, style)
+            const res = await characterAPI.generateImage(char.id, undefined, style, imageAiPayload())
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7353,7 +7472,7 @@ async function runOneClickPipeline(textOnly = false) {
           const stepName = '场景图 ' + (scene.location || scene.id)
           const ok = await pipelineWithRetry(stepName, async () => {
             const useQuad = !!sceneUseQuadGrid.value
-            const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, use_quad_grid: useQuad })
+            const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, use_quad_grid: useQuad, ...imageAiPayload() })
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7388,7 +7507,7 @@ async function runOneClickPipeline(textOnly = false) {
         try {
           const stepName = '道具图 ' + (prop.name || prop.id)
           const ok = await pipelineWithRetry(stepName, async () => {
-            const res = await propAPI.generateImage(prop.id, undefined, style)
+            const res = await propAPI.generateImage(prop.id, undefined, style, imageAiPayload())
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7449,6 +7568,7 @@ async function runOneClickPipeline(textOnly = false) {
               style,
               frame_type: frameTypeForCreate,
               aspect_ratio: projectAspectRatio.value || '16:9',
+              ...storyboardImageAiPayload(),
             })
             if (res?.task_id) {
               const result = await pollTaskWithPause(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -7517,6 +7637,7 @@ async function runOneClickPipeline(textOnly = false) {
               aspect_ratio: projectAspectRatio.value || '16:9',
               resolution: videoResolution.value || undefined,
               duration: getSbVideoDurationForApi(sb),
+              ...videoAiPayload(),
             })
             if (res?.task_id) {
               const result = await pollTaskWithPause(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -7595,7 +7716,7 @@ async function runRepairPipeline() {
       pipelineCurrentStep.value = '正在生成角色列表...'
       try {
         const outline = (store.scriptContent || '').toString().trim() || (storyInput.value || '').toString().trim() || undefined
-        const res = await generationAPI.generateCharacters(dramaIdVal, { episode_id: store.currentEpisode?.id ?? undefined, outline: outline || undefined })
+        const res = await generationAPI.generateCharacters(dramaIdVal, { episode_id: store.currentEpisode?.id ?? undefined, outline: outline || undefined, ...textAiPayload() })
         const taskId = res?.task_id
         if (taskId) {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7617,7 +7738,7 @@ async function runRepairPipeline() {
         await checkPause()
         const stepName = '角色图 ' + (char.name || char.id)
         const ok = await pipelineWithRetry(stepName, async () => {
-          const res = await characterAPI.generateImage(char.id, undefined, style)
+          const res = await characterAPI.generateImage(char.id, undefined, style, imageAiPayload())
           const taskId = res?.image_generation?.task_id ?? res?.task_id
           if (taskId) {
             const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7643,7 +7764,7 @@ async function runRepairPipeline() {
       await checkPause()
       pipelineCurrentStep.value = '正在提取场景...'
       try {
-        const res = await dramaAPI.extractBackgrounds(episodeId, { model: undefined, style, language: scriptLanguage.value })
+        const res = await dramaAPI.extractBackgrounds(episodeId, { model: undefined, style, language: scriptLanguage.value, ...textAiPayload() })
         const taskId = res?.task_id
         if (taskId) {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7666,7 +7787,7 @@ async function runRepairPipeline() {
         const stepName = '场景图 ' + (scene.location || scene.id)
         const ok = await pipelineWithRetry(stepName, async () => {
           const useQuad = !!sceneUseQuadGrid.value
-          const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, use_quad_grid: useQuad })
+          const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, use_quad_grid: useQuad, ...imageAiPayload() })
           const taskId = res?.image_generation?.task_id ?? res?.task_id
           if (taskId) {
             const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7692,7 +7813,7 @@ async function runRepairPipeline() {
       await checkPause()
       pipelineCurrentStep.value = '正在提取道具...'
       try {
-        const res = await propAPI.extractFromScript(episodeId)
+        const res = await propAPI.extractFromScript(episodeId, textAiPayload())
         const taskId = res?.task_id
         if (taskId) {
           const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7716,7 +7837,7 @@ async function runRepairPipeline() {
         try {
           const stepName = '道具图 ' + (prop.name || prop.id)
           const ok = await pipelineWithRetry(stepName, async () => {
-            const res = await propAPI.generateImage(prop.id, undefined, style)
+            const res = await propAPI.generateImage(prop.id, undefined, style, imageAiPayload())
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -7752,6 +7873,7 @@ async function runRepairPipeline() {
           video_duration: getVideoDurationForApi(),
           include_narration: !!storyboardIncludeNarration.value,
           universal_omni_storyboard: !!storyboardUniversalOmni.value,
+          ...textAiPayload(),
         })
         const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
         if (taskId) {
@@ -7804,6 +7926,7 @@ async function runRepairPipeline() {
             style,
             frame_type: frameTypeForCreate,
             aspect_ratio: projectAspectRatio.value || '16:9',
+            ...storyboardImageAiPayload(),
           })
           if (res?.task_id) {
             const result = await pollTaskWithPause(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -7854,6 +7977,7 @@ async function runRepairPipeline() {
             aspect_ratio: projectAspectRatio.value || '16:9',
             resolution: videoResolution.value || undefined,
             duration: getSbVideoDurationForApi(sb),
+            ...videoAiPayload(),
           })
           if (res?.task_id) {
             const result = await pollTaskWithPause(res.task_id, () => loadSingleStoryboardMedia(sb.id))
@@ -7918,6 +8042,7 @@ function applyRouteToStore() {
 
 onMounted(async () => {
   loadPipelineConcurrency()
+  loadRuntimeAiConfigs()
   applyRouteToStore()
 })
 
@@ -8625,6 +8750,16 @@ html.light .section-title { color: #1e1b4b; }
   color: var(--el-text-color-primary);
   white-space: nowrap;
   font-weight: 600;
+}
+.ai-route-selects {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-route-select {
+  width: 150px;
 }
 .pipeline-status {
   margin-top: 12px;

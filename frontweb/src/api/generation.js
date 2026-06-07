@@ -11,6 +11,8 @@ export const generationAPI = {
     if (options.outline != null && String(options.outline).trim()) body.outline = options.outline
     if (options.count != null) body.count = options.count
     if (options.model != null) body.model = options.model
+    if (options.ai_config_id != null) body.ai_config_id = options.ai_config_id
+    if (options.text_config_id != null) body.text_config_id = options.text_config_id
     return request.post('/generation/characters', body)
   },
   /** 根据故事梗概 + 风格/类型/集数 生成剧本，返回 { episodes: [{episode, title, content}] } */

@@ -46,6 +46,7 @@ function rowToItem(r) {
     provider: r.provider,
     prompt: r.prompt,
     model: r.model,
+    ai_config_id: r.ai_config_id,
     image_url: r.image_url,
     local_path: r.local_path,
     status: r.status,
@@ -563,9 +564,10 @@ function create(db, log, req) {
     reqSize = aspectRatioToSize(req.aspect_ratio) || null;
   }
   const useFirstFrameLayoutLock = resolveUseFirstFrameLayoutLock(req, frameType);
+  const aiConfigId = req.ai_config_id || req.image_config_id || null;
   const info = db.prepare(
-    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, frame_type, reference_images, use_first_frame_layout_lock, size, status, task_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, frame_type, reference_images, use_first_frame_layout_lock, size, status, task_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
   ).run(
     req.storyboard_id ?? null,
     Number(req.drama_id) || 0,
@@ -574,6 +576,7 @@ function create(db, log, req) {
     mergedPrompt,
     req.negative_prompt ?? null,
     req.model ?? null,
+    aiConfigId,
     frameType,
     refImagesJson,
     useFirstFrameLayoutLock,
@@ -1381,6 +1384,7 @@ async function processImageGeneration(db, log, imageGenId) {
       drama_id: row.drama_id,
       character_id: row.character_id,
       image_gen_id: imageGenId,
+      ai_config_id: row.ai_config_id || undefined,
       imageServiceType,
       reference_image_urls: reference_image_urls || undefined,
       files_base_url: filesBaseUrl,

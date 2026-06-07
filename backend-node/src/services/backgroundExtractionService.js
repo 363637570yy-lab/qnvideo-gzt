@@ -22,26 +22,32 @@ function withLanguage(cfg, language) {
   };
 }
 
-async function translatePromptToChinese(db, log, model, prompt) {
+async function translatePromptToChinese(db, log, model, prompt, aiConfigId) {
   const userPrompt =
     '请将以下场景图像提示词翻译为中文，保留风格词或比例（如 realistic、16:9）原样，直接返回翻译后的中文提示词，不要解释：\n' +
     prompt;
   const text = await aiClient.generateText(db, log, 'text', userPrompt, '', {
     scene_key: 'scene_extraction',
     model: model || undefined,
+    ai_config_id: aiConfigId || undefined,
     temperature: 0.2,
     max_tokens: 400,
   });
   return (text || '').toString().trim();
 }
 
-async function extractBackgroundsFromScript(db, cfg, log, scriptContent, dramaId, model, style) {
+async function extractBackgroundsFromScript(db, cfg, log, scriptContent, dramaId, model, style, aiConfigId) {
   if (!scriptContent || !scriptContent.trim()) return [];
   const systemPrompt = promptI18n.getSceneExtractionPrompt(cfg, style);
   const prompt = (promptI18n.getLanguage(cfg) === 'en' ? '[Script Content]\n' : '【剧本内容】\n') + scriptContent;
   console.log('systemPrompt', systemPrompt);
   console.log('prompt', prompt);
-  const text = await aiClient.generateText(db, log, 'text', prompt, systemPrompt, { scene_key: 'scene_extraction', model: model || undefined, temperature: 0.7 });
+  const text = await aiClient.generateText(db, log, 'text', prompt, systemPrompt, {
+    scene_key: 'scene_extraction',
+    model: model || undefined,
+    ai_config_id: aiConfigId || undefined,
+    temperature: 0.7,
+  });
   let list = [];
   try {
     const parsed = safeParseAIJSON(text, log);
@@ -57,7 +63,7 @@ async function extractBackgroundsFromScript(db, cfg, log, scriptContent, dramaId
   }));
 }
 
-async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, model, style, language) {
+async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, model, style, language, aiConfigId) {
   taskService.updateTaskStatus(db, taskID, 'processing', 0, '正在提取场景信息...');
   const episode = db.prepare('SELECT id, drama_id, script_content FROM episodes WHERE id = ? AND deleted_at IS NULL').get(Number(episodeId));
   if (!episode) {
@@ -111,7 +117,8 @@ async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, mode
       String(scriptContent),
       episode.drama_id,
       model,
-      style  // 作为 prompt 追加（extractBackgroundsFromScript 内部会用到）
+      style,  // 作为 prompt 追加（extractBackgroundsFromScript 内部会用到）
+      aiConfigId
     );
   } catch (err) {
     log.error('Background extraction AI failed', { error: err.message, task_id: taskID });
@@ -124,7 +131,7 @@ async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, mode
         const original = (bg.prompt || '').toString().trim();
         if (!original || hasChinese(original)) return bg;
         try {
-          const translatedPrompt = await translatePromptToChinese(db, log, model, original);
+          const translatedPrompt = await translatePromptToChinese(db, log, model, original, aiConfigId);
           if (!translatedPrompt) return bg;
           return { ...bg, prompt: translatedPrompt };
         } catch (err) {
@@ -165,7 +172,7 @@ async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, mode
   log.info('Background extraction completed', { task_id: taskID, episode_id: episodeId, count: scenes.length });
 }
 
-function extractBackgroundsForEpisode(db, cfg, log, episodeId, model, style, language) {
+function extractBackgroundsForEpisode(db, cfg, log, episodeId, model, style, language, aiConfigId) {
   const episode = db.prepare('SELECT id, drama_id, script_content FROM episodes WHERE id = ? AND deleted_at IS NULL').get(Number(episodeId));
   if (!episode) throw new Error('episode not found');
   if (!episode.script_content || !String(episode.script_content).trim()) {
@@ -186,7 +193,7 @@ function extractBackgroundsForEpisode(db, cfg, log, episodeId, model, style, lan
   }
   const task = taskService.createTask(db, log, 'background_extraction', String(episodeId));
   setImmediate(() => {
-    processBackgroundExtraction(db, runCfg, log, task.id, episodeId, model, style, language).catch((err) => {
+    processBackgroundExtraction(db, runCfg, log, task.id, episodeId, model, style, language, aiConfigId).catch((err) => {
       log.error('processBackgroundExtraction fatal', { error: err.message, task_id: task.id });
     });
   });

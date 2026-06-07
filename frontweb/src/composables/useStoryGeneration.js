@@ -26,6 +26,7 @@ export async function runGenerateStoryFromPremise({
   scriptGenerating,
   replaceRouteWhenNew = true,
   onComplete,
+  aiConfigPayload = {},
   /** 为 true 时保存集数/梗概后不调用 loadDrama（用于剧本管理页生成后直接 router.push 进创作页） */
   skipPostLoad = false,
 }) {
@@ -42,6 +43,7 @@ export async function runGenerateStoryFromPremise({
       style: storyStyle || undefined,
       type: storyType || undefined,
       episode_count: storyEpisodeCount || 1,
+      ...aiConfigPayload,
     })
 
     const episodes = res?.episodes || []

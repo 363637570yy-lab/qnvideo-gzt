@@ -53,6 +53,7 @@ function setupRouter(cfg, db, log) {
   // ---------- auth ----------
   r.use('/auth', authRoutes(log, db));
   r.use(requireAuth(log));
+  r.get('/runtime/ai-configs', aiConfig.runtimeListPublic);
   r.get('/runtime/ai-configs/active', aiConfig.activePublic);
   r.use('/ai-configs', requireAdmin());
   r.use('/settings/generation', requireAdmin());

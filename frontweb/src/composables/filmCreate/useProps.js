@@ -99,7 +99,7 @@ export function useProps(deps) {
 
 
   // ── 函数 ──────────────────────────────────────────────
-  async function onExtractProps() {
+  async function onExtractProps(options = {}) {
     if (!currentEpisodeId.value) {
       ElMessage.warning('请先完成剧本并保存')
       return
@@ -108,7 +108,7 @@ export function useProps(deps) {
     const meta = buildExtractTaskMeta(store, dramaId.value, epId, GEN_RESOURCE.EXTRACT_PROPS, '提取道具')
     genStore.markRunning(meta)
     try {
-      const res = await propAPI.extractFromScript(epId)
+      const res = await propAPI.extractFromScript(epId, options)
       const taskId = res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)
@@ -294,14 +294,14 @@ export function useProps(deps) {
     }
   }
 
-  async function onGeneratePropImage(prop, useQuadGrid = false) {
+  async function onGeneratePropImage(prop, useQuadGrid = false, options = {}) {
     prop.errorMsg = ''
     prop.error_msg = ''
     const meta = buildPropImageMeta(prop)
     generatingPropIds.add(prop.id)
     genStore.markRunning(meta)
     try {
-      const res = await propAPI.generateImage(prop.id, undefined, getSelectedStyle(), !!useQuadGrid)
+      const res = await propAPI.generateImage(prop.id, undefined, getSelectedStyle(), { use_quad_grid: !!useQuadGrid, ...options })
       const taskId = res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)

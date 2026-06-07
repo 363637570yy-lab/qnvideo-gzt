@@ -58,10 +58,18 @@
               一键换Key
             </el-button>
           </div>
-          <p class="default-tip">每种服务类型仅有一个默认配置：文本用于生成故事；文本生成图片用于角色/场景/道具图；分镜图片生成用于分镜图（支持参考图）；视频用于生成视频；语音合成 TTS 用于分镜配音。</p>
+          <p class="default-tip">启用配置会按排序权重从高到低使用；额度或鉴权失败会自动停用，限流、网络故障会临时冷却并切到下一个。</p>
+          <el-tabs v-model="activeConfigCategory" class="runtime-config-tabs">
+            <el-tab-pane
+              v-for="cat in configCategories"
+              :key="cat.key"
+              :label="cat.label"
+              :name="cat.key"
+            />
+          </el-tabs>
           <el-table
             v-loading="loading"
-            :data="list"
+            :data="filteredConfigs"
             stripe
             style="width: 100%"
             @selection-change="onSelectionChange"
@@ -88,6 +96,32 @@
                   </el-icon>
                   {{ serviceTypeLabel(row.service_type) }}
                 </span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="priority" label="排序" width="76" sortable />
+            <el-table-column prop="health_status" label="状态" width="92">
+              <template #default="{ row }">
+                <el-tooltip
+                  :disabled="!row.last_error && !row.disabled_until"
+                  placement="top"
+                  :content="healthStatusTooltip(row)"
+                >
+                  <el-tag :type="healthStatusTagType(row)" size="small">
+                    {{ healthStatusLabel(row) }}
+                  </el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column prop="is_active" label="启用" width="78">
+              <template #default="{ row }">
+                <el-switch
+                  v-if="!vendorLock.enabled"
+                  :model-value="!!row.is_active"
+                  size="small"
+                  @change="(val) => toggleConfigActive(row, val)"
+                />
+                <el-tag v-else-if="row.is_active" type="success" size="small">启用</el-tag>
+                <el-tag v-else type="info" size="small">停用</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="is_default" label="默认" width="60">
@@ -1050,6 +1084,25 @@ import SceneModelMap from '@/components/SceneModelMap.vue'
 import Sd2AssetManagement from '@/components/Sd2AssetManagement.vue'
 
 const activeTab = ref('configs')
+const activeConfigCategory = ref('text')
+const configCategories = [
+  { key: 'text', label: '文本' },
+  { key: 'image', label: '图像' },
+  { key: 'video', label: '视频' },
+  { key: 'audio', label: '音频' },
+]
+const categoryServiceTypes = {
+  text: ['text'],
+  image: ['image', 'storyboard_image', 'jimeng2_character_auth'],
+  video: ['video'],
+  audio: ['tts'],
+}
+const categoryDefaultServiceType = {
+  text: 'text',
+  image: 'image',
+  video: 'video',
+  audio: 'tts',
+}
 const importFileRef = ref(null)
 
 // ---- 生成设置 ----
@@ -1101,7 +1154,14 @@ async function saveGenerationSettings() {
 }
 const loading = ref(false)
 const list = ref([])
+const filteredConfigs = computed(() => {
+  const types = categoryServiceTypes[activeConfigCategory.value] || []
+  return (list.value || []).filter((row) => types.includes(row.service_type))
+})
 const selectedRows = ref([])
+watch(activeConfigCategory, () => {
+  selectedRows.value = []
+})
 const batchDeleting = ref(false)
 const vendorLock = ref({ enabled: false, config_file: '' })
 const dialogVisible = ref(false)
@@ -1616,6 +1676,32 @@ function serviceTypeLabel(t) {
   return map[t] || t
 }
 
+function healthStatusLabel(row) {
+  if (!row?.is_active) return '停用'
+  const status = row.health_status || 'ok'
+  const map = {
+    ok: '正常',
+    cooldown: '冷却',
+    failed: '异常',
+    disabled: '停用',
+  }
+  return map[status] || status
+}
+
+function healthStatusTagType(row) {
+  if (!row?.is_active || row?.health_status === 'disabled') return 'info'
+  if (row?.health_status === 'ok' || !row?.health_status) return 'success'
+  if (row?.health_status === 'cooldown') return 'warning'
+  return 'danger'
+}
+
+function healthStatusTooltip(row) {
+  const parts = []
+  if (row?.disabled_until) parts.push(`冷却至：${row.disabled_until}`)
+  if (row?.last_error) parts.push(`最近错误：${row.last_error}`)
+  return parts.join('；') || ''
+}
+
 async function loadList() {
   loading.value = true
   try {
@@ -1625,6 +1711,14 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+async function toggleConfigActive(row, val) {
+  try {
+    await aiAPI.update(row.id, { is_active: !!val })
+    ElMessage.success(val ? '配置已启用' : '配置已停用')
+    await loadList()
+  } catch (_) {}
 }
 
 function parseModelText(text) {
@@ -1664,6 +1758,8 @@ function resetForm() {
 
 function openAdd() {
   resetForm()
+  form.value.service_type = categoryDefaultServiceType[activeConfigCategory.value] || 'text'
+  onServiceTypeChange()
   dialogVisible.value = true
 }
 
@@ -2261,6 +2357,12 @@ code {
   font-size: 13px;
   color: #0369a1;
   line-height: 1.5;
+}
+.runtime-config-tabs {
+  margin: -4px 0 12px;
+}
+.runtime-config-tabs :deep(.el-tabs__header) {
+  margin-bottom: 8px;
 }
 .vendor-lock-bar {
   display: flex;
