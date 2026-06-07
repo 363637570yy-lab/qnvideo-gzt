@@ -27,15 +27,15 @@ function createDrama(db, log) {
 }
 
 function getDrama(db, cfg) {
-  return (req, res) => {
+  return async (req, res) => {
     const drama = dramaService.getDrama(db, req.params.id, cfg?.storage?.base_url);
     if (!drama) return response.notFound(res, '剧本不存在');
-    response.success(res, drama);
+    response.success(res, await attachDramaUsers([drama], null).then((items) => items[0]));
   };
 }
 
 function listDramas(db, log) {
-  return (req, res) => {
+  return async (req, res) => {
     const page = req.query.page || 1;
     const page_size = req.query.page_size || 20;
     const status = req.query.status || '';
@@ -48,14 +48,36 @@ function listDramas(db, log) {
         status,
         genre,
         keyword,
+        owner_user_id: req.query.owner_user_id || '',
         user: req.user,
       });
-      response.successWithPagination(res, dramas, total, p, ps);
+      const enriched = await attachDramaUsers(dramas, log);
+      response.successWithPagination(res, enriched, total, p, ps);
     } catch (err) {
       log.errorw('List dramas failed', { error: err.message });
       response.internalError(res, '获取列表失败');
     }
   };
+}
+
+async function attachDramaUsers(dramas, log) {
+  const list = Array.isArray(dramas) ? dramas : [];
+  const ids = [];
+  for (const drama of list) {
+    if (drama.owner_user_id) ids.push(drama.owner_user_id);
+    if (drama.created_by_user_id) ids.push(drama.created_by_user_id);
+  }
+  let users = {};
+  try {
+    users = await identityService.getUsersByIds(ids, log);
+  } catch (err) {
+    log?.warn?.('Attach drama users failed', { error: err.message });
+  }
+  return list.map((drama) => ({
+    ...drama,
+    owner_user: users[String(drama.owner_user_id)] || null,
+    created_by_user: users[String(drama.created_by_user_id)] || users[String(drama.owner_user_id)] || null,
+  }));
 }
 
 function updateDrama(db, log) {

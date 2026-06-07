@@ -5,7 +5,7 @@ function routes(db, cfg, log) {
   return {
     list: (req, res) => {
       try {
-        const query = { page: req.query.page, page_size: req.query.page_size, drama_id: req.query.drama_id, global: req.query.global, category: req.query.category, source_type: req.query.source_type, source_id: req.query.source_id, source_ids: req.query.source_ids, keyword: req.query.keyword };
+        const query = { page: req.query.page, page_size: req.query.page_size, drama_id: req.query.drama_id, global: req.query.global, category: req.query.category, source_type: req.query.source_type, source_id: req.query.source_id, source_ids: req.query.source_ids, keyword: req.query.keyword, owner: req.query.owner, created_by_user_id: req.query.created_by_user_id, user: req.user };
         const { items, total, page, pageSize } = propLibraryService.listLibraryItems(db, query);
         response.successWithPagination(res, items, total, page, pageSize);
       } catch (err) {
@@ -15,7 +15,7 @@ function routes(db, cfg, log) {
     },
     create: (req, res) => {
       try {
-        const item = propLibraryService.createLibraryItem(db, log, req.body || {});
+        const item = propLibraryService.createLibraryItem(db, log, { ...(req.body || {}), user: req.user });
         response.created(res, item);
       } catch (err) {
         log.error('prop-library create', { error: err.message });
@@ -24,7 +24,7 @@ function routes(db, cfg, log) {
     },
     get: (req, res) => {
       try {
-        const item = propLibraryService.getLibraryItem(db, req.params.id);
+        const item = propLibraryService.getLibraryItem(db, req.params.id, req.user);
         if (!item) return response.notFound(res, '道具库项不存在');
         response.success(res, item);
       } catch (err) {
@@ -34,8 +34,9 @@ function routes(db, cfg, log) {
     },
     update: (req, res) => {
       try {
-        const item = propLibraryService.updateLibraryItem(db, log, req.params.id, req.body || {});
+        const item = propLibraryService.updateLibraryItem(db, log, req.params.id, { ...(req.body || {}), user: req.user });
         if (!item) return response.notFound(res, '道具库项不存在');
+        if (item.forbidden) return response.forbidden(res, '只能编辑自己创建的素材');
         response.success(res, item);
       } catch (err) {
         log.error('prop-library update', { error: err.message });
@@ -44,8 +45,9 @@ function routes(db, cfg, log) {
     },
     delete: (req, res) => {
       try {
-        const ok = propLibraryService.deleteLibraryItem(db, log, req.params.id);
+        const ok = propLibraryService.deleteLibraryItem(db, log, req.params.id, req.user);
         if (!ok) return response.notFound(res, '道具库项不存在');
+        if (ok.forbidden) return response.forbidden(res, '只能删除自己创建的素材');
         response.success(res, { message: '删除成功' });
       } catch (err) {
         log.error('prop-library delete', { error: err.message });

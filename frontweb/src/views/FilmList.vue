@@ -51,6 +51,16 @@
 
     <main class="main">
       <div v-loading="loading" class="projects-wrap">
+        <div v-if="isAdminUser" class="project-filter-bar">
+          <el-select v-model="projectOwnerFilter" clearable filterable placeholder="全部创建人" style="width: 220px" @change="loadList">
+            <el-option
+              v-for="user in userOptions"
+              :key="user.id"
+              :label="userLabel(user)"
+              :value="user.id"
+            />
+          </el-select>
+        </div>
         <div class="project-grid">
           <!-- 操作卡片：始终作为第一个格子 -->
           <div class="project-card action-card">
@@ -98,6 +108,7 @@
             <div class="project-card-body">
               <h3 class="project-title">{{ d.title || '未命名项目' }}</h3>
               <p class="project-desc">{{ d.description || '暂无描述' }}</p>
+              <p v-if="isAdminUser" class="project-owner">创建人：{{ dramaCreatorLabel(d) }}</p>
               <div class="project-badges">
                 <span class="badge badge-status" :class="'badge-status--' + (d.status || 'draft')">{{ formatStatus(d.status) }}</span>
                 <span v-if="d.episodes?.length" class="badge badge-episodes">{{ d.episodes.length }} 集</span>
@@ -165,6 +176,11 @@
     <!-- 公共角色库 -->
     <el-dialog v-model="showCharLibrary" title="素材库 · 角色" width="720px" destroy-on-close class="library-dialog" @open="loadCharLibraryList">
       <div class="library-toolbar">
+        <el-select v-model="charLibraryOwner" style="width: 130px" @change="resetAndLoadCharLibrary">
+          <el-option label="我的素材" value="mine" />
+          <el-option label="全部素材" value="all" />
+          <el-option label="系统素材" value="system" />
+        </el-select>
         <el-input v-model="charLibraryKeyword" placeholder="搜索名称或描述" clearable style="width: 200px" @input="debouncedLoadCharLibrary()" />
       </div>
       <div v-loading="charLibraryLoading" class="library-list">
@@ -176,9 +192,10 @@
           <div class="library-item-info">
             <div class="library-item-name">{{ item.name || '未命名' }}</div>
             <div class="library-item-desc">{{ (item.description || '').slice(0, 60) }}{{ (item.description || '').length > 60 ? '…' : '' }}</div>
+            <div class="library-item-owner">创建人：{{ libraryCreatorLabel(item) }}</div>
             <div class="library-item-actions">
-              <el-button size="small" @click="openEditCharLibrary(item)">编辑</el-button>
-              <el-button size="small" type="danger" plain @click="onDeleteCharLibrary(item)">删除</el-button>
+              <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditCharLibrary(item)">编辑</el-button>
+              <el-button size="small" type="danger" plain :disabled="!canManageLibrary(item)" @click="onDeleteCharLibrary(item)">删除</el-button>
             </div>
           </div>
         </div>
@@ -219,6 +236,11 @@
     <!-- 公共场景库 -->
     <el-dialog v-model="showSceneLibrary" title="素材库 · 场景" width="720px" destroy-on-close class="library-dialog" @open="loadSceneLibraryList">
       <div class="library-toolbar">
+        <el-select v-model="sceneLibraryOwner" style="width: 130px" @change="resetAndLoadSceneLibrary">
+          <el-option label="我的素材" value="mine" />
+          <el-option label="全部素材" value="all" />
+          <el-option label="系统素材" value="system" />
+        </el-select>
         <el-input v-model="sceneLibraryKeyword" placeholder="搜索地点或描述" clearable style="width: 200px" @input="debouncedLoadSceneLibrary()" />
       </div>
       <div v-loading="sceneLibraryLoading" class="library-list">
@@ -230,9 +252,10 @@
           <div class="library-item-info">
             <div class="library-item-name">{{ item.location || item.time || '未命名' }}</div>
             <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}{{ (item.description || item.prompt || '').length > 60 ? '…' : '' }}</div>
+            <div class="library-item-owner">创建人：{{ libraryCreatorLabel(item) }}</div>
             <div class="library-item-actions">
-              <el-button size="small" @click="openEditSceneLibrary(item)">编辑</el-button>
-              <el-button size="small" type="danger" plain @click="onDeleteSceneLibrary(item)">删除</el-button>
+              <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditSceneLibrary(item)">编辑</el-button>
+              <el-button size="small" type="danger" plain :disabled="!canManageLibrary(item)" @click="onDeleteSceneLibrary(item)">删除</el-button>
             </div>
           </div>
         </div>
@@ -274,6 +297,11 @@
     <!-- 公共道具库 -->
     <el-dialog v-model="showPropLibrary" title="素材库 · 道具" width="720px" destroy-on-close class="library-dialog" @open="loadPropLibraryList">
       <div class="library-toolbar">
+        <el-select v-model="propLibraryOwner" style="width: 130px" @change="resetAndLoadPropLibrary">
+          <el-option label="我的素材" value="mine" />
+          <el-option label="全部素材" value="all" />
+          <el-option label="系统素材" value="system" />
+        </el-select>
         <el-input v-model="propLibraryKeyword" placeholder="搜索名称或描述" clearable style="width: 200px" @input="debouncedLoadPropLibrary()" />
       </div>
       <div v-loading="propLibraryLoading" class="library-list">
@@ -285,9 +313,10 @@
           <div class="library-item-info">
             <div class="library-item-name">{{ item.name || '未命名' }}</div>
             <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}{{ (item.description || item.prompt || '').length > 60 ? '…' : '' }}</div>
+            <div class="library-item-owner">创建人：{{ libraryCreatorLabel(item) }}</div>
             <div class="library-item-actions">
-              <el-button size="small" @click="openEditPropLibrary(item)">编辑</el-button>
-              <el-button size="small" type="danger" plain @click="onDeletePropLibrary(item)">删除</el-button>
+              <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditPropLibrary(item)">编辑</el-button>
+              <el-button size="small" type="danger" plain :disabled="!canManageLibrary(item)" @click="onDeletePropLibrary(item)">删除</el-button>
             </div>
           </div>
         </div>
@@ -372,6 +401,7 @@ import { uploadAPI } from '@/api/upload'
 import { aiAPI } from '@/api/ai'
 import { imagesAPI } from '@/api/images'
 import { taskAPI } from '@/api/task'
+import { authAPI } from '@/api/auth'
 import { getCurrentUser, isAdmin } from '@/utils/auth'
 
 const router = useRouter()
@@ -438,6 +468,8 @@ async function doGenerateLibImg(form, prompt, api, reloadFn) {
 const loading = ref(false)
 const dramas = ref([])
 const total = ref(0)
+const projectOwnerFilter = ref('')
+const userOptions = ref([])
 
 const showAiConfigDialog = ref(false)
 const vendorLockEnabled = ref(false)
@@ -463,6 +495,7 @@ const charLibraryPage = ref(1)
 const charLibraryPageSize = ref(20)
 const charLibraryTotal = ref(0)
 const charLibraryKeyword = ref('')
+const charLibraryOwner = ref('mine')
 const showEditCharLibrary = ref(false)
 const editCharLibraryForm = ref(null)
 const editCharLibrarySaving = ref(false)
@@ -471,7 +504,7 @@ let charLibraryKeywordTimer = null
 async function loadCharLibraryList() {
   charLibraryLoading.value = true
   try {
-    const res = await characterLibraryAPI.list({ page: charLibraryPage.value, page_size: charLibraryPageSize.value, keyword: charLibraryKeyword.value || undefined, global: 1 })
+    const res = await characterLibraryAPI.list({ page: charLibraryPage.value, page_size: charLibraryPageSize.value, keyword: charLibraryKeyword.value || undefined, global: 1, owner: charLibraryOwner.value || 'mine' })
     charLibraryList.value = res?.items ?? []
     const p = res?.pagination ?? {}
     charLibraryTotal.value = p.total ?? 0
@@ -482,6 +515,10 @@ async function loadCharLibraryList() {
 function debouncedLoadCharLibrary() {
   if (charLibraryKeywordTimer) clearTimeout(charLibraryKeywordTimer)
   charLibraryKeywordTimer = setTimeout(() => { charLibraryPage.value = 1; loadCharLibraryList() }, 300)
+}
+function resetAndLoadCharLibrary() {
+  charLibraryPage.value = 1
+  loadCharLibraryList()
 }
 function openEditCharLibrary(item) {
   editCharLibraryForm.value = { id: item.id, name: item.name ?? '', category: item.category ?? '', description: item.description ?? '', tags: item.tags ?? '', image_url: item.image_url ?? '', local_path: item.local_path ?? null, imgUploading: false, imgGenerating: false }
@@ -510,6 +547,7 @@ const sceneLibraryPage = ref(1)
 const sceneLibraryPageSize = ref(20)
 const sceneLibraryTotal = ref(0)
 const sceneLibraryKeyword = ref('')
+const sceneLibraryOwner = ref('mine')
 const showEditSceneLibrary = ref(false)
 const editSceneLibraryForm = ref(null)
 const editSceneLibrarySaving = ref(false)
@@ -518,7 +556,7 @@ let sceneLibraryKeywordTimer = null
 async function loadSceneLibraryList() {
   sceneLibraryLoading.value = true
   try {
-    const res = await sceneLibraryAPI.list({ page: sceneLibraryPage.value, page_size: sceneLibraryPageSize.value, keyword: sceneLibraryKeyword.value || undefined, global: 1 })
+    const res = await sceneLibraryAPI.list({ page: sceneLibraryPage.value, page_size: sceneLibraryPageSize.value, keyword: sceneLibraryKeyword.value || undefined, global: 1, owner: sceneLibraryOwner.value || 'mine' })
     sceneLibraryList.value = res?.items ?? []
     const p = res?.pagination ?? {}
     sceneLibraryTotal.value = p.total ?? 0
@@ -529,6 +567,10 @@ async function loadSceneLibraryList() {
 function debouncedLoadSceneLibrary() {
   if (sceneLibraryKeywordTimer) clearTimeout(sceneLibraryKeywordTimer)
   sceneLibraryKeywordTimer = setTimeout(() => { sceneLibraryPage.value = 1; loadSceneLibraryList() }, 300)
+}
+function resetAndLoadSceneLibrary() {
+  sceneLibraryPage.value = 1
+  loadSceneLibraryList()
 }
 function openEditSceneLibrary(item) {
   editSceneLibraryForm.value = { id: item.id, location: item.location ?? '', time: item.time ?? '', category: item.category ?? '', description: item.description ?? '', tags: item.tags ?? '', image_url: item.image_url ?? '', local_path: item.local_path ?? null, imgUploading: false, imgGenerating: false }
@@ -558,6 +600,7 @@ const propLibraryPage = ref(1)
 const propLibraryPageSize = ref(20)
 const propLibraryTotal = ref(0)
 const propLibraryKeyword = ref('')
+const propLibraryOwner = ref('mine')
 const showEditPropLibrary = ref(false)
 const editPropLibraryForm = ref(null)
 const editPropLibrarySaving = ref(false)
@@ -566,7 +609,7 @@ let propLibraryKeywordTimer = null
 async function loadPropLibraryList() {
   propLibraryLoading.value = true
   try {
-    const res = await propLibraryAPI.list({ page: propLibraryPage.value, page_size: propLibraryPageSize.value, keyword: propLibraryKeyword.value || undefined, global: 1 })
+    const res = await propLibraryAPI.list({ page: propLibraryPage.value, page_size: propLibraryPageSize.value, keyword: propLibraryKeyword.value || undefined, global: 1, owner: propLibraryOwner.value || 'mine' })
     propLibraryList.value = res?.items ?? []
     const p = res?.pagination ?? {}
     propLibraryTotal.value = p.total ?? 0
@@ -577,6 +620,10 @@ async function loadPropLibraryList() {
 function debouncedLoadPropLibrary() {
   if (propLibraryKeywordTimer) clearTimeout(propLibraryKeywordTimer)
   propLibraryKeywordTimer = setTimeout(() => { propLibraryPage.value = 1; loadPropLibraryList() }, 300)
+}
+function resetAndLoadPropLibrary() {
+  propLibraryPage.value = 1
+  loadPropLibraryList()
 }
 function openEditPropLibrary(item) {
   editPropLibraryForm.value = { id: item.id, name: item.name ?? '', category: item.category ?? '', description: item.description ?? '', tags: item.tags ?? '', image_url: item.image_url ?? '', local_path: item.local_path ?? null, imgUploading: false, imgGenerating: false }
@@ -633,8 +680,10 @@ const editSaving = ref(false)
 
 function loadList() {
   loading.value = true
+  const params = { page: 1, page_size: 50 }
+  if (isAdminUser.value && projectOwnerFilter.value) params.owner_user_id = projectOwnerFilter.value
   dramaAPI
-    .list({ page: 1, page_size: 50 })
+    .list(params)
     .then((res) => {
       dramas.value = res?.items ?? []
       total.value = res?.pagination?.total ?? 0
@@ -645,6 +694,34 @@ function loadList() {
     .finally(() => {
       loading.value = false
     })
+}
+
+async function loadUserOptions() {
+  if (!isAdminUser.value) return
+  try {
+    const users = await authAPI.listUsers()
+    userOptions.value = Array.isArray(users) ? users : (users?.items || users?.data || [])
+  } catch {
+    userOptions.value = []
+  }
+}
+
+function userLabel(user) {
+  if (!user) return '未知用户'
+  const name = user.display_name || user.username || user.id
+  return user.role === 'admin' ? `${name}（管理员）` : name
+}
+
+function dramaCreatorLabel(drama) {
+  return userLabel(drama.created_by_user || drama.owner_user || { username: drama.created_by_user_id || drama.owner_user_id || '未知用户' })
+}
+
+function libraryCreatorLabel(item) {
+  return item?.created_by || item?.created_by_display_name || item?.created_by_username || '系统/旧素材'
+}
+
+function canManageLibrary(item) {
+  return !!item?.can_manage || isAdminUser.value || (!!item?.created_by_user_id && String(item.created_by_user_id) === String(currentUser.value?.id))
 }
 
 function formatDate(val) {
@@ -831,6 +908,7 @@ onMounted(async () => {
   loadList()
   loadExamples()
   if (isAdminUser.value) {
+    loadUserOptions()
     try {
       const lock = await aiAPI.getVendorLock()
       vendorLockEnabled.value = !!lock?.enabled
@@ -1017,6 +1095,11 @@ html.light .btn-import {
   min-height: 200px;
   width: 100%;
 }
+.project-filter-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
 .empty {
   text-align: center;
   padding: 48px 24px;
@@ -1033,7 +1116,7 @@ html.light .btn-import {
 }
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
   gap: 18px;
   align-items: stretch;
   width: 100%;
@@ -1173,6 +1256,11 @@ html.light .btn-import {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.project-owner {
+  margin: -4px 0 10px;
+  color: #818cf8;
+  font-size: 0.75rem;
+}
 .project-badges {
   display: flex;
   flex-wrap: wrap;
@@ -1264,7 +1352,12 @@ html.light .btn-import {
 .lib-img-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .lib-img-empty { color: var(--text-faint, #52525b); font-size: 26px; }
 .lib-img-btns { display: flex; flex-direction: column; gap: 8px; }
-.library-toolbar { margin-bottom: 12px; }
+.library-toolbar {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .library-list {
   min-height: 200px;
   max-height: 420px;
@@ -1298,6 +1391,7 @@ html.light .btn-import {
 .library-item-info { flex: 1; min-width: 0; }
 .library-item-name { font-weight: 500; margin-bottom: 4px; color: #fafafa; }
 .library-item-desc { font-size: 0.85rem; color: #a1a1aa; margin-bottom: 8px; }
+.library-item-owner { font-size: 0.75rem; color: #818cf8; margin-bottom: 8px; }
 .library-item-actions { display: flex; gap: 8px; }
 .library-empty { text-align: center; color: #71717a; padding: 40px 20px; }
 .library-pagination { margin-top: 12px; display: flex; justify-content: center; }
@@ -1367,6 +1461,8 @@ html.light .library-item {
 }
 html.light .library-item-name { color: #1e1b4b; }
 html.light .library-item-desc { color: #4b5563; }
+html.light .library-item-owner,
+html.light .project-owner { color: #4f46e5; }
 html.light .library-empty { color: #6b7280; }
 html.light .lib-img-thumb {
   background: #f3f4f6;

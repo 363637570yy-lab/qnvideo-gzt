@@ -6,9 +6,15 @@ const {
   normalizeSourceId,
   updateLibraryItem: updateExistingLibraryItem,
 } = require('./libraryDedup');
+const {
+  applyCreatorFilter,
+  canManageLibraryItem,
+  creatorFieldsFromUser,
+  withLibraryPermissions,
+} = require('./libraryOwnership');
 
-function rowToItem(r) {
-  return {
+function rowToItem(r, user) {
+  return withLibraryPermissions({
     id: r.id,
     drama_id: r.drama_id ?? null,
     name: r.name,
@@ -20,9 +26,12 @@ function rowToItem(r) {
     tags: r.tags,
     source_type: r.source_type || 'generated',
     source_id: r.source_id || null,
+    created_by_user_id: r.created_by_user_id || null,
+    created_by_username: r.created_by_username || null,
+    created_by_display_name: r.created_by_display_name || null,
     created_at: r.created_at,
     updated_at: r.updated_at,
-  };
+  }, user);
 }
 
 function listLibraryItems(db, query) {
@@ -42,6 +51,7 @@ function listLibraryItems(db, query) {
     sql += ' AND source_type = ?';
     params.push(query.source_type);
   }
+  sql = applyCreatorFilter(query, sql, params);
   sql = appendSourceIdFilters(query, sql, params);
   if (query.keyword) {
     sql += ' AND (name LIKE ? OR description LIKE ? OR prompt LIKE ?)';
@@ -54,7 +64,7 @@ function listLibraryItems(db, query) {
   const pageSize = Math.min(100, Math.max(1, parseInt(query.page_size, 10) || 20));
   const offset = (page - 1) * pageSize;
   const rows = db.prepare('SELECT * ' + sql + ' ORDER BY created_at DESC LIMIT ? OFFSET ?').all(...params, pageSize, offset);
-  return { items: rows.map(rowToItem), total, page, pageSize };
+  return { items: rows.map((row) => rowToItem(row, query.user)), total, page, pageSize };
 }
 
 function createLibraryItem(db, log, req) {
@@ -71,21 +81,23 @@ function createLibraryItem(db, log, req) {
     tags: req.tags ?? null,
     source_type: sourceType,
     source_id: normalizeSourceId(req.source_id) || null,
+    ...creatorFieldsFromUser(req.user),
     created_at: now,
     updated_at: now,
   });
   log.info('Prop library item created', { item_id: info.lastInsertRowid });
-  return getLibraryItem(db, String(info.lastInsertRowid));
+  return getLibraryItem(db, String(info.lastInsertRowid), req.user);
 }
 
-function getLibraryItem(db, id) {
+function getLibraryItem(db, id, user) {
   const row = db.prepare('SELECT * FROM prop_libraries WHERE id = ? AND deleted_at IS NULL').get(Number(id));
-  return row ? rowToItem(row) : null;
+  return row ? rowToItem(row, user) : null;
 }
 
 function updateLibraryItem(db, log, id, req) {
-  const row = db.prepare('SELECT id FROM prop_libraries WHERE id = ? AND deleted_at IS NULL').get(Number(id));
+  const row = db.prepare('SELECT * FROM prop_libraries WHERE id = ? AND deleted_at IS NULL').get(Number(id));
   if (!row) return null;
+  if (!canManageLibraryItem(row, req.user)) return { forbidden: true };
   const updates = [];
   const params = [];
   if (req.name != null) { updates.push('name = ?'); params.push(req.name); }
@@ -97,14 +109,17 @@ function updateLibraryItem(db, log, id, req) {
   if (req.tags != null) { updates.push('tags = ?'); params.push(req.tags); }
   if (req.source_type != null) { updates.push('source_type = ?'); params.push(req.source_type); }
   if (req.source_id != null) { updates.push('source_id = ?'); params.push(normalizeSourceId(req.source_id)); }
-  if (updates.length === 0) return getLibraryItem(db, id);
+  if (updates.length === 0) return getLibraryItem(db, id, req.user);
   params.push(new Date().toISOString(), Number(id));
   db.prepare('UPDATE prop_libraries SET ' + updates.join(', ') + ', updated_at = ? WHERE id = ?').run(...params);
   log.info('Prop library item updated', { item_id: id });
-  return getLibraryItem(db, id);
+  return getLibraryItem(db, id, req.user);
 }
 
-function deleteLibraryItem(db, log, id) {
+function deleteLibraryItem(db, log, id, user) {
+  const row = db.prepare('SELECT * FROM prop_libraries WHERE id = ? AND deleted_at IS NULL').get(Number(id));
+  if (!row) return false;
+  if (!canManageLibraryItem(row, user)) return { forbidden: true };
   const now = new Date().toISOString();
   const result = db.prepare('UPDATE prop_libraries SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL').run(now, Number(id));
   if (result.changes === 0) return false;
@@ -132,15 +147,18 @@ function propLibraryFields(prop, dramaId, imageUrl, now) {
   };
 }
 
-function addPropToLibrary(db, log, propId) {
+function addPropToLibrary(db, log, propId, user = null) {
   const prop = propService.getById(db, Number(propId));
   if (!prop) return { ok: false, error: 'prop not found' };
-  const drama = db.prepare('SELECT id FROM dramas WHERE id = ? AND deleted_at IS NULL').get(prop.drama_id);
+  const drama = db.prepare('SELECT id, owner_user_id FROM dramas WHERE id = ? AND deleted_at IS NULL').get(prop.drama_id);
   if (!drama) return { ok: false, error: 'unauthorized' };
   if (!prop.image_url && !prop.local_path) return { ok: false, error: '道具还没有形象图片' };
   const now = new Date().toISOString();
   const imageUrl = resolveImageUrl(prop.image_url, prop.local_path);
-  const fields = propLibraryFields(prop, prop.drama_id, imageUrl, now);
+  const fields = {
+    ...propLibraryFields(prop, prop.drama_id, imageUrl, now),
+    ...creatorFieldsFromUser(user || { id: drama.owner_user_id }),
+  };
   const existing = findExistingLibraryItem(db, 'prop_libraries', {
     dramaId: prop.drama_id,
     sourceType: 'prop',
@@ -151,20 +169,20 @@ function addPropToLibrary(db, log, propId) {
   if (existing) {
     updateExistingLibraryItem(db, 'prop_libraries', existing.id, fields);
     log.info('Prop library item reused', { prop_id: propId, drama_id: prop.drama_id, library_item_id: existing.id });
-    return { ok: true, item: getLibraryItem(db, String(existing.id)), duplicated: true };
+    return { ok: true, item: getLibraryItem(db, String(existing.id), user), duplicated: true };
   }
   const info = insertLibraryItem(db, 'prop_libraries', { ...fields, created_at: now });
   log.info('Prop added to drama library', { prop_id: propId, drama_id: prop.drama_id, library_item_id: info.lastInsertRowid });
-  return { ok: true, item: getLibraryItem(db, String(info.lastInsertRowid)), duplicated: false };
+  return { ok: true, item: getLibraryItem(db, String(info.lastInsertRowid), user), duplicated: false };
 }
 
-function addPropToMaterialLibrary(db, log, propId) {
+function addPropToMaterialLibrary(db, log, propId, user = null) {
   const prop = propService.getById(db, Number(propId));
   if (!prop) return { ok: false, error: 'prop not found' };
   if (!prop.image_url && !prop.local_path) return { ok: false, error: '道具还没有形象图片' };
   const now = new Date().toISOString();
   const imageUrl = resolveImageUrl(prop.image_url, prop.local_path);
-  const fields = propLibraryFields(prop, null, imageUrl, now);
+  const fields = { ...propLibraryFields(prop, null, imageUrl, now), ...creatorFieldsFromUser(user) };
   const existing = findExistingLibraryItem(db, 'prop_libraries', {
     dramaId: null,
     sourceType: 'prop',
@@ -175,11 +193,11 @@ function addPropToMaterialLibrary(db, log, propId) {
   if (existing) {
     updateExistingLibraryItem(db, 'prop_libraries', existing.id, fields);
     log.info('Prop material library item reused', { prop_id: propId, library_item_id: existing.id });
-    return { ok: true, item: getLibraryItem(db, String(existing.id)), duplicated: true };
+    return { ok: true, item: getLibraryItem(db, String(existing.id), user), duplicated: true };
   }
   const info = insertLibraryItem(db, 'prop_libraries', { ...fields, created_at: now });
   log.info('Prop added to material library (global)', { prop_id: propId, library_item_id: info.lastInsertRowid });
-  return { ok: true, item: getLibraryItem(db, String(info.lastInsertRowid)), duplicated: false };
+  return { ok: true, item: getLibraryItem(db, String(info.lastInsertRowid), user), duplicated: false };
 }
 
 module.exports = {

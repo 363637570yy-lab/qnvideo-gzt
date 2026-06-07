@@ -148,6 +148,23 @@ async function getUserById(id, log) {
   return publicUser(result.rows[0]);
 }
 
+async function getUsersByIds(ids, log) {
+  await ensureIdentityDb(log);
+  const cleanIds = Array.from(new Set((ids || []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (cleanIds.length === 0) return {};
+  const result = await query(
+    `SELECT id, username, role, display_name, is_active, created_at, updated_at, last_login_at
+     FROM users
+     WHERE id = ANY($1::uuid[])`,
+    [cleanIds]
+  );
+  const map = {};
+  for (const row of result.rows) {
+    map[String(row.id)] = publicUser(row);
+  }
+  return map;
+}
+
 async function verifyToken(token, log) {
   if (!token) return null;
   let payload;
@@ -314,6 +331,7 @@ module.exports = {
   login,
   verifyToken,
   getUserById,
+  getUsersByIds,
   listUsers,
   createUser,
   updateUser,

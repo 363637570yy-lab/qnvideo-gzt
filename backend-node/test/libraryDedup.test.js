@@ -18,6 +18,7 @@ function createDb() {
     CREATE TABLE dramas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT,
+      owner_user_id TEXT,
       deleted_at TEXT
     );
 
@@ -66,6 +67,9 @@ function createDb() {
       tags TEXT,
       source_type TEXT,
       source_id TEXT,
+      created_by_user_id TEXT,
+      created_by_username TEXT,
+      created_by_display_name TEXT,
       created_at TEXT,
       updated_at TEXT,
       deleted_at TEXT
@@ -84,6 +88,9 @@ function createDb() {
       tags TEXT,
       source_type TEXT,
       source_id TEXT,
+      created_by_user_id TEXT,
+      created_by_username TEXT,
+      created_by_display_name TEXT,
       created_at TEXT,
       updated_at TEXT,
       deleted_at TEXT
@@ -101,6 +108,9 @@ function createDb() {
       tags TEXT,
       source_type TEXT,
       source_id TEXT,
+      created_by_user_id TEXT,
+      created_by_username TEXT,
+      created_by_display_name TEXT,
       created_at TEXT,
       updated_at TEXT,
       deleted_at TEXT

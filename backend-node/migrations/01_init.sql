@@ -241,6 +241,9 @@ CREATE TABLE IF NOT EXISTS character_libraries (
   tags TEXT,
   source_type TEXT,
   source_id TEXT,
+  created_by_user_id TEXT,
+  created_by_username TEXT,
+  created_by_display_name TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -259,6 +262,9 @@ CREATE TABLE IF NOT EXISTS scene_libraries (
   tags TEXT,
   source_type TEXT,
   source_id TEXT,
+  created_by_user_id TEXT,
+  created_by_username TEXT,
+  created_by_display_name TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT
@@ -276,6 +282,9 @@ CREATE TABLE IF NOT EXISTS prop_libraries (
   tags TEXT,
   source_type TEXT,
   source_id TEXT,
+  created_by_user_id TEXT,
+  created_by_username TEXT,
+  created_by_display_name TEXT,
   created_at TEXT,
   updated_at TEXT,
   deleted_at TEXT

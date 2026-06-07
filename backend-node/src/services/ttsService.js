@@ -145,7 +145,13 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
       ttsModel || 'speech-02-hd'
     );
   } else if (provider === 'openai' || ttsConfig.base_url) {
-    console.log('==c sxy synthesizeWithOpenai', text, voiceId, ttsConfig.api_key, ttsConfig.base_url, ttsModel, finalSpeed);
+    log?.info?.('TTS synthesize with OpenAI-compatible provider', {
+      provider: provider || 'openai-compatible',
+      voice: voiceId || null,
+      base_url: ttsConfig.base_url || null,
+      model: ttsModel || null,
+      text_length: text.length,
+    });
     audioBuffer = await synthesizeWithOpenai(
       text,
       voiceId || 'alloy',

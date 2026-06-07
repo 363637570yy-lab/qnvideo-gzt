@@ -172,6 +172,9 @@ function listDramas(db, query) {
   if (query.user && query.user.role !== 'admin') {
     sql += ' AND owner_user_id = ?';
     params.push(query.user.id);
+  } else if (query.user?.role === 'admin' && query.owner_user_id) {
+    sql += ' AND owner_user_id = ?';
+    params.push(String(query.owner_user_id));
   }
   if (query.status) {
     sql += ' AND status = ?';
