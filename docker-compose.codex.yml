@@ -13,21 +13,23 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-before-first-login}
       PGHOST: ${PGHOST:-host.docker.internal}
-      PGPORT: ${PGPORT:-20812}
-      PGDATABASE: ${PGDATABASE:-qnvideo-gzt}
-      PGUSER: ${PGUSER:-qnvideo-gzt}
+      PGPORT: ${PGPORT:-5432}
+      PGDATABASE: ${PGDATABASE:-qnvideo_gzt}
+      PGUSER: ${PGUSER:-qnvideo_gzt}
       PGPASSWORD: ${PGPASSWORD:-}
       PORT: 5679
       SERVER_HOST: 0.0.0.0
       SQLITE_DB_PATH: /app/data/drama_generator.db
       STORAGE_LOCAL_PATH: /app/data/storage
       STORAGE_BASE_URL: ${STORAGE_BASE_URL:-http://localhost:20880/static}
-      HTTP_PROXY: http://host.docker.internal:7890
-      HTTPS_PROXY: http://host.docker.internal:7890
-      http_proxy: http://host.docker.internal:7890
-      https_proxy: http://host.docker.internal:7890
-      NO_PROXY: localhost,127.0.0.1,::1,backend,qnvideo-gzt-backend,host.docker.internal,192.168.0.0/16,172.16.0.0/12,10.0.0.0/8
-      no_proxy: localhost,127.0.0.1,::1,backend,qnvideo-gzt-backend,host.docker.internal,192.168.0.0/16,172.16.0.0/12,10.0.0.0/8
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      all_proxy: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,::1,backend,qnvideo-gzt-backend,host.docker.internal,192.168.0.0/16,172.16.0.0/12,10.0.0.0/8}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,::1,backend,qnvideo-gzt-backend,host.docker.internal,192.168.0.0/16,172.16.0.0/12,10.0.0.0/8}
     volumes:
       - ./data:/app/data
     ports:

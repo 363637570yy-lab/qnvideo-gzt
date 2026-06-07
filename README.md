@@ -2,7 +2,7 @@
 
 芊柠AI视频工作台是面向短视频和短剧创作流程的 Web 工作台，基于开源项目 [xuanyustudio/LocalMiniDrama](https://github.com/xuanyustudio/LocalMiniDrama) 改造，保留原项目的 AI 短剧创作能力，并增加了适合服务器部署的账号登录、管理员权限、用户项目隔离和 PostgreSQL 身份数据存储。
 
-本项目适合在个人服务器、内网工作站或团队测试服务器上部署，用于统一管理短剧项目、素材、分镜、图片生成、视频生成和合成导出流程。
+本项目适合部署到个人服务器、内网工作站或团队测试服务器，用于统一管理短剧项目、素材、分镜、图片生成、视频生成和合成导出流程。
 
 ## 功能概览
 
@@ -54,76 +54,203 @@
   </tr>
 </table>
 
-## 账号和权限
+## 运行要求
 
-本仓库版本启用了登录和权限隔离：
+- Docker 24+ 和 Docker Compose v2。
+- PostgreSQL 14+。账号、角色、权限和项目归属映射需要 PostgreSQL。
+- 如需本地开发，建议使用 Node.js 20；最低要求 Node.js 18。
+- 如需调用国外 AI 服务商，可在 `.env` 中配置 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`；不需要代理时留空即可。
 
-- 管理员可以进入用户管理、AI 配置，并查看全部项目。
-- 普通用户只能查看和操作自己创建的项目。
-- 账号、角色、权限、项目归属映射等身份数据存储在 PostgreSQL。
-- 图片、视频、音频、导出文件等大体积媒体文件保存到独立 `data/` 目录。
+## Docker 部署
 
-生产或公网部署时，请通过服务器本地 `.env` 设置强密码和随机 `JWT_SECRET`，不要把真实密钥提交到仓库。
+下面命令会启动一个 PostgreSQL 容器，再启动芊柠AI视频工作台。示例密码请改成你自己的强密码。
 
-## 快速部署
+### 1. 克隆项目
 
-准备一个 PostgreSQL 数据库，然后复制环境变量示例：
+```bash
+git clone https://github.com/363637570yy-lab/qnvideo-gzt.git
+cd qnvideo-gzt
+```
+
+### 2. 启动 PostgreSQL
+
+```bash
+docker volume create qnvideo-gzt-postgres
+
+docker run -d \
+  --name qnvideo-gzt-postgres \
+  --restart unless-stopped \
+  -e POSTGRES_DB=qnvideo_gzt \
+  -e POSTGRES_USER=qnvideo_gzt \
+  -e POSTGRES_PASSWORD=please-change-this-password \
+  -p 127.0.0.1:5432:5432 \
+  -v qnvideo-gzt-postgres:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+Windows PowerShell 也可以使用同一条命令，把换行符改成反引号：
+
+```powershell
+docker volume create qnvideo-gzt-postgres
+
+docker run -d `
+  --name qnvideo-gzt-postgres `
+  --restart unless-stopped `
+  -e POSTGRES_DB=qnvideo_gzt `
+  -e POSTGRES_USER=qnvideo_gzt `
+  -e POSTGRES_PASSWORD=please-change-this-password `
+  -p 127.0.0.1:5432:5432 `
+  -v qnvideo-gzt-postgres:/var/lib/postgresql/data `
+  postgres:16-alpine
+```
+
+### 3. 创建环境变量文件
+
+Linux / macOS：
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env`，至少配置：
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+编辑 `.env`，至少确认这些值：
 
 ```env
 AUTH_ENABLED=true
-JWT_SECRET=change-this-to-a-long-random-string
+JWT_SECRET=replace-with-a-long-random-string
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=change-me-before-first-login
-PGHOST=127.0.0.1
+ADMIN_PASSWORD=replace-with-admin-password
+
+PGHOST=host.docker.internal
 PGPORT=5432
-PGDATABASE=qnvideo-gzt
-PGUSER=qnvideo-gzt
-PGPASSWORD=change-me
+PGDATABASE=qnvideo_gzt
+PGUSER=qnvideo_gzt
+PGPASSWORD=please-change-this-password
+
 STORAGE_BASE_URL=http://localhost:20880/static
 ```
 
-启动服务：
+说明：
+
+- 第一次启动时会用 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 创建管理员账号。
+- 如果你使用已有 PostgreSQL，把 `PGHOST`、`PGPORT`、`PGDATABASE`、`PGUSER`、`PGPASSWORD` 改成对应连接信息。
+- 如果部署到公网域名，建议把 `STORAGE_BASE_URL` 改成你的真实访问地址，例如 `https://example.com/static`。
+- 如果 AI 服务商需要代理，在 `.env` 中设置 `HTTP_PROXY` 和 `HTTPS_PROXY`，例如 `http://host.docker.internal:7890`。
+
+### 4. 启动应用
 
 ```bash
 docker compose -f docker-compose.codex.yml up -d --build
 ```
 
-默认端口：
+访问：
 
-- Web：`20880`
-- API：`20881`，默认只绑定服务器本机 `127.0.0.1`
+- Web：`http://localhost:20880`
+- API 健康检查：`http://127.0.0.1:20881/health`
 
-运行数据目录：
+检查运行状态：
 
-```text
-data/
+```bash
+docker compose -f docker-compose.codex.yml ps
+docker compose -f docker-compose.codex.yml logs -f
 ```
 
-部署、更新和重建容器时请保留 `data/`，避免删除用户上传素材和生成结果。
+停止服务：
+
+```bash
+docker compose -f docker-compose.codex.yml down
+```
+
+注意：不要删除 `data/` 目录，也不要删除 PostgreSQL volume，否则会丢失上传素材、生成结果或账号数据。
 
 ## 本地开发
+
+本地开发需要先准备 PostgreSQL。可以直接使用上面 Docker 部署中的 PostgreSQL 容器。
+
+### 1. 启动后端
+
+Linux / macOS：
+
+```bash
+cd backend-node
+npm install
+
+export AUTH_ENABLED=true
+export JWT_SECRET=dev-secret-change-me
+export ADMIN_USERNAME=admin
+export ADMIN_PASSWORD=admin-dev-password
+export PGHOST=127.0.0.1
+export PGPORT=5432
+export PGDATABASE=qnvideo_gzt
+export PGUSER=qnvideo_gzt
+export PGPASSWORD=please-change-this-password
+export STORAGE_BASE_URL=http://localhost:5679/static
+
+npm run migrate
+npm run dev
+```
+
+Windows PowerShell：
+
+```powershell
+cd backend-node
+npm install
+
+$env:AUTH_ENABLED = "true"
+$env:JWT_SECRET = "dev-secret-change-me"
+$env:ADMIN_USERNAME = "admin"
+$env:ADMIN_PASSWORD = "admin-dev-password"
+$env:PGHOST = "127.0.0.1"
+$env:PGPORT = "5432"
+$env:PGDATABASE = "qnvideo_gzt"
+$env:PGUSER = "qnvideo_gzt"
+$env:PGPASSWORD = "please-change-this-password"
+$env:STORAGE_BASE_URL = "http://localhost:5679/static"
+
+npm run migrate
+npm run dev
+```
+
+后端默认地址：
+
+- API：`http://localhost:5679/api/v1`
+- 健康检查：`http://localhost:5679/health`
+
+### 2. 启动前端
+
+另开一个终端：
+
+```bash
+cd frontweb
+npm install
+npm run dev
+```
+
+前端默认地址：
+
+- `http://localhost:3013`
+
+Vite 会把 `/api` 和 `/static` 代理到 `http://127.0.0.1:5679`。
+
+### 3. 测试和构建
 
 后端：
 
 ```bash
 cd backend-node
-npm install
 npm test
-npm start
 ```
 
 前端：
 
 ```bash
 cd frontweb
-npm install
-npm run dev
+npm test
 npm run build
 ```
 
