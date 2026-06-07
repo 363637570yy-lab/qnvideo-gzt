@@ -2801,6 +2801,7 @@ const pipelineVideoConcurrency = ref(3)
 const pipelineActiveTasks = reactive(new Set())
 
 async function loadPipelineConcurrency() {
+  if (!isAdminUser.value) return
   try {
     const res = await generationSettingsAPI.get()
     pipelineConcurrency.value = Math.max(1, Number(res?.concurrency) || 3)
