@@ -118,6 +118,7 @@ function publicUser(row) {
     created_at: row.created_at,
     updated_at: row.updated_at,
     last_login_at: row.last_login_at,
+    project_count: Number(row.project_count || 0),
   };
 }
 
@@ -160,12 +161,27 @@ async function verifyToken(token, log) {
   return user;
 }
 
-async function listUsers(log) {
+function countActiveProjects(sqliteDb, userId) {
+  if (!sqliteDb || !userId) return 0;
+  try {
+    const row = sqliteDb
+      .prepare('SELECT COUNT(*) AS count FROM dramas WHERE owner_user_id = ? AND deleted_at IS NULL')
+      .get(String(userId));
+    return Number(row?.count || 0);
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function listUsers(log, sqliteDb) {
   await ensureIdentityDb(log);
   const result = await query(
     'SELECT id, username, role, display_name, is_active, created_at, updated_at, last_login_at FROM users ORDER BY created_at ASC'
   );
-  return result.rows.map(publicUser);
+  return result.rows.map((row) => publicUser({
+    ...row,
+    project_count: countActiveProjects(sqliteDb, row.id),
+  }));
 }
 
 async function createUser(input, actor, log) {
@@ -220,6 +236,47 @@ async function updateUser(id, input, actor, log) {
   return publicUser(result.rows[0]);
 }
 
+async function changePassword(userId, input, log) {
+  await ensureIdentityDb(log);
+  const oldPassword = String(input.old_password || input.current_password || '');
+  const newPassword = String(input.new_password || input.password || '');
+  if (!oldPassword) throw new Error('请输入当前密码');
+  if (!newPassword || newPassword.length < 6) throw new Error('新密码至少 6 个字符');
+  const result = await query('SELECT * FROM users WHERE id = $1', [userId]);
+  const row = result.rows[0];
+  if (!row || !row.is_active) return null;
+  if (!verifyPassword(oldPassword, row.password_hash)) throw new Error('当前密码不正确');
+  await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hashPassword(newPassword), userId]);
+  log?.info?.('User password changed', { id: userId });
+  return publicUser(row);
+}
+
+async function deleteUser(id, actor, sqliteDb, log) {
+  await ensureIdentityDb(log);
+  const userId = String(id || '').trim();
+  if (!userId) throw new Error('用户不存在');
+  if (actor?.id && String(actor.id) === userId) throw new Error('不能删除当前登录账号');
+
+  const existing = await query('SELECT id, username, role FROM users WHERE id = $1', [userId]);
+  const row = existing.rows[0];
+  if (!row) return null;
+
+  const activeProjects = countActiveProjects(sqliteDb, userId);
+  if (activeProjects > 0) {
+    throw new Error(`该用户下还有 ${activeProjects} 个项目，无法删除`);
+  }
+
+  if (row.role === 'admin') {
+    const admins = await query("SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin' AND id <> $1", [userId]);
+    if (Number(admins.rows[0]?.count || 0) === 0) throw new Error('至少需要保留一个管理员账号');
+  }
+
+  await query('DELETE FROM project_owners WHERE owner_user_id = $1', [userId]);
+  await query('DELETE FROM users WHERE id = $1', [userId]);
+  log?.info?.('User deleted', { id: userId, username: row.username, actor: actor?.username });
+  return true;
+}
+
 function assignUnownedDramasToAdmin(sqliteDb, log, adminId) {
   if (!sqliteDb || !adminId) return;
   try {
@@ -260,6 +317,8 @@ module.exports = {
   listUsers,
   createUser,
   updateUser,
+  changePassword,
+  deleteUser,
   assignUnownedDramasToAdmin,
   setDramaOwner,
 };

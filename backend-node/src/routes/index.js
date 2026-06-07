@@ -51,7 +51,7 @@ function setupRouter(cfg, db, log) {
   const promptOverrides = promptOverridesRoutes.routes(db, log);
 
   // ---------- auth ----------
-  r.use('/auth', authRoutes(log));
+  r.use('/auth', authRoutes(log, db));
   r.use(requireAuth(log));
   r.use('/ai-configs', requireAdmin());
   r.use('/settings/generation', requireAdmin());

@@ -45,19 +45,40 @@
         </template>
       </el-table-column>
       <el-table-column prop="last_login_at" label="最后登录" min-width="180" />
+      <el-table-column label="项目数" width="100" align="center">
+        <template #default="{ row }">
+          <el-tag :type="Number(row.project_count || 0) > 0 ? 'warning' : 'success'">{{ row.project_count || 0 }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="120" fixed="right">
+        <template #default="{ row }">
+          <el-button
+            type="danger"
+            plain
+            size="small"
+            :disabled="!canDelete(row)"
+            :loading="row.deleting"
+            @click="deleteUser(row)"
+          >
+            删除
+          </el-button>
+        </template>
+      </el-table-column>
     </el-table>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { authAPI } from '@/api/auth'
+import { getCurrentUser } from '@/utils/auth'
 
 const users = ref([])
 const loading = ref(false)
 const creating = ref(false)
 const form = reactive({ username: '', display_name: '', password: '', role: 'user' })
+const currentUser = getCurrentUser()
 
 async function loadUsers() {
   loading.value = true
@@ -90,6 +111,38 @@ async function toggleActive(row) {
     ElMessage.success('状态已更新')
   } finally {
     row.saving = false
+  }
+}
+
+function canDelete(row) {
+  return row?.id && row.id !== currentUser?.id && Number(row.project_count || 0) === 0
+}
+
+async function deleteUser(row) {
+  if (!canDelete(row)) {
+    if (row.id === currentUser?.id) {
+      ElMessage.warning('不能删除当前登录账号')
+    } else {
+      ElMessage.warning('该用户下还有项目，无法删除')
+    }
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定删除账号「${row.display_name || row.username}」吗？该操作不可恢复。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch (_) {
+    return
+  }
+  row.deleting = true
+  try {
+    await authAPI.deleteUser(row.id)
+    ElMessage.success('用户已删除')
+    await loadUsers()
+  } finally {
+    row.deleting = false
   }
 }
 

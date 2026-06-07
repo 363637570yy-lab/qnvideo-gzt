@@ -15,5 +15,11 @@ export const authAPI = {
   },
   updateUser(id, data) {
     return request.put(`/auth/users/${id}`, data)
+  },
+  deleteUser(id) {
+    return request.delete(`/auth/users/${id}`)
+  },
+  changePassword(data) {
+    return request.put('/auth/me/password', data)
   }
 }

@@ -42,8 +42,6 @@
           <el-button v-if="isAdminUser" class="btn-settings" @click="showAiConfigDialog = true">
             <el-icon><Setting /></el-icon>AI配置
           </el-button>
-          <span class="current-user">{{ currentUser?.display_name || currentUser?.username }}</span>
-          <el-button class="btn-theme" @click="logout">退出</el-button>
           <el-button class="btn-import" :loading="importing" @click="triggerImport">
             <el-icon><Upload /></el-icon>导入项目
           </el-button>
@@ -51,6 +49,7 @@
           <el-button type="primary" class="btn-new" @click="goNewProject">
             <el-icon><Plus /></el-icon>新建项目
           </el-button>
+          <AccountMenu :user="currentUser" />
         </div>
       </div>
     </header>
@@ -373,11 +372,12 @@ import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import AIConfigContent from '@/components/AIConfigContent.vue'
+import AccountMenu from '@/components/AccountMenu.vue'
 import { uploadAPI } from '@/api/upload'
 import { aiAPI } from '@/api/ai'
 import { imagesAPI } from '@/api/images'
 import { taskAPI } from '@/api/task'
-import { clearAuth, getCurrentUser, isAdmin } from '@/utils/auth'
+import { getCurrentUser, isAdmin } from '@/utils/auth'
 
 const router = useRouter()
 const { isDark, toggle: toggleTheme } = useTheme()
@@ -650,11 +650,6 @@ function loadList() {
     .finally(() => {
       loading.value = false
     })
-}
-
-function logout() {
-  clearAuth()
-  router.replace('/login')
 }
 
 function formatDate(val) {
@@ -943,18 +938,6 @@ onMounted(async () => {
   align-items: center;
   gap: 6px;
 }
-.current-user {
-  color: #cbd5e1;
-  font-size: 14px;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-html.light .current-user {
-  color: #475569;
-}
-
 /* 资源库按钮 —— 靛紫调 */
 .btn-library {
   --el-button-bg-color: rgba(99, 102, 241, 0.12);

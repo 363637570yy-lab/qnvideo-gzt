@@ -34,10 +34,12 @@
           <el-button class="btn-theme" :title="isDark ? '切换到浅色模式' : '切换到暗色模式'" @click="toggleTheme">
             <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
             {{ isDark ? '浅色' : '暗色' }}
-          </el-button><el-button class="btn-ai-config" @click="showAiConfigDialog = true">
+          </el-button>
+          <el-button v-if="isAdminUser" class="btn-ai-config" @click="showAiConfigDialog = true">
             <el-icon><Setting /></el-icon>
             AI配置
           </el-button>
+          <AccountMenu :user="currentUser" />
         </div>
       </div>
     </header>
@@ -1588,7 +1590,14 @@
             </div>
           </el-form-item>
         </div>
-        <p class="config-tip">文本/图片/视频使用的模型以「<el-link type="primary" :underline="false" @click="showAiConfigDialog = true">AI 配置</el-link>」中设为默认的为准。</p>
+        <p class="config-tip">
+          文本/图片/视频使用的模型以
+          <template v-if="isAdminUser">
+            「<el-link type="primary" :underline="false" @click="showAiConfigDialog = true">AI 配置</el-link>」
+          </template>
+          <template v-else>管理员配置</template>
+          中设为默认的为准。
+        </p>
       </section>
 
       <!-- 8. 合成视频 -->
@@ -2575,8 +2584,8 @@
     </el-dialog>
 
     <!-- AI 配置弹窗（不跳转，避免本页内容丢失） -->
-    <el-dialog v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close class="ai-config-dialog">
-      <AIConfigContent v-if="showAiConfigDialog" />
+    <el-dialog v-if="isAdminUser" v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close class="ai-config-dialog">
+      <AIConfigContent v-if="showAiConfigDialog && isAdminUser" />
     </el-dialog>
 
     <!-- 图片放大预览：点击遮罩或图片关闭 -->
@@ -2621,6 +2630,7 @@ import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scri
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
+import AccountMenu from '@/components/AccountMenu.vue'
 import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEditor.vue'
 import {
   generationStyleOptions,
@@ -2634,6 +2644,7 @@ import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useCharacters } from '@/composables/filmCreate/useCharacters'
 import { useProps as usePropsComposable } from '@/composables/filmCreate/useProps'
 import { useScenes } from '@/composables/filmCreate/useScenes'
+import { getCurrentUser, isAdmin } from '@/utils/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -2641,6 +2652,8 @@ const store = useFilmStore()
 const genStore = useGenerationTaskStore()
 const { isDark, toggle: toggleTheme } = useTheme()
 const { videoResolution: storeVideoResolution } = storeToRefs(store)
+const currentUser = ref(getCurrentUser())
+const isAdminUser = ref(isAdmin())
 
 // ── Composable: Navigation ─────────────────────────────
 const { navCollapsed, storyboardMenuExpanded, toggleNav, scrollToTop, scrollToAnchor } = useNavigation()

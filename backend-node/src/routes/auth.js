@@ -3,7 +3,7 @@ const response = require('../response');
 const identityService = require('../services/identityService');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
-module.exports = function authRoutes(log) {
+module.exports = function authRoutes(log, db) {
   const r = express.Router();
 
   r.post('/login', async (req, res) => {
@@ -22,9 +22,19 @@ module.exports = function authRoutes(log) {
     response.success(res, { user: req.user });
   });
 
+  r.put('/me/password', requireAuth(log), async (req, res) => {
+    try {
+      const user = await identityService.changePassword(req.user.id, req.body || {}, log);
+      if (!user) return response.notFound(res, '用户不存在');
+      response.success(res, user);
+    } catch (err) {
+      response.badRequest(res, err.message);
+    }
+  });
+
   r.get('/users', requireAuth(log), requireAdmin(), async (req, res) => {
     try {
-      response.success(res, await identityService.listUsers(log));
+      response.success(res, await identityService.listUsers(log, db));
     } catch (err) {
       log?.error?.('list users failed', { error: err.message });
       response.internalError(res, err.message);
@@ -45,6 +55,16 @@ module.exports = function authRoutes(log) {
       const user = await identityService.updateUser(req.params.id, req.body || {}, req.user, log);
       if (!user) return response.notFound(res, '用户不存在');
       response.success(res, user);
+    } catch (err) {
+      response.badRequest(res, err.message);
+    }
+  });
+
+  r.delete('/users/:id', requireAuth(log), requireAdmin(), async (req, res) => {
+    try {
+      const ok = await identityService.deleteUser(req.params.id, req.user, db, log);
+      if (!ok) return response.notFound(res, '用户不存在');
+      response.success(res, { message: '用户已删除' });
     } catch (err) {
       response.badRequest(res, err.message);
     }
