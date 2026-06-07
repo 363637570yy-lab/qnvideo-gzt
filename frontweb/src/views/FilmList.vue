@@ -114,6 +114,17 @@
       </div>
     </main>
 
+    <footer class="source-footer">
+      <span>
+        原开源项目：
+        <a href="https://github.com/xuanyustudio/LocalMiniDrama" target="_blank" rel="noopener noreferrer">xuanyustudio/LocalMiniDrama</a>
+      </span>
+      <span>
+        芊柠开源项目：
+        <a href="https://github.com/363637570yy-lab/qnvideo-gzt" target="_blank" rel="noopener noreferrer">363637570yy-lab/qnvideo-gzt</a>
+      </span>
+    </footer>
+
     <!-- 新建项目：先填标题和描述 -->
     <el-dialog
       v-model="showNewDialog"
@@ -836,6 +847,8 @@ onMounted(async () => {
 <style scoped>
 .film-list {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: #08080d;
   color: #e4e4e7;
   background-image:
@@ -988,9 +1001,31 @@ html.light .btn-import {
 }
 
 .main {
+  flex: 1;
   max-width: min(1400px, 96vw);
   margin: 0 auto;
   padding: 24px 16px 48px;
+}
+.source-footer {
+  max-width: min(1400px, 96vw);
+  width: 100%;
+  margin: 0 auto;
+  padding: 14px 16px 22px;
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  color: #71717a;
+  font-size: 12px;
+  border-top: 1px solid rgba(99, 102, 241, 0.12);
+}
+.source-footer a {
+  color: #a5b4fc;
+  text-decoration: none;
+}
+.source-footer a:hover {
+  color: #c4b5fd;
+  text-decoration: underline;
 }
 .projects-wrap {
   min-height: 200px;
@@ -1329,6 +1364,16 @@ html.light .project-title { color: #1e1b4b; }
 html.light .project-desc { color: #4b5563; }
 html.light .project-meta { color: #6b7280; }
 html.light .example-hint-text { color: #6b7280; }
+html.light .source-footer {
+  color: #6b7280;
+  border-top-color: rgba(99, 102, 241, 0.16);
+}
+html.light .source-footer a {
+  color: #4f46e5;
+}
+html.light .source-footer a:hover {
+  color: #6d28d9;
+}
 html.light .library-item {
   background: #faf9ff;
   border-color: #e5e7eb;
