@@ -5,7 +5,7 @@
       <div class="header-inner">
         <h1 class="logo" @click="goList">
           <span class="logo-main">芊柠AI视频工作台</span>
-          <span class="logo-sub">QianNing AI Video</span>
+          <span class="logo-sub">QN AI Video</span>
         </h1>
         <span class="breadcrumb-sep">›</span>
         <span class="page-title">{{ dramaId ? (store.drama?.title || '项目') : '新建故事' }}</span>

@@ -4,12 +4,7 @@
       <div class="header-inner">
         <h1 class="logo">
           <span class="logo-main">芊柠AI视频工作台</span>
-          <span class="logo-sub">QianNing AI Video</span>
-          <span class="logo-source-links">
-            <a href="https://github.com/xuanyustudio/LocalMiniDrama" target="_blank" rel="noopener noreferrer">原开源项目</a>
-            <span>/</span>
-            <a href="https://github.com/363637570yy-lab/qnvideo-gzt" target="_blank" rel="noopener noreferrer">芊柠开源项目</a>
-          </span>
+          <span class="logo-sub">QN AI Video</span>
         </h1>
         <!-- 公共资源库（左侧，靛紫调） -->
         <div class="header-library">
@@ -902,26 +897,6 @@ onMounted(async () => {
   -webkit-text-fill-color: #6d6d7a;
   filter: none;
 }
-.logo-source-links {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 3px;
-  font-size: 0.66rem;
-  font-weight: 500;
-  line-height: 1.2;
-}
-.logo-source-links a {
-  color: #8b8bf6;
-  text-decoration: none;
-}
-.logo-source-links a:hover {
-  color: #c4b5fd;
-  text-decoration: underline;
-}
-.logo-source-links span {
-  color: #4b4b58;
-}
 .page-title {
   color: #a1a1aa;
   font-size: 0.95rem;
@@ -1348,15 +1323,6 @@ html.light .logo-main {
 html.light .logo-sub {
   color: #9ca3af;
   -webkit-text-fill-color: #9ca3af;
-}
-html.light .logo-source-links a {
-  color: #4f46e5;
-}
-html.light .logo-source-links a:hover {
-  color: #6d28d9;
-}
-html.light .logo-source-links span {
-  color: #9ca3af;
 }
 html.light .project-card {
   background: #ffffff;

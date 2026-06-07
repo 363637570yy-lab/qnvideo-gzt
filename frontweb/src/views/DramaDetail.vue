@@ -4,7 +4,7 @@
       <div class="header-inner">
         <h1 class="logo" @click="router.push('/')">
           <span class="logo-main">芊柠AI视频工作台</span>
-          <span class="logo-sub">QianNing AI Video</span>
+          <span class="logo-sub">QN AI Video</span>
         </h1>
         <span class="breadcrumb-sep">›</span>
         <span class="page-title">{{ drama?.title || '剧集管理' }}</span>

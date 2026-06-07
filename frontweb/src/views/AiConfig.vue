@@ -4,7 +4,7 @@
       <div class="header-inner">
         <h1 class="logo" @click="goList">
           <span class="logo-main">芊柠AI视频工作台</span>
-          <span class="logo-sub">QianNing AI Video</span>
+          <span class="logo-sub">QN AI Video</span>
         </h1>
         <span class="page-title">AI 配置</span>
         <el-button class="btn-back" @click="goList">
