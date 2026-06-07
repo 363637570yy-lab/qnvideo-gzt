@@ -1,6 +1,6 @@
 # 芊柠AI视频工作台
 
-芊柠AI视频工作台是面向短视频和短剧创作流程的 Web 工作台，基于开源项目 [xuanyustudio/LocalMiniDrama](https://github.com/xuanyustudio/LocalMiniDrama) 改造，保留原项目的 AI 短剧创作能力，并增加了适合服务器部署的账号登录、管理员权限、用户项目隔离和 PostgreSQL 身份数据存储。
+芊柠AI视频工作台是面向短视频和短剧创作流程的 Web 工作台，基于开源项目 [xuanyustudio/LocalMiniDrama](https://github.com/xuanyustudio/LocalMiniDrama) 改造，保留原项目的 AI 短剧创作能力，并增加了适合服务器部署的账号登录、管理员权限、用户项目隔离和 PostgreSQL 结构化业务数据存储。
 
 本项目适合部署到个人服务器、内网工作站或团队测试服务器，用于统一管理短剧项目、素材、分镜、图片生成、视频生成和合成导出流程。
 
@@ -13,7 +13,7 @@
 - AI 生成：可对接文本、图片、视频类 AI 服务，支持多服务商和 OpenAI 兼容接口。
 - 合成导出：支持把多个分镜视频合成为完整剧集文件。
 - 账号权限：管理员可管理用户、AI 配置和全部项目；普通用户只能访问自己的项目。
-- 服务器部署：提供 Docker Compose 部署入口，媒体文件写入独立 `data/` 目录。
+- 服务器部署：提供 Docker Compose 部署入口，结构化数据写入 PostgreSQL，媒体文件写入独立 `data/storage/` 目录。
 
 ## 界面预览
 
@@ -57,7 +57,7 @@
 ## 运行要求
 
 - Docker 24+ 和 Docker Compose v2。
-- PostgreSQL 14+。账号、角色、权限和项目归属映射需要 PostgreSQL。
+- PostgreSQL 14+。账号、权限、AI 配置、项目、剧本、分镜、素材元数据和生成任务等结构化数据写入 PostgreSQL。
 - 如需本地开发，建议使用 Node.js 20；最低要求 Node.js 18。
 - Docker 部署会在后端镜像内安装 FFmpeg；本地开发如需合成视频，请先把 FFmpeg 安装到系统 PATH，或设置 `FFMPEG_PATH` / `FFPROBE_PATH`。
 - 如需调用国外 AI 服务商，可在 `.env` 中配置 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`；不需要代理时留空即可。
@@ -167,7 +167,7 @@ docker compose -f docker-compose.codex.yml logs -f
 docker compose -f docker-compose.codex.yml down
 ```
 
-注意：不要删除 `data/` 目录，也不要删除 PostgreSQL volume，否则会丢失上传素材、生成结果或账号数据。
+注意：不要删除 `data/` 目录，也不要删除 PostgreSQL volume。上传素材、生成图片、生成视频和音频文件保存在 `data/storage/`；账号、权限、AI 配置、项目、剧本、分镜和文件引用等结构化数据保存在 PostgreSQL。
 
 ## 本地开发
 

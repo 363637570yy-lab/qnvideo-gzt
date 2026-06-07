@@ -28,7 +28,18 @@ function loadConfig() {
   parsed.storage = parsed.storage || {};
   if (process.env.PORT) parsed.server.port = Number(process.env.PORT);
   if (process.env.SERVER_HOST) parsed.server.host = process.env.SERVER_HOST;
+  const hasPgEnv = !!(
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.PGHOST ||
+    process.env.POSTGRES_HOST
+  );
+  const legacySqlitePath = process.env.LEGACY_SQLITE_DB_PATH || process.env.SQLITE_DB_PATH || parsed.database.path;
   if (process.env.SQLITE_DB_PATH) parsed.database.path = process.env.SQLITE_DB_PATH;
+  parsed.database.sqlite_path = legacySqlitePath;
+  if (hasPgEnv) {
+    parsed.database.type = 'postgres';
+  }
   if (process.env.STORAGE_LOCAL_PATH) parsed.storage.local_path = process.env.STORAGE_LOCAL_PATH;
   if (process.env.STORAGE_BASE_URL) parsed.storage.base_url = process.env.STORAGE_BASE_URL;
   return parsed;

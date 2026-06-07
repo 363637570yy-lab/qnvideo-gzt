@@ -19,7 +19,7 @@ services:
       PGPASSWORD: ${PGPASSWORD:-}
       PORT: 5679
       SERVER_HOST: 0.0.0.0
-      SQLITE_DB_PATH: /app/data/drama_generator.db
+      LEGACY_SQLITE_DB_PATH: /app/data/drama_generator.db
       STORAGE_LOCAL_PATH: /app/data/storage
       STORAGE_BASE_URL: ${STORAGE_BASE_URL:-http://localhost:20880/static}
       HTTP_PROXY: ${HTTP_PROXY:-}

@@ -1,11 +1,16 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { PgCompatDb } = require('./pgCompat');
 
 let db = null;
 
 function getDb(config) {
   if (db) return db;
+  if (config?.type === 'postgres') {
+    db = new PgCompatDb(config);
+    return db;
+  }
   const dbPath = config.path;
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {

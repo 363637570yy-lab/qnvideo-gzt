@@ -11,7 +11,10 @@ function createApp() {
   const config = loadConfig();
   const db = getDb(config.database);
   const { runMigrationsAndEnsure } = require('./db/migrate.js');
-  runMigrationsAndEnsure(db);
+  runMigrationsAndEnsure(db, {
+    sqlitePath: config.database?.sqlite_path || config.database?.path,
+    log: logger,
+  });
   const identityService = require('./services/identityService');
   identityService.ensureIdentityDb(logger)
     .then(({ admin }) => identityService.assignUnownedDramasToAdmin(db, logger, admin?.id))

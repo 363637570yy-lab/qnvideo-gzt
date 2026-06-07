@@ -543,7 +543,13 @@ function ensureAllColumns(database) {
 }
 
 /** 对已打开的 database 执行迁移与兜底补列（供 app 启动时调用） */
-function runMigrationsAndEnsure(database) {
+function runMigrationsAndEnsure(database, options = {}) {
+  if (database?.kind === 'postgres') {
+    const { ensurePgSchema, migrateSqliteToPgIfNeeded } = require('./pgSchema');
+    ensurePgSchema(database);
+    migrateSqliteToPgIfNeeded(database, options.sqlitePath, options.log);
+    return;
+  }
   runMigrations(database);
   ensureAllColumns(database);
 }
