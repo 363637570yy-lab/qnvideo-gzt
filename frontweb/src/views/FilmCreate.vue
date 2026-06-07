@@ -6049,10 +6049,7 @@ async function getActiveVideoAiConfig() {
     return activeVideoAiConfigCache
   }
   try {
-    const rows = await aiAPI.list('video')
-    const list = Array.isArray(rows) ? rows : []
-    const active = list.filter((c) => c.is_active !== false)
-    activeVideoAiConfigCache = active.find((c) => c.is_default) || active[0] || null
+    activeVideoAiConfigCache = await aiAPI.active('video')
   } catch {
     activeVideoAiConfigCache = null
   }
@@ -8080,10 +8077,8 @@ html.light .select-script-title {
   color: #e4e4e7;
 }
 html.light .film-create {
-  background: #f8f7ff;
-  background-image:
-    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(139, 92, 246, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 40% at 85% 110%, rgba(99, 102, 241, 0.06) 0%, transparent 50%);
+  background: #f6f8fb;
+  background-image: none;
   color: #1e1b4b;
 }
 .header {
@@ -8103,9 +8098,9 @@ html.light .film-create {
   margin-left: 48px;
 }
 html.light .header {
-  background: rgba(255, 255, 255, 0.82) !important;
-  border-bottom-color: rgba(139, 92, 246, 0.1) !important;
-  box-shadow: 0 1px 0 rgba(139,92,246,0.06), 0 4px 20px rgba(139, 92, 246, 0.05) !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  border-bottom-color: rgba(226, 232, 240, 0.95) !important;
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.16), 0 4px 14px rgba(15, 23, 42, 0.05) !important;
 }
 .header-inner {
   display: flex;

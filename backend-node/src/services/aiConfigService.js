@@ -55,6 +55,24 @@ function listConfigs(db, serviceType) {
   return rows.map(rowToConfig);
 }
 
+function getActivePublicConfig(db, serviceType) {
+  const list = listConfigs(db, serviceType);
+  const active = list.filter((cfg) => cfg.is_active !== false);
+  const cfg = active.find((item) => item.is_default) || active[0] || null;
+  if (!cfg) return null;
+  return {
+    id: cfg.id,
+    service_type: cfg.service_type,
+    provider: cfg.provider,
+    api_protocol: cfg.api_protocol || '',
+    name: cfg.name,
+    model: cfg.model,
+    default_model: cfg.default_model,
+    is_default: cfg.is_default,
+    is_active: cfg.is_active,
+  };
+}
+
 function clearOtherDefault(db, serviceType, exceptId) {
   const stmt = db.prepare(
     'UPDATE ai_service_configs SET is_default = 0 WHERE deleted_at IS NULL AND service_type = ? AND id != ?'
@@ -564,6 +582,7 @@ function bulkUpdateApiKey(db, log, newKey) {
 
 module.exports = {
   listConfigs,
+  getActivePublicConfig,
   getConfig,
   createConfig,
   updateConfig,

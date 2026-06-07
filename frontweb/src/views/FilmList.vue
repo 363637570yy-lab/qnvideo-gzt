@@ -163,8 +163,8 @@
     </el-dialog>
 
     <!-- AI 配置弹窗 -->
-    <el-dialog v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close>
-      <AIConfigContent v-if="showAiConfigDialog" />
+    <el-dialog v-if="isAdminUser" v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close>
+      <AIConfigContent v-if="showAiConfigDialog && isAdminUser" />
     </el-dialog>
 
     <!-- 公共角色库 -->
@@ -1329,16 +1329,14 @@ html.light .btn-import {
 
 /* ===== 亮色模式适配 ===== */
 html.light .film-list {
-  background: #f5f3ff;
+  background: #f6f8fb;
   color: #1e1b4b;
-  background-image:
-    radial-gradient(ellipse 70% 45% at 50% -10%, rgba(99, 102, 241, 0.1) 0%, transparent 70%),
-    radial-gradient(ellipse 50% 35% at 85% 55%, rgba(139, 92, 246, 0.06) 0%, transparent 60%);
+  background-image: none;
 }
 html.light .header {
-  background: rgba(248, 246, 255, 0.88);
-  border-bottom-color: rgba(99, 102, 241, 0.2);
-  box-shadow: 0 1px 0 rgba(99, 102, 241, 0.1), 0 4px 16px rgba(99, 102, 241, 0.06);
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom-color: rgba(226, 232, 240, 0.95);
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.16), 0 4px 14px rgba(15, 23, 42, 0.05);
 }
 html.light .logo-main {
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #9333ea 100%);
@@ -1361,9 +1359,9 @@ html.light .logo-source-links span {
   color: #9ca3af;
 }
 html.light .project-card {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(199, 210, 254, 0.8);
-  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.06), 0 2px 12px rgba(0, 0, 0, 0.04);
+  background: #ffffff;
+  border-color: rgba(226, 232, 240, 0.95);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 10px 24px rgba(15, 23, 42, 0.04);
   backdrop-filter: none;
 }
 html.light .project-card::before {
@@ -1371,15 +1369,15 @@ html.light .project-card::before {
 }
 html.light .project-card:hover {
   border-color: rgba(99, 102, 241, 0.5);
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 12px 36px rgba(99, 102, 241, 0.12), 0 0 0 1px rgba(99, 102, 241, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  background: #ffffff;
+  box-shadow: 0 12px 30px rgba(99, 102, 241, 0.1), 0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 html.light .action-card {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.06) 0%, rgba(139, 92, 246, 0.04) 100%);
-  border-color: rgba(99, 102, 241, 0.35);
+  background: #ffffff;
+  border-color: rgba(99, 102, 241, 0.28);
 }
 html.light .action-card:hover {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.07) 100%);
+  background: #f8fafc;
   border-color: rgba(99, 102, 241, 0.55);
 }
 html.light .action-card-title { color: #4f46e5; }

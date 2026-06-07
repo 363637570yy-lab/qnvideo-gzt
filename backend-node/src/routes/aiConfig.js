@@ -8,6 +8,13 @@ function list(db) {
   };
 }
 
+function activePublic(db) {
+  return (req, res) => {
+    const config = aiConfigService.getActivePublicConfig(db, req.query.service_type);
+    response.success(res, config);
+  };
+}
+
 function get(db) {
   return (req, res) => {
     const id = parseInt(req.params.id, 10);
@@ -185,6 +192,7 @@ function listJimeng2MaterialAssets(log) {
 module.exports = function aiConfigRoutes(db, log, cfg) {
   return {
     list: list(db),
+    activePublic: activePublic(db),
     get: get(db),
     vendorLock: vendorLock(cfg),
     create: create(db, log, cfg),
