@@ -1,6 +1,3 @@
-const fs = require('fs');
-const Database = require('better-sqlite3');
-
 const tableDefs = [
   {
     name: 'dramas',
@@ -215,8 +212,10 @@ const tableDefs = [
       default_model: 'TEXT',
       endpoint: 'TEXT',
       query_endpoint: 'TEXT',
-      priority: 'INTEGER DEFAULT 0',
-      is_default: 'INTEGER DEFAULT 0',
+      route_order: 'INTEGER DEFAULT 0',
+      retry_count: 'INTEGER DEFAULT 0',
+      cooldown_seconds: 'INTEGER DEFAULT 0',
+      request_timeout_ms: 'INTEGER DEFAULT 0',
       is_active: 'INTEGER DEFAULT 1',
       health_status: 'TEXT DEFAULT \'ok\'',
       disabled_until: 'TEXT',
@@ -276,6 +275,8 @@ const tableDefs = [
       local_path: 'TEXT',
       width: 'INTEGER',
       height: 'INTEGER',
+      params_json: 'TEXT',
+      actual_params_json: 'TEXT',
       status: 'TEXT',
       task_id: 'TEXT',
       completed_at: 'TEXT',
@@ -307,6 +308,8 @@ const tableDefs = [
       reference_image_urls: 'TEXT',
       video_url: 'TEXT',
       local_path: 'TEXT',
+      params_json: 'TEXT',
+      actual_params_json: 'TEXT',
       status: 'TEXT',
       task_id: 'TEXT',
       scene_id: 'INTEGER',
@@ -355,6 +358,9 @@ const tableDefs = [
       duration: 'DOUBLE PRECISION',
       image_gen_id: 'INTEGER',
       video_gen_id: 'INTEGER',
+      created_by_user_id: 'TEXT',
+      created_by_username: 'TEXT',
+      created_by_display_name: 'TEXT',
       created_at: 'TEXT',
       updated_at: 'TEXT',
       deleted_at: 'TEXT',
@@ -521,7 +527,7 @@ const performanceIndexes = [
   ['idx_video_generations_task', 'video_generations', ['task_id']],
   ['idx_async_tasks_resource_created', 'async_tasks', ['resource_id', 'created_at']],
   ['idx_async_tasks_status_updated', 'async_tasks', ['status', 'updated_at']],
-  ['idx_ai_service_configs_runtime', 'ai_service_configs', ['service_type', 'deleted_at', 'is_active', 'priority', 'is_default']],
+  ['idx_ai_service_configs_runtime', 'ai_service_configs', ['service_type', 'deleted_at', 'is_active', 'route_order']],
   ['idx_character_libraries_owner_created', 'character_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
   ['idx_scene_libraries_owner_created', 'scene_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
   ['idx_prop_libraries_owner_created', 'prop_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
@@ -554,79 +560,7 @@ function ensurePgSchema(db) {
   }
 }
 
-function sqliteTableExists(sqliteDb, table) {
-  return !!sqliteDb
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(table);
-}
-
-function pgBusinessRows(db) {
-  const checks = ['dramas', 'ai_service_configs', 'character_libraries', 'scene_libraries', 'prop_libraries'];
-  return checks.reduce((sum, table) => {
-    try {
-      const row = db.prepare(`SELECT COUNT(*) AS total FROM ${quoteIdent(table)}`).get();
-      return sum + Number(row?.total || 0);
-    } catch (_) {
-      return sum;
-    }
-  }, 0);
-}
-
-function sourceColumns(sqliteDb, table) {
-  return sqliteDb.prepare(`PRAGMA table_info(${quoteIdent(table)})`).all().map((r) => r.name);
-}
-
-function importTable(db, sqliteDb, def) {
-  if (!sqliteTableExists(sqliteDb, def.name)) return 0;
-  const allowed = new Set([
-    ...(def.pk ? [def.pk] : []),
-    ...(def.textPk ? [def.textPk] : []),
-    ...(def.compositePk || []),
-    ...Object.keys(def.columns),
-  ]);
-  const cols = sourceColumns(sqliteDb, def.name).filter((name) => allowed.has(name));
-  if (!cols.length) return 0;
-  const rows = sqliteDb.prepare(`SELECT ${cols.map(quoteIdent).join(', ')} FROM ${quoteIdent(def.name)}`).all();
-  if (!rows.length) return 0;
-  const placeholders = cols.map(() => '?').join(', ');
-  const sql = `INSERT INTO ${quoteIdent(def.name)} (${cols.map(quoteIdent).join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`;
-  const stmt = db.prepare(sql);
-  for (const row of rows) {
-    stmt.run(...cols.map((col) => row[col]));
-  }
-  return rows.length;
-}
-
-function resetSequences(db) {
-  for (const def of tableDefs.filter((x) => x.pk)) {
-    db.exec(
-      `SELECT setval(pg_get_serial_sequence('${def.name}', '${def.pk}'), ` +
-      `GREATEST((SELECT COALESCE(MAX(${quoteIdent(def.pk)}), 1) FROM ${quoteIdent(def.name)}), 1), true)`
-    );
-  }
-}
-
-function migrateSqliteToPgIfNeeded(db, sqlitePath, log) {
-  if (String(process.env.PG_MIGRATE_SQLITE_ON_START || 'true').toLowerCase() === 'false') return;
-  if (!sqlitePath || !fs.existsSync(sqlitePath)) return;
-  const existing = pgBusinessRows(db);
-  if (existing > 0) {
-    log?.info?.('PG business tables already contain data; SQLite import skipped', { rows: existing });
-    return;
-  }
-  const sqliteDb = new Database(sqlitePath, { readonly: true, fileMustExist: true });
-  let imported = 0;
-  try {
-    for (const def of tableDefs) imported += importTable(db, sqliteDb, def);
-    resetSequences(db);
-    log?.info?.('SQLite business data imported into PostgreSQL', { imported, source: sqlitePath });
-  } finally {
-    sqliteDb.close();
-  }
-}
-
 module.exports = {
   tableDefs,
   ensurePgSchema,
-  migrateSqliteToPgIfNeeded,
 };

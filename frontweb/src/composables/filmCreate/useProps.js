@@ -19,7 +19,7 @@ import { buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/use
  * @param {Function} deps.hasAssetImage
  */
 export function useProps(deps) {
-  const { store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage } = deps
+  const { store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary } = deps
   const genStore = useGenerationTaskStore()
 
   function buildPropImageMeta(prop) {
@@ -112,17 +112,17 @@ export function useProps(deps) {
       const taskId = res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)
-        if (pollRes?.status !== 'failed') {
+        if (pollRes?.status === 'completed') {
           ElMessage.success('道具提取完成')
         }
       } else {
         await loadDrama()
+        genStore.markDone(meta)
         ElMessage.success('道具提取任务已提交')
       }
     } catch (e) {
+      genStore.markFailed(meta, e.message || '提取失败')
       ElMessage.error(e.message || '提取失败')
-    } finally {
-      genStore.markDone(meta)
     }
   }
 
@@ -305,10 +305,10 @@ export function useProps(deps) {
       const taskId = res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)
-        if (pollRes?.status === 'failed') {
-          prop.errorMsg = pollRes.error || '生成失败'
-        } else {
+        if (pollRes?.status === 'completed') {
           ElMessage.success('道具图片已生成')
+        } else if (pollRes?.status === 'failed') {
+          prop.errorMsg = pollRes.error || '生成失败'
         }
       } else {
         await loadDrama()
@@ -317,15 +317,16 @@ export function useProps(deps) {
           const p = list.find((x) => Number(x.id) === Number(prop.id))
           return !!(p && (p.image_url || p.local_path))
         })
+        genStore.markDone(meta)
         ElMessage.success('道具图片已生成')
       }
     } catch (e) {
       console.error(e)
       prop.errorMsg = e.message || '生成失败'
+      genStore.markFailed(meta, e.message || '提交失败')
       ElMessage.error(e.message || '提交失败')
     } finally {
       generatingPropIds.delete(prop.id)
-      genStore.markDone(meta)
     }
   }
 
@@ -453,6 +454,10 @@ export function useProps(deps) {
   }
 
   async function onDeletePropLibrary(item) {
+    if (!(typeof canManageLibrary === 'function' ? canManageLibrary(item) : isAdminUser?.value)) {
+      ElMessage.warning('只能删除自己创建的素材')
+      return
+    }
     try {
       await ElMessageBox.confirm(
         `确定删除公共道具「${(item.name || '未命名').slice(0, 20)}」吗？`,

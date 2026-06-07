@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const aiConfigService = require('./aiConfigService');
+const taskService = require('./taskService');
 let sharp; try { sharp = require('sharp'); } catch (_) { sharp = null; }
 const { uploadLocalImageToProxy, uploadToImageProxy } = require('./uploadService');
 const {
@@ -789,7 +790,7 @@ function parseKlingOmniPollVideoUrl(data) {
   return null;
 }
 
-// ??????????????????listConfigs ?? is_default DESC, priority DESC ??
+// 视频生成使用统一路由池，按策略自动跳过冷却/停用配置。
 function getDefaultVideoConfig(db, preferredModel) {
   return getVideoConfigCandidates(db, preferredModel)[0] || null;
 }
@@ -2955,33 +2956,50 @@ async function callVideoApi(db, log, opts) {
   let lastError = null;
   for (let i = 0; i < candidates.length; i += 1) {
     const config = candidates[i];
-    try {
-      const result = await callVideoApiWithConfig(db, log, opts, config);
-      if (result?.error) {
-        lastError = new Error(result.error);
-        const failure = aiConfigService.recordConfigFailure(db, config.id, lastError);
-        log.warn('[视频] 当前配置失败，尝试下一个可用配置', {
+    const modelForPolicy = opts.model || config.default_model || (Array.isArray(config.model) ? config.model[0] : null);
+    const retryCount = aiConfigService.getRetryCountForConfig(db, config, 'video', modelForPolicy);
+    let stopRouting = false;
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      try {
+        const result = await callVideoApiWithConfig(db, log, opts, config);
+        if (result?.error) {
+          lastError = new Error(result.error);
+          if (attempt < retryCount) {
+            log.warn('[视频] 当前配置失败，按策略重试', { config_id: config.id, attempt: attempt + 1, retry_count: retryCount, error: result.error });
+            continue;
+          }
+          const failure = aiConfigService.recordConfigFailure(db, config.id, lastError, { serviceType: 'video', model: modelForPolicy });
+          log.warn('[视频] 当前配置失败，尝试下一个可用配置', {
+            config_id: config.id,
+            reason: failure.reason,
+            fallbackable: failure.fallbackable,
+            error: failure.message,
+          });
+          if (failure.fallbackable && i < candidates.length - 1) break;
+          return result;
+        }
+        aiConfigService.recordConfigSuccess(db, config.id);
+        return result;
+      } catch (err) {
+        lastError = err;
+        if (attempt < retryCount) {
+          log.warn('[视频] 当前配置异常，按策略重试', { config_id: config.id, attempt: attempt + 1, retry_count: retryCount, error: err.message });
+          continue;
+        }
+        const failure = aiConfigService.recordConfigFailure(db, config.id, err, { serviceType: 'video', model: modelForPolicy });
+        log.warn('[视频] 当前配置异常，尝试下一个可用配置', {
           config_id: config.id,
           reason: failure.reason,
           fallbackable: failure.fallbackable,
           error: failure.message,
         });
-        if (failure.fallbackable && i < candidates.length - 1) continue;
-        return result;
+        if (!failure.fallbackable || i === candidates.length - 1) {
+          stopRouting = true;
+          break;
+        }
       }
-      aiConfigService.recordConfigSuccess(db, config.id);
-      return result;
-    } catch (err) {
-      lastError = err;
-      const failure = aiConfigService.recordConfigFailure(db, config.id, err);
-      log.warn('[视频] 当前配置异常，尝试下一个可用配置', {
-        config_id: config.id,
-        reason: failure.reason,
-        fallbackable: failure.fallbackable,
-        error: failure.message,
-      });
-      if (!failure.fallbackable || i === candidates.length - 1) break;
     }
+    if (stopRouting) break;
   }
   return { error: lastError?.message || '视频生成失败' };
 }
@@ -3360,7 +3378,9 @@ async function callVideoApiWithConfig(db, log, opts, config) {
 /**
  * ??????????????????/ChatFire ? ???? DashScope?
  */
-async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 300, intervalMs = 10000) {
+async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 300, intervalMs = 10000, options = {}) {
+  const localTaskId = options.localTaskId || options.task_id || null;
+  const isCancelled = () => localTaskId && taskService.isTaskCancelled(db, localTaskId);
   const provider = (config.provider || '').toLowerCase();
   const protocol = resolveVideoProtocol(config);
   const isDashScope = protocol === 'dashscope';
@@ -3390,7 +3410,15 @@ async function pollVideoTask(db, log, videoGenId, taskId, config, maxAttempts = 
   const queryUrl = () => buildQueryUrl(config, taskId);
   log.info('[poll] ????', { video_gen_id: videoGenId, task_id: taskId, protocol, poll_url: queryUrl() });
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (isCancelled()) {
+      log.info('[poll] 本地任务已停止，结束视频轮询', { video_gen_id: videoGenId, task_id: taskId, local_task_id: localTaskId });
+      return { cancelled: true, error: '任务已停止' };
+    }
     await new Promise((r) => setTimeout(r, intervalMs));
+    if (isCancelled()) {
+      log.info('[poll] 本地任务已停止，结束视频轮询', { video_gen_id: videoGenId, task_id: taskId, local_task_id: localTaskId });
+      return { cancelled: true, error: '任务已停止' };
+    }
     try {
       let url, headers;
       if (isKling) {

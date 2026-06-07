@@ -83,6 +83,8 @@ const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
+const { resolveProjectImageSpec } = require('./projectMediaSpec');
+const { safeDeleteFile } = require('./storageCleanupService');
 
 const LAST_FRAME_TYPES = new Set(['last', 'storyboard_last', 'tail', 'last_frame']);
 
@@ -569,16 +571,26 @@ function create(db, log, req) {
     });
   }
   const mergedPrompt = mergePromptWithStyle(req.prompt || '', req.style);
-  // 优先使用请求中直接传入的 size；其次将 aspect_ratio 转成 size；未提供则存 NULL 留给 processImageGeneration 从 drama 元数据读取
+  // 优先使用请求中直接传入的 size；其次使用项目图像规格；最后才回退到旧 aspect_ratio。
   let reqSize = req.size || null;
+  let projectImageSpec = null;
+  if (!reqSize && req.drama_id) {
+    projectImageSpec = resolveProjectImageSpec(db, req.drama_id);
+    reqSize = projectImageSpec?.size || null;
+  }
   if (!reqSize && req.aspect_ratio) {
     reqSize = aspectRatioToSize(req.aspect_ratio) || null;
   }
+  const paramsJson = JSON.stringify({
+    product_image_spec: projectImageSpec,
+    request_size: req.size || null,
+    request_aspect_ratio: req.aspect_ratio || null,
+  });
   const useFirstFrameLayoutLock = resolveUseFirstFrameLayoutLock(req, frameType);
   const aiConfigId = req.ai_config_id || req.image_config_id || null;
   const info = db.prepare(
-    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, frame_type, reference_images, use_first_frame_layout_lock, size, status, task_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, frame_type, reference_images, use_first_frame_layout_lock, size, params_json, status, task_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
   ).run(
     req.storyboard_id ?? null,
     Number(req.drama_id) || 0,
@@ -592,6 +604,7 @@ function create(db, log, req) {
     refImagesJson,
     useFirstFrameLayoutLock,
     reqSize,
+    paramsJson,
     taskId,
     now,
     now
@@ -633,7 +646,14 @@ async function processImageGeneration(db, log, imageGenId) {
   const now = new Date().toISOString();
   try {
     db.prepare('UPDATE image_generations SET status = ?, updated_at = ? WHERE id = ?').run('processing', now, imageGenId);
-    const imageServiceType = row.storyboard_id ? 'storyboard_image' : 'image';
+    if (row.task_id && taskService.isTaskCancelled(db, row.task_id)) {
+      db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
+        'cancelled', '任务已停止', new Date().toISOString(), imageGenId
+      );
+      log.info('[图生] 任务已停止，跳过模型调用', { id: imageGenId, task_id: row.task_id });
+      return;
+    }
+    const imageServiceType = 'image';
 
     // ── 四宫格模式：先生成4帧提示词，再拼装组合提示词 ──────────────────
     if (row.frame_type === 'quad_grid' && row.storyboard_id) {
@@ -1165,13 +1185,7 @@ async function processImageGeneration(db, log, imageGenId) {
 
     let imageSize = row.size || null;
     if (!imageSize && row.drama_id) {
-      try {
-        const dramaRow = db.prepare('SELECT metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(row.drama_id);
-        if (dramaRow && dramaRow.metadata) {
-          const meta = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
-          if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio);
-        }
-      } catch (_) {}
+      imageSize = resolveProjectImageSpec(db, row.drama_id)?.size || null;
     }
     if (!imageSize) {
       const cfgRatio = cfg?.style?.default_image_ratio;
@@ -1407,6 +1421,13 @@ async function processImageGeneration(db, log, imageGenId) {
     log.info('[图生] Step4 图生 API 返回', { id: imageGenId, api_ms: Date.now() - tApi, has_error: !!result.error, elapsed: elapsed() });
 
     const now2 = new Date().toISOString();
+    if (row.task_id && taskService.isTaskCancelled(db, row.task_id)) {
+      db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
+        'cancelled', '任务已停止', now2, imageGenId
+      );
+      log.info('[图生] 已停止，忽略模型返回结果', { id: imageGenId, task_id: row.task_id, total_elapsed: elapsed() });
+      return;
+    }
     if (result.error) {
       db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
         'failed', (result.error || '').slice(0, 500), now2, imageGenId
@@ -1426,8 +1447,9 @@ async function processImageGeneration(db, log, imageGenId) {
     log.info('[图生] Step5 保存到本地 →', { id: imageGenId, elapsed: elapsed() });
     const tSave = Date.now();
     let localPath = null;
+    let storagePath = null;
     try {
-      const storagePath = path.isAbsolute(cfg.storage?.local_path)
+      storagePath = path.isAbsolute(cfg.storage?.local_path)
         ? cfg.storage.local_path
         : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
       const category =
@@ -1467,10 +1489,21 @@ async function processImageGeneration(db, log, imageGenId) {
       persistedImageUrl = '/static/' + String(localPath).replace(/^\//, '');
     }
 
+    if (row.task_id && taskService.isTaskCancelled(db, row.task_id)) {
+      if (localPath && storagePath) {
+        try { safeDeleteFile(storagePath, localPath); } catch (_) {}
+      }
+      db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
+        'cancelled', '任务已停止', new Date().toISOString(), imageGenId
+      );
+      log.info('[图生] 已停止，忽略已保存但未写库的模型返回结果', { id: imageGenId, task_id: row.task_id, total_elapsed: elapsed() });
+      return;
+    }
+
     // ── Step 6: 写库 & 任务完成 ──────────────────────────────────────
     db.prepare(
-      'UPDATE image_generations SET status = ?, image_url = ?, local_path = ?, completed_at = ?, updated_at = ? WHERE id = ?'
-    ).run('completed', persistedImageUrl, localPath, now2, now2, imageGenId);
+      'UPDATE image_generations SET status = ?, image_url = ?, local_path = ?, actual_params_json = ?, completed_at = ?, updated_at = ? WHERE id = ?'
+    ).run('completed', persistedImageUrl, localPath, result.actual_params ? JSON.stringify(result.actual_params) : null, now2, now2, imageGenId);
     if (row.task_id) {
       taskService.updateTaskResult(db, row.task_id, {
         image_generation_id: imageGenId,
@@ -1565,6 +1598,15 @@ async function processImageGeneration(db, log, imageGenId) {
 
   } catch (err) {
     const now2 = new Date().toISOString();
+    if (row?.task_id && taskService.isTaskCancelled(db, row.task_id)) {
+      try {
+        db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
+          'cancelled', '任务已停止', now2, imageGenId
+        );
+      } catch (_) {}
+      log.info('[图生] 已停止，忽略异常状态', { id: imageGenId, task_id: row.task_id, error: err.message, total_elapsed: elapsed() });
+      return;
+    }
     db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
       'failed', (err.message || '').slice(0, 500), now2, imageGenId
     );
@@ -1580,21 +1622,8 @@ async function processImageGeneration(db, log, imageGenId) {
 }
 
 function deleteById(db, log, id) {
-  const numId = Number(id);
-  const now = new Date().toISOString();
-  // 若该图当前绑定为某分镜的首/尾帧，解除绑定（避免悬空引用）
-  try {
-    const row = db.prepare('SELECT storyboard_id FROM image_generations WHERE id = ? AND deleted_at IS NULL').get(numId);
-    if (row && row.storyboard_id != null) {
-      const sid = Number(row.storyboard_id);
-      db.prepare(`UPDATE storyboards SET first_frame_image_id = NULL, image_url = NULL, local_path = NULL, updated_at = ? WHERE id = ? AND first_frame_image_id = ?`).run(now, sid, numId);
-      db.prepare(`UPDATE storyboards SET last_frame_image_id = NULL, last_frame_image_url = NULL, last_frame_local_path = NULL, updated_at = ? WHERE id = ? AND last_frame_image_id = ?`).run(now, sid, numId);
-    }
-  } catch (e) {
-    try { log?.warn?.('[image delete] 清除分镜绑定失败', { id: numId, err: e.message }); } catch (_) {}
-  }
-  const result = db.prepare('UPDATE image_generations SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL').run(now, numId);
-  return result.changes > 0;
+  const cleanup = require('./storageCleanupService');
+  return !!cleanup.deleteImageGenerationById(db, log, id);
 }
 
 function getBackgroundsForEpisode(db, episodeId) {

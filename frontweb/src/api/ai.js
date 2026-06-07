@@ -13,6 +13,12 @@ export const aiAPI = {
   runtimeRoutes() {
     return request.get('/runtime/model-routes')
   },
+  routingPolicies() {
+    return request.get('/ai-configs/routing-policies')
+  },
+  updateRoutingPolicy(serviceType, body) {
+    return request.put(`/ai-configs/routing-policies/${serviceType}`, body)
+  },
   get(id) {
     return request.get(`/ai-configs/${id}`)
   },

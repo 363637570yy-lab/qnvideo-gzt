@@ -29,6 +29,25 @@ function runtimeRoutesPublic(db) {
   };
 }
 
+function routingPolicies(db) {
+  return (req, res) => {
+    response.success(res, aiConfigService.getRoutingPolicies(db));
+  };
+}
+
+function updateRoutingPolicy(db) {
+  return (req, res) => {
+    const serviceType = req.params.service_type || req.body?.service_type;
+    if (!serviceType) return response.badRequest(res, '缺少 service_type');
+    try {
+      const policies = aiConfigService.updateRoutingPolicy(db, serviceType, req.body || {});
+      response.success(res, policies);
+    } catch (err) {
+      response.badRequest(res, err.message || '保存失败');
+    }
+  };
+}
+
 function get(db) {
   return (req, res) => {
     const id = parseInt(req.params.id, 10);
@@ -77,12 +96,14 @@ function update(db, log, cfg) {
     if (isNaN(id)) return response.badRequest(res, '无效的配置ID');
 
     let body = req.body || {};
-    // 锁定模式下只允许修改 api_key、default_model、is_default
+    // 锁定模式下只允许修改 api_key、default_model 与单配置故障策略
     if (aiConfigService.getVendorLockStatus(cfg).enabled) {
       const allowed = {};
       if (body.api_key !== undefined) allowed.api_key = body.api_key;
       if (body.default_model !== undefined) allowed.default_model = body.default_model;
-      if (body.is_default !== undefined) allowed.is_default = body.is_default;
+      if (body.retry_count !== undefined) allowed.retry_count = body.retry_count;
+      if (body.cooldown_seconds !== undefined) allowed.cooldown_seconds = body.cooldown_seconds;
+      if (body.request_timeout_ms !== undefined) allowed.request_timeout_ms = body.request_timeout_ms;
       body = allowed;
     }
 
@@ -210,6 +231,8 @@ module.exports = function aiConfigRoutes(db, log, cfg) {
     activePublic: activePublic(db),
     runtimeListPublic: runtimeListPublic(db),
     runtimeRoutesPublic: runtimeRoutesPublic(db),
+    routingPolicies: routingPolicies(db),
+    updateRoutingPolicy: updateRoutingPolicy(db),
     get: get(db),
     vendorLock: vendorLock(cfg),
     create: create(db, log, cfg),

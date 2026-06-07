@@ -9,6 +9,8 @@ const taskService = require('./taskService');
 const { loadConfig } = require('../config');
 const { postJSONWithTimeout } = require('./aiClient');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
+const { openAiGptImageSize, resolveProjectImageSpec } = require('./projectMediaSpec');
+const { safeDeleteFile } = require('./storageCleanupService');
 
 /** 图生 POST 使用 Node http(s)，默认 10 分钟，避免 undici fetch 大包体/慢链路下模糊失败 */
 const IMAGE_HTTP_TIMEOUT_MS = 600000;
@@ -101,29 +103,18 @@ function inferProtocol(provider, model) {
 }
 
 /**
- * 获取默认图片配置：优先使用前端勾选的「默认」配置（is_default），同类型内按优先级（priority）排序；
- * 可选按 preferredProvider / preferredModel 进一步筛选。
- * @param {object} db
- * @param {string} [preferredModel] - 指定模型名时，在匹配到的配置中选含该模型的
- * @param {string} [preferredProvider] - 指定供应商（如 openai / dashscope），只在该 provider 的配置中选
- * @param {string} [imageServiceType] - 'image' 文本生成图片（角色/场景/道具），'storyboard_image' 分镜图片生成（支持参考图）；缺省为 'image'
+ * 获取默认图片配置：使用统一图像路由池，按路由策略、冷却状态和可选模型/厂商筛选。
  */
 function getDefaultImageConfig(db, preferredModel, preferredProvider, imageServiceType) {
   return getImageConfigCandidates(db, preferredModel, preferredProvider, imageServiceType)[0] || null;
 }
 
 function getImageConfigCandidates(db, preferredModel, preferredProvider, imageServiceType, configId) {
-  const serviceType = imageServiceType || 'image';
+  const serviceType = 'image';
   let active = aiConfigService.getRuntimeConfigCandidates(db, serviceType, {
     model: preferredModel,
     config_id: configId,
   });
-  if (active.length === 0 && serviceType === 'storyboard_image') {
-    active = aiConfigService.getRuntimeConfigCandidates(db, 'image', {
-      model: preferredModel,
-      config_id: configId,
-    });
-  }
   if (preferredProvider && String(preferredProvider).trim()) {
     const want = String(preferredProvider).trim().toLowerCase();
     const byProvider = active.filter((c) => (c.provider || '').toLowerCase() === want);
@@ -803,6 +794,270 @@ function resolveImageRef(value, filesBaseUrl, storageLocalPath) {
   }
 }
 
+function dataUrlToBlobParts(dataUrl) {
+  const m = String(dataUrl || '').match(/^data:([^;]+);base64,(.*)$/s);
+  if (!m) return null;
+  return {
+    mime: m[1] || 'image/png',
+    buffer: Buffer.from(String(m[2] || '').replace(/\s/g, ''), 'base64'),
+  };
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function parseImageSettings(config) {
+  let settings = {};
+  try {
+    settings = config?.settings ? (typeof config.settings === 'string' ? JSON.parse(config.settings) : config.settings) : {};
+  } catch (_) {
+    settings = {};
+  }
+  return settings.image && typeof settings.image === 'object' ? settings.image : settings;
+}
+
+function normalizeGptImageQuality(value) {
+  const q = String(value || 'auto').toLowerCase();
+  return ['auto', 'low', 'medium', 'high'].includes(q) ? q : 'auto';
+}
+
+function normalizeGptImageOutputFormat(value) {
+  const f = String(value || 'png').toLowerCase();
+  return ['png', 'jpeg', 'webp'].includes(f) ? f : 'png';
+}
+
+function boolSetting(value, fallback) {
+  if (typeof value === 'boolean') return value;
+  if (value == null || value === '') return fallback;
+  const s = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(s)) return true;
+  if (['0', 'false', 'no', 'off'].includes(s)) return false;
+  return fallback;
+}
+
+function normalizeGptImagePartialImages(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(3, Math.max(0, Math.trunc(n)));
+}
+
+function parseOpenAiImageResponse(data, outputFormat) {
+  const item = data?.data?.[0] || data?.output?.[0] || data?.images?.[0] || null;
+  if (!item) return null;
+  if (typeof item === 'string') {
+    return item.startsWith('data:')
+      ? item
+      : `data:image/${outputFormat};base64,${item.replace(/\s/g, '')}`;
+  }
+  if (item.url || item.image_url) return item.url || item.image_url;
+  if (item.b64_json) return `data:image/${outputFormat};base64,${String(item.b64_json).replace(/\s/g, '')}`;
+  if (item.result && typeof item.result === 'string') return item.result;
+  return null;
+}
+
+function parseOpenAiImageStreamResponse(raw, outputFormat) {
+  let finalImage = null;
+  let lastPartialImage = null;
+  const chunks = String(raw || '').split(/\r?\n\r?\n/);
+  for (const chunk of chunks) {
+    const dataText = chunk
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.replace(/^data:\s?/, ''))
+      .join('\n')
+      .trim();
+    if (!dataText || dataText === '[DONE]') continue;
+    let event;
+    try {
+      event = JSON.parse(dataText);
+    } catch (_) {
+      continue;
+    }
+    const type = String(event?.type || '');
+    if (type === 'image_generation.partial_image' || type === 'image_edit.partial_image') {
+      if (event.b64_json) {
+        lastPartialImage = `data:image/${outputFormat};base64,${String(event.b64_json).replace(/\s/g, '')}`;
+      }
+      continue;
+    }
+    if (event?.object === 'image.generation.result' || event?.object === 'image.edit.result') {
+      finalImage = parseOpenAiImageResponse(event, outputFormat) || finalImage;
+      continue;
+    }
+    if (type === 'image_generation.completed' || type === 'image_edit.completed') {
+      finalImage = event.b64_json
+        ? `data:image/${outputFormat};base64,${String(event.b64_json).replace(/\s/g, '')}`
+        : (parseOpenAiImageResponse(event, outputFormat) || finalImage);
+      continue;
+    }
+    if (event?.response) {
+      finalImage = parseOpenAiImageResponse(event.response, outputFormat) || finalImage;
+    }
+  }
+  return finalImage || lastPartialImage;
+}
+
+async function callOpenAiGptImageApi(db, config, log, opts) {
+  const { prompt, model, size, quality, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
+  const base = (config.base_url || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const settings = parseImageSettings(config);
+  const outputFormat = normalizeGptImageOutputFormat(settings.output_format);
+  const compression = Number(settings.output_compression);
+  const codexCompat = settings.codex_compat === true || settings.codex_cli_compat === true;
+  const requestTimeoutMs = aiConfigService.getRequestTimeoutMsForConfig(db, config, 'image', model, IMAGE_HTTP_TIMEOUT_MS);
+  const sizeMode = settings.size_mode || settings.openai_size_mode || 'direct';
+  const resolvedSize = openAiGptImageSize(size, sizeMode);
+  const streamImages = boolSetting(settings.stream_images ?? settings.streamImages ?? settings.stream, true);
+  const partialImages = normalizeGptImagePartialImages(settings.partial_images ?? settings.streamPartialImages);
+  const commonFields = {
+    model,
+    prompt: codexCompat
+      ? `Use the following text as the complete prompt. Do not rewrite it:\n${prompt || ''}`
+      : (prompt || ''),
+    size: resolvedSize,
+    output_format: outputFormat,
+    moderation: settings.moderation === 'low' ? 'low' : 'auto',
+  };
+  if (!codexCompat) {
+    commonFields.quality = normalizeGptImageQuality(quality || settings.quality);
+  }
+  if (streamImages) {
+    commonFields.stream = true;
+    commonFields.partial_images = partialImages;
+  }
+  if (settings.background && ['transparent', 'opaque', 'auto'].includes(String(settings.background))) {
+    commonFields.background = String(settings.background);
+  }
+  if ((outputFormat === 'jpeg' || outputFormat === 'webp') && Number.isFinite(compression)) {
+    commonFields.output_compression = Math.min(100, Math.max(0, Math.trunc(compression)));
+  }
+  if (!codexCompat && Number(settings.n) > 1) {
+    commonFields.n = Math.min(10, Math.max(1, Math.trunc(Number(settings.n))));
+  }
+
+  const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
+  const resolvedRefs = rawRefs.map((r) => resolveImageRef(r, files_base_url, storage_local_path)).filter(Boolean);
+  const endpoint = resolvedRefs.length > 0 ? '/images/edits' : '/images/generations';
+  const url = base + endpoint;
+
+  log.info('[OpenAI GPT Image] request', {
+    image_gen_id,
+    model,
+    endpoint,
+    size: resolvedSize,
+    size_mode: sizeMode,
+    product_size: size,
+    output_format: outputFormat,
+    stream: streamImages,
+    partial_images: streamImages ? partialImages : undefined,
+    ref_count: resolvedRefs.length,
+  });
+
+  let raw;
+  let status;
+  let contentType = '';
+  try {
+    if (resolvedRefs.length === 0) {
+      const res = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + (config.api_key || ''),
+        },
+        body: JSON.stringify(commonFields),
+      }, requestTimeoutMs);
+      status = res.status;
+      contentType = res.headers.get('content-type') || '';
+      raw = await res.text();
+    } else {
+      const form = new FormData();
+      Object.entries(commonFields).forEach(([key, value]) => {
+        if (value != null) form.append(key, String(value));
+      });
+      if (settings.input_fidelity && ['high', 'low'].includes(String(settings.input_fidelity))) {
+        form.append('input_fidelity', String(settings.input_fidelity));
+      }
+      for (let i = 0; i < resolvedRefs.length; i += 1) {
+        const ref = resolvedRefs[i];
+        if (ref.startsWith('data:')) {
+          const parts = dataUrlToBlobParts(ref);
+          if (!parts) continue;
+          const blob = new Blob([parts.buffer], { type: parts.mime });
+          const ext = parts.mime.includes('webp') ? 'webp' : parts.mime.includes('jpeg') ? 'jpg' : 'png';
+          form.append('image[]', blob, `reference_${i}.${ext}`);
+        } else if (/^https?:\/\//i.test(ref)) {
+          const imgRes = await fetchWithTimeout(ref, { method: 'GET' }, requestTimeoutMs);
+          if (!imgRes.ok) throw new Error(`参考图下载失败 HTTP ${imgRes.status}`);
+          const mime = imgRes.headers.get('content-type') || 'image/png';
+          const blob = new Blob([Buffer.from(await imgRes.arrayBuffer())], { type: mime });
+          const ext = mime.includes('webp') ? 'webp' : mime.includes('jpeg') ? 'jpg' : 'png';
+          form.append('image[]', blob, `reference_${i}.${ext}`);
+        }
+      }
+      const res = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + (config.api_key || '') },
+        body: form,
+      }, requestTimeoutMs);
+      status = res.status;
+      contentType = res.headers.get('content-type') || '';
+      raw = await res.text();
+    }
+  } catch (e) {
+    const msg = e.name === 'AbortError' ? `Image generation HTTP timeout after ${requestTimeoutMs}ms` : e.message;
+    log.error('[OpenAI GPT Image] network error', { image_gen_id, error: msg });
+    return { error: msg };
+  }
+
+  if (status < 200 || status >= 300) {
+    let errMsg = `图片生成请求失败: HTTP ${status}`;
+    try {
+      const errJson = JSON.parse(raw);
+      const msg = errJson.error?.message || errJson.message || errJson.error;
+      if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
+    } catch (_) {
+      if (raw) errMsg += ' - ' + raw.slice(0, 200);
+    }
+    return { error: errMsg };
+  }
+
+  let imageUrl = null;
+  if (contentType.toLowerCase().includes('text/event-stream')) {
+    imageUrl = parseOpenAiImageStreamResponse(raw, outputFormat);
+  } else {
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (_) {
+      return { error: '图片生成返回格式异常' };
+    }
+    imageUrl = parseOpenAiImageResponse(data, outputFormat);
+  }
+  if (!imageUrl) return { error: '未返回图片地址' };
+  return {
+    image_url: imageUrl,
+    actual_params: {
+      protocol: 'openai_gpt_image',
+      endpoint,
+      model,
+      size: resolvedSize,
+      size_mode: sizeMode,
+      product_size: size || null,
+      output_format: outputFormat,
+      quality: commonFields.quality,
+      stream: streamImages,
+      partial_images: streamImages ? partialImages : undefined,
+    },
+  };
+}
+
 // 通义万象：支持参考图（角色/场景），content 为 [text, image, image, ...]；本地调试时参考图可转 base64
 // 通义千问 qwen-image：仅支持 content 中一个 text，用同步接口，parameters 不含 stream/enable_interleave
 async function callDashScopeImageApi(config, log, opts) {
@@ -1326,33 +1581,50 @@ async function callImageApi(db, log, opts) {
   let lastError = null;
   for (let i = 0; i < candidates.length; i += 1) {
     const config = candidates[i];
-    try {
-      const result = await callImageApiWithConfig(db, log, opts, config);
-      if (result?.error) {
-        lastError = new Error(result.error);
-        const failure = aiConfigService.recordConfigFailure(db, config.id, lastError);
-        log.warn('[图生] 当前配置失败，尝试下一个可用配置', {
+    const modelForPolicy = opts.model || config.default_model || (Array.isArray(config.model) ? config.model[0] : null);
+    const retryCount = aiConfigService.getRetryCountForConfig(db, config, 'image', modelForPolicy);
+    let stopRouting = false;
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      try {
+        const result = await callImageApiWithConfig(db, log, opts, config);
+        if (result?.error) {
+          lastError = new Error(result.error);
+          if (attempt < retryCount) {
+            log.warn('[图生] 当前配置失败，按策略重试', { config_id: config.id, attempt: attempt + 1, retry_count: retryCount, error: result.error });
+            continue;
+          }
+          const failure = aiConfigService.recordConfigFailure(db, config.id, lastError, { serviceType: 'image', model: modelForPolicy });
+          log.warn('[图生] 当前配置失败，尝试下一个可用配置', {
+            config_id: config.id,
+            reason: failure.reason,
+            fallbackable: failure.fallbackable,
+            error: failure.message,
+          });
+          if (failure.fallbackable && i < candidates.length - 1) break;
+          return result;
+        }
+        aiConfigService.recordConfigSuccess(db, config.id);
+        return result;
+      } catch (err) {
+        lastError = err;
+        if (attempt < retryCount) {
+          log.warn('[图生] 当前配置异常，按策略重试', { config_id: config.id, attempt: attempt + 1, retry_count: retryCount, error: err.message });
+          continue;
+        }
+        const failure = aiConfigService.recordConfigFailure(db, config.id, err, { serviceType: 'image', model: modelForPolicy });
+        log.warn('[图生] 当前配置异常，尝试下一个可用配置', {
           config_id: config.id,
           reason: failure.reason,
           fallbackable: failure.fallbackable,
           error: failure.message,
         });
-        if (failure.fallbackable && i < candidates.length - 1) continue;
-        return result;
+        if (!failure.fallbackable || i === candidates.length - 1) {
+          stopRouting = true;
+          break;
+        }
       }
-      aiConfigService.recordConfigSuccess(db, config.id);
-      return result;
-    } catch (err) {
-      lastError = err;
-      const failure = aiConfigService.recordConfigFailure(db, config.id, err);
-      log.warn('[图生] 当前配置异常，尝试下一个可用配置', {
-        config_id: config.id,
-        reason: failure.reason,
-        fallbackable: failure.fallbackable,
-        error: failure.message,
-      });
-      if (!failure.fallbackable || i === candidates.length - 1) break;
     }
+    if (stopRouting) break;
   }
   return { error: lastError?.message || '图片生成失败' };
 }
@@ -1422,6 +1694,19 @@ async function callImageApiWithConfig(db, log, opts, config) {
   const autoNegativePrompt = (refCountForNeg > 1 || isVolcOrSeedream) ? ANTI_SPLIT_NEGATIVE_PROMPT : '';
   const userNegFragment = (user_negative_prompt && String(user_negative_prompt).trim()) || '';
   const mergedNegativePrompt = mergeNegativePromptFragments(autoNegativePrompt, userNegFragment);
+
+  if (protocol === 'openai_gpt_image') {
+    return callOpenAiGptImageApi(db, config, log, {
+      prompt: effectivePrompt,
+      model,
+      size,
+      quality,
+      image_gen_id,
+      reference_image_urls: opts.reference_image_urls,
+      files_base_url: opts.files_base_url,
+      storage_local_path: opts.storage_local_path,
+    });
+  }
 
   if (protocol === 'dashscope') {
     return callDashScopeImageApi(config, log, {
@@ -1502,7 +1787,8 @@ async function callImageApiWithConfig(db, log, opts, config) {
   let raw;
   let httpStatus;
   try {
-    const out = await postJSONWithTimeout(url, openaiCompatHeaders, body, IMAGE_HTTP_TIMEOUT_MS);
+    const timeoutMs = aiConfigService.getRequestTimeoutMsForConfig(db, config, 'image', model, IMAGE_HTTP_TIMEOUT_MS);
+    const out = await postJSONWithTimeout(url, openaiCompatHeaders, body, timeoutMs);
     httpStatus = out.statusCode;
     raw = out.raw;
   } catch (e) {
@@ -1588,47 +1874,48 @@ function createAndGenerateImage(db, log, opts) {
   else resourceId = String(dramaIdNum);
   const task = taskService.createTask(db, log, 'image_generation', resourceId);
   const taskId = task.id;
+  const projectImageSpec = dramaIdNum ? resolveProjectImageSpec(db, dramaIdNum) : null;
+  const effectiveSize = size || projectImageSpec?.size || null;
+  const paramsJson = JSON.stringify({
+    product_image_spec: projectImageSpec,
+    request_size: size || null,
+  });
 
-  let imageGenId;
-  try {
-    const info = db.prepare(
-      `INSERT INTO image_generations (drama_id, character_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, size, quality, status, task_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
-    ).run(
-      dramaIdNum,
-      charIdNum,
-      sceneIdNum,
-      provider || 'openai',
-      prompt || '',
-      negRow,
-      model || null,
-      ai_config_id || image_config_id || null,
-      size || null,
-      quality || null,
-      taskId,
-      now,
-      now
-    );
-    imageGenId = info.lastInsertRowid;
-  } catch (e) {
-    if ((e.message || '').includes('scene_id') || (e.message || '').includes('character_id')) {
-      const info = db.prepare(
-        `INSERT INTO image_generations (drama_id, provider, prompt, model, ai_config_id, size, quality, status, task_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
-      ).run(dramaIdNum, provider || 'openai', prompt || '', model || null, ai_config_id || image_config_id || null, size || null, quality || null, taskId, now, now);
-      imageGenId = info.lastInsertRowid;
-    } else {
-      throw e;
-    }
-  }
+  const info = db.prepare(
+    `INSERT INTO image_generations (drama_id, character_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, size, quality, params_json, status, task_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+  ).run(
+    dramaIdNum,
+    charIdNum,
+    sceneIdNum,
+    provider || 'openai',
+    prompt || '',
+    negRow,
+    model || null,
+    ai_config_id || image_config_id || null,
+    effectiveSize,
+    quality || null,
+    paramsJson,
+    taskId,
+    now,
+    now
+  );
+  const imageGenId = info.lastInsertRowid;
 
   setImmediate(async () => {
     try {
       db.prepare('UPDATE image_generations SET status = ? WHERE id = ?').run('processing', imageGenId);
+      if (taskService.isTaskCancelled(db, taskId)) {
+        db.prepare(
+          'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?'
+        ).run('cancelled', '任务已停止', new Date().toISOString(), imageGenId);
+        log.info('Image generation cancelled before API call', { image_gen_id: imageGenId, task_id: taskId });
+        return;
+      }
       const result = await callImageApi(db, log, {
         prompt,
         model,
-        size,
+        size: effectiveSize,
         quality,
         drama_id: drama_id,
         character_id: character_id,
@@ -1638,6 +1925,13 @@ function createAndGenerateImage(db, log, opts) {
         user_negative_prompt: user_negative_prompt || undefined,
       });
       const now2 = new Date().toISOString();
+      if (taskService.isTaskCancelled(db, taskId)) {
+        db.prepare(
+          'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?'
+        ).run('cancelled', '任务已停止', now2, imageGenId);
+        log.info('Image generation cancelled, ignoring model result', { image_gen_id: imageGenId, task_id: taskId });
+        return;
+      }
       if (result.error) {
         db.prepare(
           'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?'
@@ -1657,10 +1951,11 @@ function createAndGenerateImage(db, log, opts) {
         return;
       }
       let localPath = null;
+      let storagePath = null;
       try {
         const loadConfig = require('../config').loadConfig;
         const cfg = loadConfig();
-        const storagePath = path.isAbsolute(cfg.storage?.local_path)
+        storagePath = path.isAbsolute(cfg.storage?.local_path)
           ? cfg.storage.local_path
           : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
         const category = sceneIdNum != null ? 'scenes' : (charIdNum != null ? 'characters' : 'images');
@@ -1674,20 +1969,19 @@ function createAndGenerateImage(db, log, opts) {
           projectSubdir
         );
       } catch (_) {}
-      // 兼容旧库无 completed_at：先试完整 UPDATE，失败则只更新必有列
-      try {
-        db.prepare(
-          'UPDATE image_generations SET status = ?, image_url = ?, local_path = ?, completed_at = ?, updated_at = ? WHERE id = ?'
-        ).run('completed', result.image_url, localPath, now2, now2, imageGenId);
-      } catch (e) {
-        if ((e.message || '').includes('completed_at')) {
-          db.prepare(
-            'UPDATE image_generations SET status = ?, image_url = ?, local_path = ?, updated_at = ? WHERE id = ?'
-          ).run('completed', result.image_url, localPath, now2, imageGenId);
-        } else {
-          throw e;
+      if (taskService.isTaskCancelled(db, taskId)) {
+        if (localPath && storagePath) {
+          try { safeDeleteFile(storagePath, localPath); } catch (_) {}
         }
+        db.prepare(
+          'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?'
+        ).run('cancelled', '任务已停止', new Date().toISOString(), imageGenId);
+        log.info('Image generation cancelled after download, ignoring model result', { image_gen_id: imageGenId, task_id: taskId });
+        return;
       }
+      db.prepare(
+        'UPDATE image_generations SET status = ?, image_url = ?, local_path = ?, actual_params_json = ?, completed_at = ?, updated_at = ? WHERE id = ?'
+      ).run('completed', result.image_url, localPath, result.actual_params ? JSON.stringify(result.actual_params) : null, now2, now2, imageGenId);
       taskService.updateTaskResult(db, taskId, { image_generation_id: imageGenId, image_url: result.image_url, local_path: localPath, status: 'completed' });
       if (charIdNum != null) {
         try {
@@ -1751,6 +2045,15 @@ function createAndGenerateImage(db, log, opts) {
     } catch (err) {
       const now2 = new Date().toISOString();
       const errMsg = (err && err.message) ? String(err.message).slice(0, 500) : 'Unknown error';
+      if (taskService.isTaskCancelled(db, taskId)) {
+        try {
+          db.prepare(
+            'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?'
+          ).run('cancelled', '任务已停止', now2, imageGenId);
+        } catch (_) {}
+        log.info('Image generation cancelled after error, ignoring error state', { image_gen_id: imageGenId, task_id: taskId });
+        return;
+      }
       try {
         db.prepare(
           'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?'

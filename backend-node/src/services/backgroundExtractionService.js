@@ -125,6 +125,7 @@ async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, mode
     taskService.updateTaskStatus(db, taskID, 'failed', 0, 'AI提取场景失败: ' + err.message);
     return;
   }
+  if (taskService.isTaskCancelled(db, taskID)) return;
   if (effectiveLanguage === 'zh') {
     const translated = await Promise.all(
       (backgroundsInfo || []).map(async (bg) => {
@@ -142,6 +143,7 @@ async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, mode
     );
     backgroundsInfo = translated;
   }
+  if (taskService.isTaskCancelled(db, taskID)) return;
   sceneService.deleteScenesByEpisodeId(db, log, episodeId);
   const scenes = [];
   for (const bg of backgroundsInfo) {

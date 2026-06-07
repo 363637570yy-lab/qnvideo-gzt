@@ -68,7 +68,10 @@ async function processPropExtraction(db, log, taskId, episodeId, aiConfigId) {
     return;
   }
 
+  if (taskService.isTaskCancelled(db, taskId)) return;
+
   taskService.updateTaskStatus(db, taskId, 'processing', 50, '正在保存道具...');
+  if (taskService.isTaskCancelled(db, taskId)) return;
 
   propService.softDeletePropsByEpisodeId(db, log, episodeId);
 

@@ -21,7 +21,7 @@ import { buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/use
  * @param {Function} deps.hasAssetImage - 判断资源是否有图片
  */
 export function useCharacters(deps) {
-  const { store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage } = deps
+  const { store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary } = deps
   const genStore = useGenerationTaskStore()
 
   function buildCharImageMeta(char) {
@@ -122,15 +122,17 @@ export function useCharacters(deps) {
       })
       const taskId = res?.task_id
       if (taskId) {
-        await pollTask(taskId, () => loadDrama(), meta)
-        ElMessage.success('角色生成完成')
+        const pollRes = await pollTask(taskId, () => loadDrama(), meta)
+        if (pollRes?.status === 'completed') {
+          ElMessage.success('角色生成完成')
+        }
       } else {
         await loadDrama()
+        genStore.markDone(meta)
       }
     } catch (e) {
+      genStore.markFailed(meta, e.message || '生成失败')
       ElMessage.error(e.message || '生成失败')
-    } finally {
-      genStore.markDone(meta)
     }
   }
 
@@ -344,10 +346,10 @@ export function useCharacters(deps) {
       const taskId = res?.image_generation?.task_id ?? res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)
-        if (pollRes?.status === 'failed') {
-          char.errorMsg = pollRes.error || '生成失败'
-        } else {
+        if (pollRes?.status === 'completed') {
           ElMessage.success('角色图片已生成')
+        } else if (pollRes?.status === 'failed') {
+          char.errorMsg = pollRes.error || '生成失败'
         }
       } else {
         await loadDrama()
@@ -356,15 +358,16 @@ export function useCharacters(deps) {
           const c = list.find((x) => Number(x.id) === Number(char.id))
           return !!(c && (c.image_url || c.local_path))
         })
+        genStore.markDone(meta)
         ElMessage.success('角色图片已生成')
       }
     } catch (e) {
       console.error(e)
       char.errorMsg = e.message || '生成失败'
+      genStore.markFailed(meta, e.message || '提交失败')
       ElMessage.error(e.message || '提交失败')
     } finally {
       generatingCharIds.delete(char.id)
-      genStore.markDone(meta)
     }
   }
 
@@ -491,6 +494,10 @@ export function useCharacters(deps) {
   }
 
   async function onDeleteCharLibrary(item) {
+    if (!(typeof canManageLibrary === 'function' ? canManageLibrary(item) : isAdminUser?.value)) {
+      ElMessage.warning('只能删除自己创建的素材')
+      return
+    }
     try {
       await ElMessageBox.confirm(
         `确定删除公共角色「${(item.name || '未命名').slice(0, 20)}」吗？`,

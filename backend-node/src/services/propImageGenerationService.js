@@ -5,7 +5,8 @@ const imageClient = require('./imageClient');
 const propService = require('./propService');
 const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
-const { aspectRatioToSize } = require('./imageService');
+const { resolveProjectImageSpec } = require('./projectMediaSpec');
+const { safeDeleteFile } = require('./storageCleanupService');
 
 function appendPrompt(base, extra) {
   const add = (extra || '').toString().trim();
@@ -20,6 +21,7 @@ function appendPrompt(base, extra) {
 
 async function processPropImageGeneration(db, log, taskId, propId, opts) {
   taskService.updateTaskStatus(db, taskId, 'processing', 0, '正在生成图片...');
+  if (taskService.isTaskCancelled(db, taskId)) return;
 
   const prop = propService.getById(db, propId);
   if (!prop) {
@@ -47,18 +49,9 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
   if (!styleOverride) {
     style = appendPrompt(style, cfg?.style?.default_prop_style || '');
   }
-  // 优先用项目 aspect_ratio 推导尺寸；兜底 1920x1920（满足 ≥3,686,400 像素要求）
-  let imageSize = null;
-  if (prop.drama_id) {
-    try {
-      const dramaRow = db.prepare('SELECT metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(prop.drama_id);
-      if (dramaRow && dramaRow.metadata) {
-        const meta = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
-        if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio);
-      }
-    } catch (_) {}
-  }
-  if (!imageSize) imageSize = cfg?.style?.default_image_size || '1920x1920';
+  const imageSize = prop.drama_id
+    ? (resolveProjectImageSpec(db, prop.drama_id)?.size || null)
+    : (cfg?.style?.default_image_size || '1920x1920');
   const fullPrompt = appendPrompt(String(prop.prompt).trim(), style);
   // 与角色/场景一致：使用前端「图片生成模型」选择的 model；未传时用 YAML default_image_provider 兜底
   const model = (opts && opts.model) ? String(opts.model).trim() || null : null;
@@ -78,6 +71,10 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
     });
   } catch (err) {
     const errMsg = '图片生成请求失败: ' + (err.message || '未知错误');
+    if (taskService.isTaskCancelled(db, taskId)) {
+      log.info('Prop image generation cancelled after API error', { prop_id: propId, task_id: taskId });
+      return;
+    }
     log.error('Prop image API failed', { prop_id: propId, error: err.message });
     taskService.updateTaskError(db, taskId, errMsg);
     try {
@@ -86,6 +83,10 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
     return;
   }
 
+  if (taskService.isTaskCancelled(db, taskId)) {
+    log.info('Prop image generation cancelled, ignoring model result', { prop_id: propId, task_id: taskId });
+    return;
+  }
   if (result.error) {
     taskService.updateTaskError(db, taskId, result.error);
     try {
@@ -103,10 +104,12 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
   }
 
   taskService.updateTaskStatus(db, taskId, 'processing', 80, '正在保存图片...');
+  if (taskService.isTaskCancelled(db, taskId)) return;
 
   let localPath = null;
+  let storagePath = null;
   try {
-    const storagePath = path.isAbsolute(cfg.storage?.local_path)
+    storagePath = path.isAbsolute(cfg.storage?.local_path)
       ? cfg.storage.local_path
       : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
     const projectSubdir = storageLayout.getProjectStorageSubdir(db, prop.drama_id);
@@ -119,6 +122,14 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
       projectSubdir
     );
   } catch (_) {}
+
+  if (taskService.isTaskCancelled(db, taskId)) {
+    if (localPath && storagePath) {
+      try { safeDeleteFile(storagePath, localPath); } catch (_) {}
+    }
+    log.info('Prop image generation cancelled after download, ignoring model result', { prop_id: propId, task_id: taskId });
+    return;
+  }
 
   const now = new Date().toISOString();
   // 旧图追加到 extra_images，与上传逻辑保持一致

@@ -94,8 +94,7 @@
         <el-form-item prop="service_type" label="服务类型">
           <el-select v-model="form.service_type" placeholder="选择服务类型" style="width: 100%" disabled>
             <el-option label="文本/对话" value="text" />
-            <el-option label="文本生成图片" value="image" />
-            <el-option label="分镜图片生成" value="storyboard_image" />
+            <el-option label="图像" value="image" />
             <el-option label="视频生成" value="video" />
             <el-option label="语音合成 TTS" value="tts" />
           </el-select>
@@ -205,7 +204,7 @@ const predefinedKeys = [
   // { value: 'role_image_gen', label: 'role_image_gen - 角色图片生成', service_type: 'image' },
   // { value: 'prop_image_gen', label: 'prop_image_gen - 道具图片生成', service_type: 'image' },
   // { value: 'scene_image_gen', label: 'scene_image_gen - 场景图片生成', service_type: 'image' },
-  // { value: 'storyboard_image_gen', label: 'storyboard_image_gen - 分镜图片生成', service_type: 'image' },
+  // { value: 'image_gen', label: 'image_gen - 图像生成', service_type: 'image' },
   // { value: 'video_frame_gen', label: 'video_frame_gen - 视频帧生成', service_type: 'video' },// 首尾帧视频生成
   // { value: 'video_full_gen', label: 'video_full_gen - 全能视频生成', service_type: 'video' },// 全能模式视频生成
 ]
@@ -231,8 +230,7 @@ const selectedConfigModels = computed(() => {
 function serviceTypeLabel(type) {
   const map = {
     text: '文本/对话',
-    image: '文本生成图片',
-    storyboard_image: '分镜图片生成',
+    image: '图像',
     video: '视频生成',
     tts: '语音合成 TTS'
   }
@@ -243,7 +241,6 @@ function serviceTypeTagType(type) {
   const map = {
     text: 'primary',
     image: 'success',
-    storyboard_image: 'warning',
     video: 'danger',
     tts: 'info'
   }

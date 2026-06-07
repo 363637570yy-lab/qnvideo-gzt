@@ -47,14 +47,14 @@
         v-for="item in mediaItems"
         :key="item.id"
         class="media-card"
-        :class="{ selected: selectedIds.has(item.id) }"
-        @click="toggleSelect(item)"
+        :class="{ selected: canManageLibrary(item) && selectedIds.has(item.id) }"
+        @click="canManageLibrary(item) ? toggleSelect(item) : openPreview(item)"
       >
         <div class="media-thumb">
           <video v-if="item.type === 'video'" :src="itemUrl(item)" class="thumb-video" muted />
           <img v-else :src="itemUrl(item)" class="thumb-img" />
           <div class="media-overlay">
-            <el-icon v-if="selectedIds.has(item.id)" class="check-icon"><CircleCheck /></el-icon>
+            <el-icon v-if="canManageLibrary(item) && selectedIds.has(item.id)" class="check-icon"><CircleCheck /></el-icon>
             <div class="overlay-actions" @click.stop>
               <el-button
                 size="small"
@@ -65,6 +65,7 @@
                 <el-icon><ZoomIn /></el-icon>
               </el-button>
               <el-button
+                v-if="canManageLibrary(item)"
                 size="small"
                 type="danger"
                 plain
@@ -135,6 +136,7 @@ import {
 } from '@element-plus/icons-vue'
 import { uploadAPI } from '@/api/upload'
 import request from '@/utils/request'
+import { getCurrentUser, isAdmin } from '@/utils/auth'
 
 const loading = ref(false)
 const uploading = ref(false)
@@ -149,6 +151,8 @@ const selectedIds = reactive(new Set())
 const showPreview = ref(false)
 const previewItem = ref(null)
 const uploadInput = ref(null)
+const currentUser = ref(getCurrentUser())
+const isAdminUser = ref(isAdmin())
 let keywordTimer = null
 
 function triggerUpload() {
@@ -162,7 +166,15 @@ async function onUpload(e) {
   uploadProgress.value = { current: 0, total: files.length }
   for (const file of files) {
     try {
-      await uploadAPI.uploadImage(file)
+      const uploaded = await uploadAPI.uploadImage(file)
+      await request.post('/assets', {
+        name: file.name,
+        type: file.type?.startsWith('video/') ? 'video' : 'image',
+        url: uploaded?.url || '',
+        local_path: uploaded?.local_path || uploaded?.path || null,
+        file_size: file.size,
+        mime_type: file.type || null,
+      })
       uploadProgress.value.current++
     } catch (err) {
       ElMessage.warning(`${file.name} 上传失败: ${err.message}`)
@@ -223,11 +235,19 @@ function formatSize(size) {
 }
 
 function toggleSelect(item) {
+  if (!canManageLibrary(item)) {
+    openPreview(item)
+    return
+  }
   if (selectedIds.has(item.id)) {
     selectedIds.delete(item.id)
   } else {
     selectedIds.add(item.id)
   }
+}
+
+function canManageLibrary(item) {
+  return !!item?.can_manage || isAdminUser.value || (!!item?.created_by_user_id && String(item.created_by_user_id) === String(currentUser.value?.id))
 }
 
 function openPreview(item) {
@@ -236,6 +256,7 @@ function openPreview(item) {
 }
 
 async function deleteItem(item) {
+  if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   await ElMessageBox.confirm('确定删除该素材？', '删除确认', { type: 'warning' })
   try {
     await request.delete(`/assets/${item.id}`)

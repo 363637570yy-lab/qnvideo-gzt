@@ -124,17 +124,6 @@
       </div>
     </main>
 
-    <footer class="source-footer">
-      <span>
-        原开源项目：
-        <a href="https://github.com/xuanyustudio/LocalMiniDrama" target="_blank" rel="noopener noreferrer">xuanyustudio/LocalMiniDrama</a>
-      </span>
-      <span>
-        芊柠开源项目：
-        <a href="https://github.com/363637570yy-lab/qnvideo-gzt" target="_blank" rel="noopener noreferrer">363637570yy-lab/qnvideo-gzt</a>
-      </span>
-    </footer>
-
     <!-- 新建项目：先填标题和描述 -->
     <el-dialog
       v-model="showNewDialog"
@@ -195,7 +184,7 @@
             <div class="library-item-owner">创建人：{{ libraryCreatorLabel(item) }}</div>
             <div class="library-item-actions">
               <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditCharLibrary(item)">编辑</el-button>
-              <el-button size="small" type="danger" plain :disabled="!canManageLibrary(item)" @click="onDeleteCharLibrary(item)">删除</el-button>
+              <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="onDeleteCharLibrary(item)">删除</el-button>
             </div>
           </div>
         </div>
@@ -255,7 +244,7 @@
             <div class="library-item-owner">创建人：{{ libraryCreatorLabel(item) }}</div>
             <div class="library-item-actions">
               <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditSceneLibrary(item)">编辑</el-button>
-              <el-button size="small" type="danger" plain :disabled="!canManageLibrary(item)" @click="onDeleteSceneLibrary(item)">删除</el-button>
+              <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="onDeleteSceneLibrary(item)">删除</el-button>
             </div>
           </div>
         </div>
@@ -316,7 +305,7 @@
             <div class="library-item-owner">创建人：{{ libraryCreatorLabel(item) }}</div>
             <div class="library-item-actions">
               <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditPropLibrary(item)">编辑</el-button>
-              <el-button size="small" type="danger" plain :disabled="!canManageLibrary(item)" @click="onDeletePropLibrary(item)">删除</el-button>
+              <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="onDeletePropLibrary(item)">删除</el-button>
             </div>
           </div>
         </div>
@@ -535,6 +524,7 @@ async function submitEditCharLibrary() {
   } catch (e) { ElMessage.error(e.message || '保存失败') } finally { editCharLibrarySaving.value = false }
 }
 async function onDeleteCharLibrary(item) {
+  if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   try { await ElMessageBox.confirm(`确定删除公共角色「${(item.name || '未命名').slice(0, 20)}」吗？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await characterLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadCharLibraryList() } catch (e) { ElMessage.error(e.message || '删除失败') }
 }
@@ -587,6 +577,7 @@ async function submitEditSceneLibrary() {
   } catch (e) { ElMessage.error(e.message || '保存失败') } finally { editSceneLibrarySaving.value = false }
 }
 async function onDeleteSceneLibrary(item) {
+  if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   const name = (item.location || item.time || '未命名').slice(0, 20)
   try { await ElMessageBox.confirm(`确定删除公共场景「${name}」吗？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await sceneLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadSceneLibraryList() } catch (e) { ElMessage.error(e.message || '删除失败') }
@@ -640,6 +631,7 @@ async function submitEditPropLibrary() {
   } catch (e) { ElMessage.error(e.message || '保存失败') } finally { editPropLibrarySaving.value = false }
 }
 async function onDeletePropLibrary(item) {
+  if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   try { await ElMessageBox.confirm(`确定删除公共道具「${(item.name || '未命名').slice(0, 20)}」吗？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await propLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadPropLibraryList() } catch (e) { ElMessage.error(e.message || '删除失败') }
 }
@@ -1076,27 +1068,6 @@ html.light .btn-import {
   margin: 0 auto;
   padding: 24px 16px 48px;
 }
-.source-footer {
-  max-width: min(1400px, 96vw);
-  width: 100%;
-  margin: 0 auto;
-  padding: 14px 16px 22px;
-  display: flex;
-  justify-content: center;
-  gap: 18px;
-  flex-wrap: wrap;
-  color: #71717a;
-  font-size: 12px;
-  border-top: 1px solid rgba(99, 102, 241, 0.12);
-}
-.source-footer a {
-  color: #a5b4fc;
-  text-decoration: none;
-}
-.source-footer a:hover {
-  color: #c4b5fd;
-  text-decoration: underline;
-}
 .projects-wrap {
   min-height: 200px;
   width: 100%;
@@ -1451,16 +1422,6 @@ html.light .project-title { color: #1e1b4b; }
 html.light .project-desc { color: #4b5563; }
 html.light .project-meta { color: #6b7280; }
 html.light .example-hint-text { color: #6b7280; }
-html.light .source-footer {
-  color: #6b7280;
-  border-top-color: rgba(99, 102, 241, 0.16);
-}
-html.light .source-footer a {
-  color: #4f46e5;
-}
-html.light .source-footer a:hover {
-  color: #6d28d9;
-}
 html.light .library-item {
   background: #faf9ff;
   border-color: #e5e7eb;

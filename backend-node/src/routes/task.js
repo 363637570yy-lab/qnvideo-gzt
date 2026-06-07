@@ -29,9 +29,37 @@ function getResourceTasks(db, log) {
   };
 }
 
+function cancelTask(db, log) {
+  return (req, res) => {
+    try {
+      const task = taskService.cancelTask(db, req.params.task_id, req.body?.message || '任务已停止');
+      if (!task) return response.notFound(res, '任务不存在');
+      response.success(res, task);
+    } catch (err) {
+      log.error('Cancel task failed', { task_id: req.params.task_id, error: err.message });
+      response.internalError(res, err.message);
+    }
+  };
+}
+
+function deleteTask(db, log) {
+  return (req, res) => {
+    try {
+      const result = taskService.deleteTask(db, log, req.params.task_id);
+      if (!result) return response.notFound(res, '任务不存在');
+      response.success(res, { message: '删除成功', ...result });
+    } catch (err) {
+      log.error('Delete task failed', { task_id: req.params.task_id, error: err.message });
+      response.internalError(res, err.message);
+    }
+  };
+}
+
 module.exports = function taskRoutes(db, log) {
   return {
     getTaskStatus: getTaskStatus(db, log),
     getResourceTasks: getResourceTasks(db, log),
+    cancelTask: cancelTask(db, log),
+    deleteTask: deleteTask(db, log),
   };
 };

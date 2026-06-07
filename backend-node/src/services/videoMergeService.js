@@ -67,9 +67,8 @@ function create(db, log, req) {
 }
 
 function deleteById(db, log, id) {
-  const now = new Date().toISOString();
-  const result = db.prepare('UPDATE video_merges SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL').run(now, Number(id));
-  return result.changes > 0;
+  const cleanup = require('./storageCleanupService');
+  return !!cleanup.deleteVideoMergeById(db, log, id);
 }
 
 /** 获取 storage 根目录（绝对路径） */

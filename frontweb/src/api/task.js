@@ -4,6 +4,12 @@ export const taskAPI = {
   get(taskId) {
     return request.get(`/tasks/${taskId}`)
   },
+  cancel(taskId, message = '任务已停止') {
+    return request.post(`/tasks/${taskId}/cancel`, { message })
+  },
+  delete(taskId) {
+    return request.delete(`/tasks/${taskId}`)
+  },
   listByResource(resourceId) {
     return request.get('/tasks', { params: { resource_id: String(resourceId) } })
   },

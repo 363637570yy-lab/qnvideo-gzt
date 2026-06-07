@@ -36,16 +36,39 @@ function getTasksByResources(db, resourceIds) {
 }
 
 function updateTaskStatus(db, taskId, status, progress, message) {
+  if (status !== 'cancelled' && isTaskCancelled(db, taskId)) return;
   const now = new Date().toISOString();
   let completedAt = null;
-  if (status === 'completed' || status === 'failed') completedAt = now;
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') completedAt = now;
   db.prepare(
     `UPDATE async_tasks SET status = ?, progress = ?, message = ?, updated_at = ?, completed_at = ?
      WHERE id = ?`
   ).run(status, progress ?? 0, message || '', now, completedAt, taskId);
 }
 
+function isTaskCancelled(db, taskId) {
+  if (!taskId) return false;
+  const row = db.prepare('SELECT status FROM async_tasks WHERE id = ? AND deleted_at IS NULL').get(taskId);
+  return row?.status === 'cancelled';
+}
+
+function cancelTask(db, taskId, message = '任务已停止') {
+  const task = getTask(db, taskId);
+  if (!task) return null;
+  if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+    return task;
+  }
+  updateTaskStatus(db, taskId, 'cancelled', 0, message || '任务已停止');
+  return getTask(db, taskId);
+}
+
+function deleteTask(db, log, taskId) {
+  const cleanup = require('./storageCleanupService');
+  return cleanup.deleteTaskAndArtifacts(db, log, taskId);
+}
+
 function updateTaskError(db, taskId, errMsg) {
+  if (isTaskCancelled(db, taskId)) return;
   const now = new Date().toISOString();
   try {
     db.prepare(
@@ -60,6 +83,7 @@ function updateTaskError(db, taskId, errMsg) {
 }
 
 function updateTaskResult(db, taskId, result) {
+  if (isTaskCancelled(db, taskId)) return;
   const now = new Date().toISOString();
   const resultStr = typeof result === 'string' ? result : JSON.stringify(result || {});
   db.prepare(
@@ -89,6 +113,9 @@ module.exports = {
   getTask,
   getTasksByResource,
   getTasksByResources,
+  cancelTask,
+  deleteTask,
+  isTaskCancelled,
   updateTaskStatus,
   updateTaskError,
   updateTaskResult,

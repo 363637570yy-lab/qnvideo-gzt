@@ -88,6 +88,68 @@ function resolveAssetDramaId(db, id) {
   return selectDramaId(db, 'SELECT drama_id FROM assets WHERE id = ? AND deleted_at IS NULL', id);
 }
 
+function pathText(path, regex) {
+  const m = path.match(regex);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function pushDirectDramaIfExists(db, ids, id) {
+  const n = finiteNumber(id);
+  if (!n) return;
+  const row = db.prepare('SELECT id FROM dramas WHERE id = ? AND deleted_at IS NULL').get(n);
+  if (row) ids.push(n);
+}
+
+function pushTaskResourceDramaIds(db, ids, task) {
+  const type = String(task?.type || '');
+  const resourceId = String(task?.resource_id || '').trim();
+  if (!resourceId) return;
+  if (/^character_(\d+)$/i.test(resourceId)) {
+    const id = Number(resourceId.match(/^character_(\d+)$/i)[1]);
+    pushResolved(ids, selectDramaId(db, 'SELECT drama_id FROM characters WHERE id = ? AND deleted_at IS NULL', id));
+    return;
+  }
+  if (/^scene_(\d+)$/i.test(resourceId)) {
+    const id = Number(resourceId.match(/^scene_(\d+)$/i)[1]);
+    pushResolved(ids, resolveSceneDramaId(db, id));
+    return;
+  }
+  if (type === 'prop_image_generation') {
+    pushResolved(ids, selectDramaId(db, 'SELECT drama_id FROM props WHERE id = ? AND deleted_at IS NULL', resourceId));
+    return;
+  }
+  if (type === 'prop_extraction' || type === 'background_extraction' || type === 'storyboard_generation' || type === 'video_merge') {
+    pushResolved(ids, resolveEpisodeDramaId(db, resourceId));
+    return;
+  }
+  if (type === 'video_generation') {
+    pushDirectDramaIfExists(db, ids, resourceId);
+    pushResolved(ids, resolveImageDramaId(db, resourceId));
+    return;
+  }
+  if (type === 'image_generation' || type === 'character_generation') {
+    pushDirectDramaIfExists(db, ids, resourceId);
+  }
+}
+
+function resolveTaskDramaIds(db, taskId) {
+  if (!taskId) return [];
+  const task = db.prepare('SELECT id, type, resource_id FROM async_tasks WHERE id = ? AND deleted_at IS NULL').get(String(taskId));
+  if (!task) return [];
+  const ids = [];
+  pushTaskResourceDramaIds(db, ids, task);
+  for (const row of db.prepare('SELECT drama_id FROM image_generations WHERE task_id = ? AND deleted_at IS NULL').all(String(taskId))) {
+    pushResolved(ids, row.drama_id);
+  }
+  for (const row of db.prepare('SELECT drama_id FROM video_generations WHERE task_id = ? AND deleted_at IS NULL').all(String(taskId))) {
+    pushResolved(ids, row.drama_id);
+  }
+  for (const row of db.prepare('SELECT drama_id FROM video_merges WHERE task_id = ? AND deleted_at IS NULL').all(String(taskId))) {
+    pushResolved(ids, row.drama_id);
+  }
+  return Array.from(new Set(ids));
+}
+
 function lookupDramaIds(db, req) {
   const p = req.path || '';
   const body = req.body || {};
@@ -142,6 +204,9 @@ function lookupDramaIds(db, req) {
 
   const assetId = pathNumber(p, /^\/assets\/(\d+)(?:\/|$)/);
   pushResolved(ids, resolveAssetDramaId(db, assetId));
+
+  const taskId = pathText(p, /^\/tasks\/([^/]+)(?:\/|$)/);
+  for (const id of resolveTaskDramaIds(db, taskId)) pushResolved(ids, id);
 
   return Array.from(new Set(ids));
 }

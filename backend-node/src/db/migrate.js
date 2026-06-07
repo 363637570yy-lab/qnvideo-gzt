@@ -267,8 +267,10 @@ function ensureAllColumns(database) {
       default_model TEXT,
       endpoint      TEXT,
       query_endpoint TEXT,
-      priority      INTEGER DEFAULT 0,
-      is_default    INTEGER DEFAULT 0,
+      route_order   INTEGER DEFAULT 0,
+      retry_count   INTEGER DEFAULT 0,
+      cooldown_seconds INTEGER DEFAULT 0,
+      request_timeout_ms INTEGER DEFAULT 0,
       is_active     INTEGER DEFAULT 1,
       health_status TEXT DEFAULT 'ok',
       disabled_until TEXT,
@@ -291,8 +293,10 @@ function ensureAllColumns(database) {
     { name: 'default_model',  type: 'TEXT' },
     { name: 'endpoint',       type: 'TEXT' },
     { name: 'query_endpoint', type: 'TEXT' },
-    { name: 'priority',       type: 'INTEGER DEFAULT 0' },
-    { name: 'is_default',     type: 'INTEGER DEFAULT 0' },
+    { name: 'route_order',    type: 'INTEGER DEFAULT 0' },
+    { name: 'retry_count',    type: 'INTEGER DEFAULT 0' },
+    { name: 'cooldown_seconds', type: 'INTEGER DEFAULT 0' },
+    { name: 'request_timeout_ms', type: 'INTEGER DEFAULT 0' },
     { name: 'is_active',      type: 'INTEGER DEFAULT 1' },
     { name: 'health_status',  type: 'TEXT DEFAULT \'ok\'' },
     { name: 'disabled_until', type: 'TEXT' },
@@ -304,6 +308,9 @@ function ensureAllColumns(database) {
     { name: 'updated_at',     type: 'TEXT' },
     { name: 'deleted_at',     type: 'TEXT' },
   ]);
+  try {
+    database.exec("UPDATE ai_service_configs SET service_type = 'image' WHERE service_type = 'storyboard_image'");
+  } catch (_) {}
 
   // --- async_tasks ---
   ensureColumns(database, 'async_tasks', [
@@ -341,6 +348,8 @@ function ensureAllColumns(database) {
     { name: 'local_path',       type: 'TEXT' },
     { name: 'width',            type: 'INTEGER' },
     { name: 'height',           type: 'INTEGER' },
+    { name: 'params_json',      type: 'TEXT' },
+    { name: 'actual_params_json', type: 'TEXT' },
     { name: 'status',           type: 'TEXT' },
     { name: 'task_id',          type: 'TEXT' },
     { name: 'completed_at',     type: 'TEXT' },
@@ -370,6 +379,8 @@ function ensureAllColumns(database) {
     { name: 'reference_image_urls', type: 'TEXT' },
     { name: 'video_url',            type: 'TEXT' },
     { name: 'local_path',           type: 'TEXT' },
+    { name: 'params_json',          type: 'TEXT' },
+    { name: 'actual_params_json',   type: 'TEXT' },
     { name: 'status',               type: 'TEXT' },
     { name: 'task_id',              type: 'TEXT' },
     { name: 'scene_id',             type: 'INTEGER' },
@@ -414,6 +425,9 @@ function ensureAllColumns(database) {
     { name: 'duration',     type: 'REAL' },
     { name: 'image_gen_id', type: 'INTEGER' },
     { name: 'video_gen_id', type: 'INTEGER' },
+    { name: 'created_by_user_id', type: 'TEXT' },
+    { name: 'created_by_username', type: 'TEXT' },
+    { name: 'created_by_display_name', type: 'TEXT' },
     { name: 'created_at',   type: 'TEXT' },
     { name: 'updated_at',   type: 'TEXT' },
     { name: 'deleted_at',   type: 'TEXT' },
@@ -545,9 +559,8 @@ function ensureAllColumns(database) {
 /** 对已打开的 database 执行迁移与兜底补列（供 app 启动时调用） */
 function runMigrationsAndEnsure(database, options = {}) {
   if (database?.kind === 'postgres') {
-    const { ensurePgSchema, migrateSqliteToPgIfNeeded } = require('./pgSchema');
+    const { ensurePgSchema } = require('./pgSchema');
     ensurePgSchema(database);
-    migrateSqliteToPgIfNeeded(database, options.sqlitePath, options.log);
     return;
   }
   runMigrations(database);

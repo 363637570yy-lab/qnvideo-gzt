@@ -199,7 +199,7 @@ function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress
   });
 }
 
-// 运行时按 priority 排序，并自动跳过冷却/停用的配置。
+// 运行时按路由策略选择配置，并自动跳过冷却/停用的配置。
 function getDefaultConfig(db, serviceType) {
   return aiConfigService.getRuntimeConfigCandidates(db, serviceType)[0] || null;
 }
@@ -236,7 +236,7 @@ function getConfigFromModelMap(db, sceneKey) {
       config = configs.find((c) => c.id === row.config_id && c.is_active) || null;
     }
     if (!config) {
-      config = configs.find((c) => c.is_active && c.is_default) || configs.find((c) => c.is_active) || null;
+      config = configs.find((c) => c.is_active) || null;
     }
     return config ? { config, modelOverride: row.model_override || null } : null;
   } catch (_) {
@@ -361,42 +361,57 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
       userPrompt,
       systemPrompt,
     }, 'AI generateText');
-    const startMs = Date.now();
-    try {
-      log.info('AI generateText request', {
-        config_id: config.id,
-        url: url.slice(0, 60),
-        model,
-        max_tokens: finalMaxTokens ?? '(model default)',
-        json_mode: !!options.json_mode,
-        stream: true,
-      });
-      const res = await postJSONStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, 60000, (receivedLen, event, accumulated) => {
-        if (event === 'first_token') {
-          log.info('AI stream first token', { config_id: config.id, model, ttft_ms: Date.now() - startMs });
-        } else if (receivedLen > 0 && receivedLen % 500 < 20) {
-          log.info('AI stream progress', { config_id: config.id, model, received_chars: receivedLen, elapsed_ms: Date.now() - startMs });
+    const retryCount = aiConfigService.getRetryCountForConfig(db, config, serviceType || 'text', model);
+    const silenceMs = aiConfigService.getRequestTimeoutMsForConfig(db, config, serviceType || 'text', model, 60000);
+    let stopRouting = false;
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      const startMs = Date.now();
+      try {
+        log.info('AI generateText request', {
+          config_id: config.id,
+          attempt: attempt + 1,
+          retry_count: retryCount,
+          url: url.slice(0, 60),
+          model,
+          max_tokens: finalMaxTokens ?? '(model default)',
+          json_mode: !!options.json_mode,
+          stream: true,
+        });
+        const res = await postJSONStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, silenceMs, (receivedLen, event, accumulated) => {
+          if (event === 'first_token') {
+            log.info('AI stream first token', { config_id: config.id, model, ttft_ms: Date.now() - startMs });
+          } else if (receivedLen > 0 && receivedLen % 500 < 20) {
+            log.info('AI stream progress', { config_id: config.id, model, received_chars: receivedLen, elapsed_ms: Date.now() - startMs });
+          }
+          if (streamCallback && accumulated) streamCallback(accumulated);
+        });
+        const content = res.body;
+        const elapsedMs = Date.now() - startMs;
+        if (!content) throw new Error('AI 返回内容为空');
+        aiConfigService.recordConfigSuccess(db, config.id);
+        log.info('AI raw response received', { config_id: config.id, model, text_length: content.length, elapsed_ms: elapsedMs, text_preview: content.slice(0, 200) });
+        return content;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < retryCount) {
+          log.warn('AI generateText retrying same config', { config_id: config.id, model, attempt: attempt + 1, error: err.message });
+          continue;
         }
-        if (streamCallback && accumulated) streamCallback(accumulated);
-      });
-      const content = res.body;
-      const elapsedMs = Date.now() - startMs;
-      if (!content) throw new Error('AI 返回内容为空');
-      aiConfigService.recordConfigSuccess(db, config.id);
-      log.info('AI raw response received', { config_id: config.id, model, text_length: content.length, elapsed_ms: elapsedMs, text_preview: content.slice(0, 200) });
-      return content;
-    } catch (err) {
-      lastErr = err;
-      const failure = aiConfigService.recordConfigFailure(db, config.id, err);
-      log.warn('AI generateText failed, trying next config if available', {
-        config_id: config.id,
-        model,
-        reason: failure.reason,
-        fallbackable: failure.fallbackable,
-        error: failure.message,
-      });
-      if (!failure.fallbackable || i === entries.length - 1) break;
+        const failure = aiConfigService.recordConfigFailure(db, config.id, err, { serviceType: serviceType || 'text', model });
+        log.warn('AI generateText failed, trying next config if available', {
+          config_id: config.id,
+          model,
+          reason: failure.reason,
+          fallbackable: failure.fallbackable,
+          error: failure.message,
+        });
+        if (!failure.fallbackable || i === entries.length - 1) {
+          stopRouting = true;
+          break;
+        }
+      }
     }
+    if (stopRouting) break;
   }
   throw lastErr || new Error('AI 文本生成失败');
 }
@@ -428,49 +443,66 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
       userPrompt,
       systemPrompt,
     }, 'AI streamGenerateText');
-    const startMs = Date.now();
-    let lastLen = 0;
-    try {
-      log.info('AI streamGenerateText request', {
-        config_id: config.id,
-        url: url.slice(0, 60),
-        model,
-        max_tokens: finalMaxTokens ?? '(model default)',
-        json_mode: !!options.json_mode,
-        stream: true,
-      });
-      const res = await postJSONStream(
-        url,
-        { Authorization: 'Bearer ' + (config.api_key || '') },
-        body,
-        silenceMs,
-        (receivedLen, event, accumulated) => {
-          if (event === 'first_token') {
-            log.info('AI stream first token', { config_id: config.id, model, ttft_ms: Date.now() - startMs });
+    const retryCount = aiConfigService.getRetryCountForConfig(db, config, serviceType || 'text', model);
+    const streamSilenceMs = options.silence_timeout_ms != null
+      ? Number(options.silence_timeout_ms)
+      : aiConfigService.getRequestTimeoutMsForConfig(db, config, serviceType || 'text', model, silenceMs);
+    let stopRouting = false;
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      const startMs = Date.now();
+      let lastLen = 0;
+      try {
+        log.info('AI streamGenerateText request', {
+          config_id: config.id,
+          attempt: attempt + 1,
+          retry_count: retryCount,
+          url: url.slice(0, 60),
+          model,
+          max_tokens: finalMaxTokens ?? '(model default)',
+          json_mode: !!options.json_mode,
+          stream: true,
+        });
+        const res = await postJSONStream(
+          url,
+          { Authorization: 'Bearer ' + (config.api_key || '') },
+          body,
+          streamSilenceMs,
+          (receivedLen, event, accumulated) => {
+            if (event === 'first_token') {
+              log.info('AI stream first token', { config_id: config.id, model, ttft_ms: Date.now() - startMs });
+            }
+            if (!accumulated || accumulated.length <= lastLen) return;
+            const delta = accumulated.slice(lastLen);
+            lastLen = accumulated.length;
+            if (onDelta && delta) onDelta(delta);
           }
-          if (!accumulated || accumulated.length <= lastLen) return;
-          const delta = accumulated.slice(lastLen);
-          lastLen = accumulated.length;
-          if (onDelta && delta) onDelta(delta);
+        );
+        const content = res.body;
+        if (!content) throw new Error('AI 返回内容为空');
+        aiConfigService.recordConfigSuccess(db, config.id);
+        log.info('AI streamGenerateText done', { config_id: config.id, model, text_length: content.length, elapsed_ms: Date.now() - startMs });
+        return content;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < retryCount) {
+          log.warn('AI streamGenerateText retrying same config', { config_id: config.id, model, attempt: attempt + 1, error: err.message });
+          continue;
         }
-      );
-      const content = res.body;
-      if (!content) throw new Error('AI 返回内容为空');
-      aiConfigService.recordConfigSuccess(db, config.id);
-      log.info('AI streamGenerateText done', { config_id: config.id, model, text_length: content.length, elapsed_ms: Date.now() - startMs });
-      return content;
-    } catch (err) {
-      lastErr = err;
-      const failure = aiConfigService.recordConfigFailure(db, config.id, err);
-      log.warn('AI streamGenerateText failed, trying next config if available', {
-        config_id: config.id,
-        model,
-        reason: failure.reason,
-        fallbackable: failure.fallbackable,
-        error: failure.message,
-      });
-      if (!failure.fallbackable || i === entries.length - 1) break;
+        const failure = aiConfigService.recordConfigFailure(db, config.id, err, { serviceType: serviceType || 'text', model });
+        log.warn('AI streamGenerateText failed, trying next config if available', {
+          config_id: config.id,
+          model,
+          reason: failure.reason,
+          fallbackable: failure.fallbackable,
+          error: failure.message,
+        });
+        if (!failure.fallbackable || i === entries.length - 1) {
+          stopRouting = true;
+          break;
+        }
+      }
     }
+    if (stopRouting) break;
   }
   throw lastErr || new Error('AI 流式文本生成失败');
 }

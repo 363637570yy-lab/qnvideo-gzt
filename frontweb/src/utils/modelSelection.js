@@ -10,12 +10,19 @@ export function parseModelList(models, defaultModel = '') {
 
 export function getSelectableModels(configs, serviceType, configId) {
   const list = Array.isArray(configs) ? configs : []
+  const serviceConfigs = list
+    .filter((c) => c.service_type === serviceType && c.is_active)
+    .sort((a, b) => {
+      const ao = Number(a.route_order ?? 0)
+      const bo = Number(b.route_order ?? 0)
+      if (ao !== bo) return ao - bo
+      return Number(a.id ?? 0) - Number(b.id ?? 0)
+    })
   const selectedConfig = configId
     ? list.find((c) => c.id === configId)
     : null
   const config = selectedConfig
-    || list.find((c) => c.service_type === serviceType && c.is_active && c.is_default)
-    || list.find((c) => c.service_type === serviceType && c.is_active)
+    || serviceConfigs[0]
 
   if (!config) return []
   return parseModelList(config.model, config.default_model)

@@ -86,6 +86,8 @@ async function processCharacterGeneration(db, cfg, log, taskID, req) {
     return;
   }
 
+  if (taskService.isTaskCancelled(db, taskID)) return;
+
   console.log('[角色生成] AI 原始返回：\n' + text);
 
   let result;
@@ -101,6 +103,8 @@ async function processCharacterGeneration(db, cfg, log, taskID, req) {
 
   const dramaId = Number(req.drama_id);
   const now = new Date().toISOString();
+
+  if (taskService.isTaskCancelled(db, taskID)) return;
 
   // 再次「从剧本提取角色」时先清空本集已关联角色，避免与旧数据累加；仅软删除不再被任何分集引用的角色行
   if (req.episode_id) {

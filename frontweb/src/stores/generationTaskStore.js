@@ -50,6 +50,10 @@ function isActiveTaskStatus(status) {
   return status === 'pending' || status === 'processing' || status === 'running'
 }
 
+function isCancelledTaskStatus(status) {
+  return status === 'cancelled' || status === 'canceled'
+}
+
 function taskFailMessage(t) {
   if (!t) return '任务失败'
   return (t.error || t.message || '任务失败').trim()
@@ -150,10 +154,32 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     return runningTasks.value
   }
 
+  function getRunningTask(meta) {
+    const key = typeof meta === 'string' ? meta : taskKey(meta)
+    const direct = tasks.value.get(key)
+    if (direct?.status === 'running') return direct
+    if (meta && typeof meta === 'object' && meta.taskId) {
+      return [...tasks.value.values()].find((t) => t.taskId === meta.taskId && t.status === 'running') || null
+    }
+    return null
+  }
+
+  function stopResourceTask(meta, reason) {
+    const task = getRunningTask(meta)
+    if (!task) return false
+    if (task.taskId) {
+      stopPollingTask(task.taskId, reason || '任务已停止')
+      return true
+    }
+    markFailed(task, reason || '任务已停止')
+    return true
+  }
+
   /** 停止指定 taskId 的轮询并清除 store 中的 running 状态 */
   function stopPollingTask(taskId, reason) {
     if (!taskId) return
     cancelledPollTaskIds.value = new Set([...cancelledPollTaskIds.value, taskId])
+    taskAPI.cancel(taskId, reason || '任务已停止').catch(() => {})
     markFailed({ taskId }, reason || '任务已停止')
   }
 
@@ -188,6 +214,10 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
           }
           if (remote.status === 'failed') {
             markFailed(t, taskFailMessage(remote))
+            continue
+          }
+          if (isCancelledTaskStatus(remote.status)) {
+            markFailed(t, taskFailMessage(remote) || '任务已停止')
             continue
           }
           if (!isActiveTaskStatus(remote.status)) {
@@ -261,6 +291,11 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
             }
             return resolve({ status: 'failed', error: errMsg })
           }
+          if (isCancelledTaskStatus(t.status)) {
+            const errMsg = taskFailMessage(t) || '任务已停止'
+            markFailed(key, errMsg)
+            return resolve({ status: 'cancelled', error: errMsg })
+          }
         } catch (pollErr) {
           console.warn('[generationTaskStore] poll attempt failed:', pollErr?.message)
         }
@@ -285,7 +320,6 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
 
     return promise.finally(() => {
       stopped = true
-      cancelledPollTaskIds.value = new Set([...cancelledPollTaskIds.value, taskId])
       const cleaned = new Map(pollPromises.value)
       cleaned.delete(taskId)
       pollPromises.value = cleaned
@@ -314,6 +348,10 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         markFailed({ ...meta, taskId }, taskFailMessage(t))
         return { status: 'failed', error: taskFailMessage(t) }
       }
+      if (isCancelledTaskStatus(t.status)) {
+        markFailed({ ...meta, taskId }, taskFailMessage(t) || '任务已停止')
+        return { status: 'cancelled', error: taskFailMessage(t) || '任务已停止' }
+      }
       if (!isActiveTaskStatus(t.status)) {
         markDone({ ...meta, taskId })
         return { status: 'completed', result: t.result }
@@ -333,6 +371,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         const t = await taskAPI.get(taskId)
         if (t.status === 'completed') markDone({ ...meta, taskId })
         else if (t.status === 'failed') markFailed({ ...meta, taskId }, taskFailMessage(t))
+        else if (isCancelledTaskStatus(t.status)) markFailed({ ...meta, taskId }, taskFailMessage(t) || '任务已停止')
         else if (!isActiveTaskStatus(t.status)) markDone({ ...meta, taskId })
         else if (cancelledPollTaskIds.value.has(taskId)) markFailed({ ...meta, taskId }, '任务轮询已停止')
       } catch (_) {}
@@ -340,7 +379,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     }
     recoveredTaskIds.value = new Set([...recoveredTaskIds.value, taskId])
     const res = await attachPollIfNeeded(taskId, meta, onDone, pollOpts)
-    if (res?.status === 'failed' || res?.status === 'timeout') {
+    if (res?.status === 'failed' || res?.status === 'timeout' || res?.status === 'cancelled') {
       markFailed({ ...meta, taskId }, res.error)
     }
   }
@@ -363,9 +402,15 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
       allScenes = [],
       callbacks = {},
       ElMessage,
+      recoverResourceTypes = null,
+      recoverAssetTasks = true,
     } = ctx
 
     if (dramaId == null || episodeId == null) return
+    const recoverTypeSet = Array.isArray(recoverResourceTypes) && recoverResourceTypes.length
+      ? new Set(recoverResourceTypes)
+      : null
+    const shouldRecover = (resourceType) => !recoverTypeSet || recoverTypeSet.has(resourceType)
 
     const reconcileAssets = {
       characters: allCharacters.length ? allCharacters : characters,
@@ -396,6 +441,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
 
       if (img.storyboard_id != null && sbIdSet.has(Number(img.storyboard_id))) {
         resourceType = sbImageResourceType(img.frame_type)
+        if (!shouldRecover(resourceType)) return
         resourceId = Number(img.storyboard_id)
         const sb = storyboards.find((s) => Number(s.id) === resourceId)
         const num = sb?.storyboard_number ?? resourceId
@@ -406,11 +452,13 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
             : `${epLabel} 分镜图 #${num}`
       } else if (img.character_id != null && charIdSet.has(Number(img.character_id))) {
         resourceType = GEN_RESOURCE.CHAR_IMAGE
+        if (!recoverAssetTasks || !shouldRecover(resourceType)) return
         resourceId = Number(img.character_id)
         const c = characters.find((x) => Number(x.id) === resourceId)
         label = `${epLabel} 角色图: ${c?.name || resourceId}`
       } else if (img.scene_id != null && sceneIdSet.has(Number(img.scene_id))) {
         resourceType = GEN_RESOURCE.SCENE_IMAGE
+        if (!recoverAssetTasks || !shouldRecover(resourceType)) return
         resourceId = Number(img.scene_id)
         const s = scenes.find((x) => Number(x.id) === resourceId)
         label = `${epLabel} 场景图: ${s?.location || resourceId}`
@@ -437,6 +485,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
       if (!vid?.storyboard_id || !sbIdSet.has(Number(vid.storyboard_id))) return
       if (!['pending', 'processing'].includes(vid.status)) return
       if (!vid.task_id) return
+      if (!shouldRecover(GEN_RESOURCE.SB_VIDEO)) return
       const resourceId = Number(vid.storyboard_id)
       const sb = storyboards.find((s) => Number(s.id) === resourceId)
       const num = sb?.storyboard_number ?? resourceId
@@ -475,6 +524,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
       for (const t of episodeTasks || []) {
         if (!isActiveTaskStatus(t.status)) continue
         if (t.type === 'video_merge') {
+          if (!shouldRecover(GEN_RESOURCE.EPISODE_MERGE)) continue
           const meta = {
             dramaId,
             episodeId,
@@ -495,6 +545,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         }
         const extractCfg = extractTypeMap[t.type]
         if (extractCfg) {
+          if (!shouldRecover(extractCfg.resourceType)) continue
           const meta = {
             dramaId,
             episodeId,
@@ -514,6 +565,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
       for (const t of dramaTasks || []) {
         if (!isActiveTaskStatus(t.status)) continue
         if (t.type !== 'character_generation') continue
+        if (!shouldRecover(GEN_RESOURCE.EXTRACT_CHARACTERS)) continue
         if (recoveredTaskIds.value.has(t.id)) continue
         if (pollPromises.value.has(t.id)) continue
         const meta = {
@@ -558,14 +610,17 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         }
       }
       for (const id of charIdSet) {
+        if (!recoverAssetTasks || !shouldRecover(GEN_RESOURCE.CHAR_IMAGE)) continue
         const c = characters.find((x) => Number(x.id) === Number(id))
         attachResourceTasks(id, GEN_RESOURCE.CHAR_IMAGE, `${epLabel} 角色图: ${c?.name || id}`)
       }
       for (const id of propIdSet) {
+        if (!recoverAssetTasks || !shouldRecover(GEN_RESOURCE.PROP_IMAGE)) continue
         const p = props.find((x) => Number(x.id) === Number(id))
         attachResourceTasks(id, GEN_RESOURCE.PROP_IMAGE, `${epLabel} 道具图: ${p?.name || id}`)
       }
       for (const id of sceneIdSet) {
+        if (!recoverAssetTasks || !shouldRecover(GEN_RESOURCE.SCENE_IMAGE)) continue
         const s = scenes.find((x) => Number(x.id) === Number(id))
         attachResourceTasks(id, GEN_RESOURCE.SCENE_IMAGE, `${epLabel} 场景图: ${s?.location || id}`)
       }
@@ -586,11 +641,13 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     isRunning,
     getRunningForEpisode,
     getAllRunningTasks,
+    getRunningTask,
     pollTask,
     attachPollIfNeeded,
     recoverPendingForEpisode,
     reconcileRunningTasks,
     stopPollingTask,
+    stopResourceTask,
     clearAllRunningTasks,
     taskKey,
   }

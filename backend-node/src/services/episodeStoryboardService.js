@@ -882,6 +882,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
       ai_config_id: aiConfigId || undefined,
       // 每积累约 400 字符触发一次增量解析，尝试提前保存已完成的分镜
       streamCallback: (accumulated) => {
+        if (taskService.isTaskCancelled(db, taskId)) return;
         if (accumulated.length - streamThrottle < 400) return;
         streamThrottle = accumulated.length;
         tryIncrementalSave(db, log, episodeIdNum, accumulated, streamSavedNums, streamStyle, streamVideoRatio, deriveOpts);
@@ -892,6 +893,8 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
         }
       },
     });
+
+    if (taskService.isTaskCancelled(db, taskId)) return;
 
     taskService.updateTaskStatus(db, taskId, 'processing', 50, '分镜头生成完成，正在解析结果...');
 
@@ -996,6 +999,7 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
           model: model || undefined,
           ai_config_id: aiConfigId || undefined,
           streamCallback: (accumulated) => {
+            if (taskService.isTaskCancelled(db, taskId)) return;
             if (accumulated.length - streamThrottle < 400) return;
             streamThrottle = accumulated.length;
             tryIncrementalSave(db, log, episodeIdNum, accumulated, streamSavedNums, streamStyle, streamVideoRatio, deriveOpts);
@@ -1046,7 +1050,10 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
     }
     log.info('Storyboard generated', { task_id: taskId, episode_id: episodeId, count: storyboards.length, total_duration_seconds: totalDuration, truncated: parseMeta.truncated || false, continuation_attempts: contAttempt });
 
+    if (taskService.isTaskCancelled(db, taskId)) return;
+
     taskService.updateTaskStatus(db, taskId, 'processing', 70, '正在保存分镜头...');
+    if (taskService.isTaskCancelled(db, taskId)) return;
 
     // 传入 streamSavedNums：已增量保存的项目直接从 DB 读取，跳过重复 INSERT
     const saved = saveStoryboards(db, log, episodeId, storyboards, cfg, style, streamSavedNums, deriveOpts);
@@ -1080,6 +1087,8 @@ async function processStoryboardGeneration(db, log, cfg, taskId, episodeId, mode
     log.info('Storyboard generation completed', { task_id: taskId, episode_id: episodeId });
   } catch (err) {
     log.error('Storyboard generation failed', { error: err.message, task_id: taskId });
+
+    if (taskService.isTaskCancelled(db, taskId)) return;
 
     // 若连接中断（ECONNRESET 等）但已通过增量流式保存了部分分镜，视为部分成功而非彻底失败
     if (streamSavedNums.size > 0) {

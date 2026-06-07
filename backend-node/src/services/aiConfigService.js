@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeMaterialHubToken } = require('./jimengMaterialHubService');
+const settingsService = require('./settingsService');
 
 function normalizeApiKeyForService(serviceType, apiKey) {
   if (serviceType === 'jimeng2_character_auth' && apiKey != null) {
@@ -27,26 +28,114 @@ function modelFromDb(val) {
   }
 }
 
-/** 每种服务类型只保留一个默认：若有多个 is_default=1，只保留优先级最高（同优先级取 id 最小）的那条 */
-function ensureSingleDefaultPerType(db) {
-  const types = ['text', 'image', 'storyboard_image', 'video', 'tts', 'jimeng2_character_auth'];
-  for (const st of types) {
-    const rows = db.prepare(
-      'SELECT id, priority FROM ai_service_configs WHERE deleted_at IS NULL AND service_type = ? AND is_default = 1 ORDER BY priority DESC, id ASC'
-    ).all(st);
-    if (rows.length <= 1) continue;
-    const keepId = rows[0].id;
-    db.prepare(
-      'UPDATE ai_service_configs SET is_default = 0 WHERE deleted_at IS NULL AND service_type = ? AND id != ?'
-    ).run(st, keepId);
+const ROUTING_POLICY_KEY = 'ai_routing_policies';
+const ROUTING_CURSOR_KEY = 'ai_routing_cursors';
+
+const RUNTIME_ROUTE_TYPES = [
+  { key: 'text', label: '文本' },
+  { key: 'image', label: '图像' },
+  { key: 'video', label: '视频' },
+  { key: 'tts', label: '音频' },
+];
+
+const DEFAULT_ROUTING_POLICIES = {
+  text: {
+    strategy: 'sequential',
+    max_attempt_configs: 0,
+    retry_count: 1,
+    cooldown_seconds: 30,
+    cooldown_max_seconds: 1800,
+    request_timeout_ms: 120000,
+  },
+  image: {
+    strategy: 'sequential',
+    max_attempt_configs: 0,
+    retry_count: 0,
+    cooldown_seconds: 120,
+    cooldown_max_seconds: 1800,
+    request_timeout_ms: 600000,
+  },
+  video: {
+    strategy: 'sequential',
+    max_attempt_configs: 0,
+    retry_count: 0,
+    cooldown_seconds: 300,
+    cooldown_max_seconds: 3600,
+    request_timeout_ms: 600000,
+  },
+  tts: {
+    strategy: 'sequential',
+    max_attempt_configs: 0,
+    retry_count: 1,
+    cooldown_seconds: 60,
+    cooldown_max_seconds: 1800,
+    request_timeout_ms: 180000,
+  },
+  jimeng2_character_auth: {
+    strategy: 'sequential',
+    max_attempt_configs: 0,
+    retry_count: 0,
+    cooldown_seconds: 300,
+    cooldown_max_seconds: 3600,
+    request_timeout_ms: 120000,
+  },
+};
+
+function normalizeServiceType(serviceType) {
+  return serviceType === 'storyboard_image' ? 'image' : (serviceType || 'text');
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(n)));
+}
+
+function normalizeRoutingPolicy(serviceType, raw = {}) {
+  const key = normalizeServiceType(serviceType);
+  const defaults = DEFAULT_ROUTING_POLICIES[key] || DEFAULT_ROUTING_POLICIES.text;
+  const strategy = raw.strategy === 'round_robin' ? 'round_robin' : 'sequential';
+  return {
+    strategy,
+    max_attempt_configs: clampInt(raw.max_attempt_configs, defaults.max_attempt_configs, 0, 50),
+    retry_count: clampInt(raw.retry_count, defaults.retry_count, 0, 5),
+    cooldown_seconds: clampInt(raw.cooldown_seconds, defaults.cooldown_seconds, 0, 24 * 3600),
+    cooldown_max_seconds: clampInt(raw.cooldown_max_seconds, defaults.cooldown_max_seconds, 1, 24 * 3600),
+    request_timeout_ms: clampInt(raw.request_timeout_ms, defaults.request_timeout_ms, 1000, 30 * 60 * 1000),
+  };
+}
+
+function getRoutingPolicies(db) {
+  const saved = settingsService.getGlobalSetting(db, ROUTING_POLICY_KEY, {});
+  const out = {};
+  for (const key of Object.keys(DEFAULT_ROUTING_POLICIES)) {
+    out[key] = normalizeRoutingPolicy(key, saved?.[key] || {});
   }
+  return out;
+}
+
+function getRoutingPolicy(db, serviceType) {
+  const key = normalizeServiceType(serviceType);
+  return getRoutingPolicies(db)[key] || normalizeRoutingPolicy(key);
+}
+
+function updateRoutingPolicy(db, serviceType, patch) {
+  const key = normalizeServiceType(serviceType);
+  if (!DEFAULT_ROUTING_POLICIES[key]) {
+    throw new Error(`不支持的服务类型: ${serviceType}`);
+  }
+  const all = getRoutingPolicies(db);
+  all[key] = normalizeRoutingPolicy(key, { ...all[key], ...(patch || {}) });
+  settingsService.setGlobalSetting(db, ROUTING_POLICY_KEY, all);
+  return all;
 }
 
 function listConfigs(db, serviceType) {
-  const order = 'ORDER BY priority DESC, is_default DESC, created_at DESC';
+  const order = 'ORDER BY route_order ASC, created_at DESC, id ASC';
   let sql = 'SELECT * FROM ai_service_configs WHERE deleted_at IS NULL ' + order;
   const params = [];
   if (serviceType) {
+    serviceType = normalizeServiceType(serviceType);
     sql = 'SELECT * FROM ai_service_configs WHERE deleted_at IS NULL AND service_type = ? ' + order;
     params.push(serviceType);
   }
@@ -55,7 +144,7 @@ function listConfigs(db, serviceType) {
 }
 
 function getActivePublicConfig(db, serviceType) {
-  const cfg = getRuntimeConfigCandidates(db, serviceType)[0] || null;
+  const cfg = getRuntimeConfigCandidates(db, serviceType, { selectForRequest: false })[0] || null;
   if (!cfg) return null;
   return toPublicRuntimeConfig(cfg);
 }
@@ -69,27 +158,22 @@ function toPublicRuntimeConfig(cfg) {
     name: cfg.name,
     model: cfg.model,
     default_model: cfg.default_model,
-    is_default: cfg.is_default,
     is_active: cfg.is_active,
-    priority: cfg.priority || 0,
+    route_order: cfg.route_order || 0,
+    retry_count: cfg.retry_count || 0,
+    cooldown_seconds: cfg.cooldown_seconds || 0,
+    request_timeout_ms: cfg.request_timeout_ms || 0,
     health_status: cfg.health_status || 'ok',
     disabled_until: cfg.disabled_until || null,
+    last_error: cfg.last_error || null,
     last_error_at: cfg.last_error_at || null,
   };
 }
 
 function listRuntimePublicConfigs(db, serviceType) {
-  return getRuntimeConfigCandidates(db, serviceType, { includeCoolingDown: true })
+  return getRuntimeConfigCandidates(db, serviceType, { includeCoolingDown: true, selectForRequest: false })
     .map(toPublicRuntimeConfig);
 }
-
-const RUNTIME_ROUTE_TYPES = [
-  { key: 'text', label: '文本' },
-  { key: 'image', label: '素材图' },
-  { key: 'storyboard_image', label: '分镜图' },
-  { key: 'video', label: '视频' },
-  { key: 'tts', label: '音频' },
-];
 
 function getRuntimeModelRoutes(db) {
   const keys = RUNTIME_ROUTE_TYPES.map((item) => item.key);
@@ -97,7 +181,7 @@ function getRuntimeModelRoutes(db) {
   const rows = db.prepare(
     `SELECT * FROM ai_service_configs
      WHERE deleted_at IS NULL AND service_type IN (${placeholders})
-     ORDER BY service_type ASC, priority DESC, is_default DESC, created_at DESC`
+     ORDER BY service_type ASC, route_order ASC, created_at DESC, id ASC`
   ).all(...keys);
   const nowMs = Date.now();
   const options = Object.fromEntries(keys.map((key) => [key, []]));
@@ -110,23 +194,16 @@ function getRuntimeModelRoutes(db) {
   const defaults = {};
   for (const key of keys) {
     const candidates = options[key] || [];
-    defaults[key] = candidates.find((cfg) => !isInCooldown(cfg, nowMs) && cfg.is_default)
-      || candidates.find((cfg) => !isInCooldown(cfg, nowMs))
+    defaults[key] = candidates.find((cfg) => isRouteEligible(cfg, nowMs))
       || null;
   }
   return {
     service_types: RUNTIME_ROUTE_TYPES,
     options,
     defaults,
+    routing_policies: getRoutingPolicies(db),
     selected: Object.fromEntries(keys.map((key) => [key, ''])),
   };
-}
-
-function clearOtherDefault(db, serviceType, exceptId) {
-  const stmt = db.prepare(
-    'UPDATE ai_service_configs SET is_default = 0 WHERE deleted_at IS NULL AND service_type = ? AND id != ?'
-  );
-  stmt.run(serviceType, exceptId);
 }
 
 function getConfig(db, id) {
@@ -139,9 +216,10 @@ function createConfig(db, log, req) {
   const model = modelToDb(req.model);
   let endpoint = req.endpoint || '';
   let queryEndpoint = req.query_endpoint || '';
+  const serviceType = normalizeServiceType(req.service_type || 'text');
   if (!endpoint && req.provider) {
     const p = req.provider.toLowerCase();
-    const st = (req.service_type || 'text').toLowerCase();
+    const st = serviceType.toLowerCase();
     if (p === 'openai') {
       if (st === 'text') endpoint = '/chat/completions';
       else if (st === 'image') endpoint = '/images/generations';
@@ -152,7 +230,7 @@ function createConfig(db, log, req) {
     } else if (p === 'gemini' || p === 'google') {
       endpoint = '/v1beta/models/{model}:generateContent';
     } else if (p === 'dashscope' || p === 'qwen_image') {
-      if (st === 'image' || st === 'storyboard_image') endpoint = '/api/v1/services/aigc/multimodal-generation/generation';
+      if (st === 'image') endpoint = '/api/v1/services/aigc/multimodal-generation/generation';
       else if (st === 'video' && p === 'dashscope') {
         endpoint = '/api/v1/services/aigc/image2video/video-synthesis';
         queryEndpoint = '/api/v1/tasks/{taskId}';
@@ -161,11 +239,11 @@ function createConfig(db, log, req) {
       if (st === 'video') {
         endpoint = '/contents/generations/tasks';
         queryEndpoint = '/contents/generations/tasks/{taskId}';
-      } else if (st === 'image' || st === 'storyboard_image') {
+      } else if (st === 'image') {
         endpoint = '/images/generations';
       }
     } else if (p === 'nano_banana') {
-      if (st === 'image' || st === 'storyboard_image') {
+      if (st === 'image') {
         endpoint = '/api/v1/nanobanana/generate-2';
         queryEndpoint = '/api/v1/nanobanana/record-info';
       }
@@ -173,10 +251,10 @@ function createConfig(db, log, req) {
   }
   const defaultModel = req.default_model != null ? String(req.default_model).trim() || null : null;
   const info = db.prepare(
-    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, route_order, retry_count, cooldown_seconds, request_timeout_ms, is_active, settings, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
   ).run(
-    req.service_type || 'text',
+    serviceType,
     req.provider || '',
     req.api_protocol || '',
     req.name || '',
@@ -186,15 +264,16 @@ function createConfig(db, log, req) {
     defaultModel,
     endpoint,
     queryEndpoint,
-    req.priority ?? 0,
-    req.is_default ? 1 : 0,
+    req.route_order ?? 0,
+    req.retry_count ?? 0,
+    req.cooldown_seconds ?? 0,
+    req.request_timeout_ms ?? 0,
     req.settings || null,
     now,
     now
   );
   log.info('AI config created', { config_id: info.lastInsertRowid, provider: req.provider });
   const newId = info.lastInsertRowid;
-  if (req.is_default) clearOtherDefault(db, req.service_type || 'text', newId);
   return getConfig(db, newId);
 }
 
@@ -232,9 +311,25 @@ function updateConfig(db, log, id, req) {
     updates.push('default_model = ?');
     params.push(req.default_model != null ? String(req.default_model).trim() || null : null);
   }
-  if (req.priority != null) {
-    updates.push('priority = ?');
-    params.push(req.priority);
+  if (req.service_type != null) {
+    updates.push('service_type = ?');
+    params.push(normalizeServiceType(req.service_type));
+  }
+  if (req.route_order != null) {
+    updates.push('route_order = ?');
+    params.push(clampInt(req.route_order, 0, 0, 9999));
+  }
+  if (req.retry_count != null) {
+    updates.push('retry_count = ?');
+    params.push(clampInt(req.retry_count, 0, 0, 5));
+  }
+  if (req.cooldown_seconds != null) {
+    updates.push('cooldown_seconds = ?');
+    params.push(clampInt(req.cooldown_seconds, 0, 0, 24 * 3600));
+  }
+  if (req.request_timeout_ms != null) {
+    updates.push('request_timeout_ms = ?');
+    params.push(clampInt(req.request_timeout_ms, 0, 0, 30 * 60 * 1000));
   }
   if (req.endpoint !== undefined) {
     updates.push('endpoint = ?');
@@ -247,10 +342,6 @@ function updateConfig(db, log, id, req) {
   if (req.settings != null) {
     updates.push('settings = ?');
     params.push(req.settings);
-  }
-  if (typeof req.is_default === 'boolean') {
-    updates.push('is_default = ?');
-    params.push(req.is_default ? 1 : 0);
   }
   if (typeof req.is_active === 'boolean') {
     updates.push('is_active = ?');
@@ -268,7 +359,6 @@ function updateConfig(db, log, id, req) {
   if (updates.length === 0) return existing;
   params.push(new Date().toISOString(), id);
   db.prepare('UPDATE ai_service_configs SET ' + updates.join(', ') + ', updated_at = ? WHERE id = ?').run(...params);
-  if (req.is_default === true) clearOtherDefault(db, existing.service_type, id);
   log.info('AI config updated', { config_id: id });
   return getConfig(db, id);
 }
@@ -284,7 +374,7 @@ function deleteConfig(db, log, id) {
 function rowToConfig(r) {
   const cfg = {
     id: r.id,
-    service_type: r.service_type,
+    service_type: normalizeServiceType(r.service_type),
     provider: r.provider,
     api_protocol: r.api_protocol || '',
     name: r.name,
@@ -294,8 +384,10 @@ function rowToConfig(r) {
     default_model: r.default_model ? String(r.default_model).trim() : null,
     endpoint: r.endpoint,
     query_endpoint: r.query_endpoint,
-    priority: r.priority ?? 0,
-    is_default: !!r.is_default,
+    route_order: Number(r.route_order || 0),
+    retry_count: Number(r.retry_count || 0),
+    cooldown_seconds: Number(r.cooldown_seconds || 0),
+    request_timeout_ms: Number(r.request_timeout_ms || 0),
     is_active: r.is_active == null ? true : !!r.is_active,
     health_status: r.health_status || 'ok',
     disabled_until: r.disabled_until || null,
@@ -323,30 +415,67 @@ function isInCooldown(cfg, nowMs = Date.now()) {
   return Number.isFinite(until) && until > nowMs;
 }
 
+function isRouteEligible(cfg, nowMs = Date.now(), options = {}) {
+  if (!cfg) return false;
+  if (!options.includeInactive && cfg.is_active === false) return false;
+  if (!options.includeCoolingDown && isInCooldown(cfg, nowMs)) return false;
+  if (!options.includeCoolingDown && cfg.health_status === 'auth_failed') return false;
+  return true;
+}
+
+function getRoutingCursor(db, serviceType) {
+  const cursors = settingsService.getGlobalSetting(db, ROUTING_CURSOR_KEY, {});
+  const n = Number(cursors?.[serviceType] || 0);
+  return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+}
+
+function bumpRoutingCursor(db, serviceType, step = 1) {
+  const cursors = settingsService.getGlobalSetting(db, ROUTING_CURSOR_KEY, {});
+  const current = Number(cursors?.[serviceType] || 0);
+  cursors[serviceType] = (Number.isFinite(current) ? current : 0) + step;
+  settingsService.setGlobalSetting(db, ROUTING_CURSOR_KEY, cursors);
+}
+
+function rotateByCursor(items, cursor) {
+  if (!Array.isArray(items) || items.length <= 1) return items;
+  const idx = Math.abs(cursor) % items.length;
+  return [...items.slice(idx), ...items.slice(0, idx)];
+}
+
+function capAttemptConfigs(items, policy) {
+  const max = Number(policy?.max_attempt_configs || 0);
+  if (!Number.isFinite(max) || max <= 0) return items;
+  return items.slice(0, Math.max(1, Math.trunc(max)));
+}
+
 function getRuntimeConfigCandidates(db, serviceType, options = {}) {
+  serviceType = normalizeServiceType(serviceType);
   const list = listConfigs(db, serviceType);
   const nowMs = Date.now();
   const includeCoolingDown = !!options.includeCoolingDown;
   const includeInactive = !!options.includeInactive;
+  const selectForRequest = options.selectForRequest !== false;
   const requestedId = options.config_id != null || options.ai_config_id != null
     ? Number(options.config_id ?? options.ai_config_id)
     : null;
   const preferredModel = options.model || options.preferredModel || null;
 
   let candidates = list.filter((cfg) => {
-    if (!includeInactive && cfg.is_active === false) return false;
-    if (!includeCoolingDown && isInCooldown(cfg, nowMs)) return false;
-    return true;
+    return isRouteEligible(cfg, nowMs, { includeInactive, includeCoolingDown });
   });
 
   if (requestedId && Number.isFinite(requestedId)) {
     const requested = list.find((cfg) => Number(cfg.id) === requestedId);
-    if (!requested || (!includeInactive && requested.is_active === false)) return [];
-    if (!includeCoolingDown && isInCooldown(requested, nowMs)) return [];
+    if (!requested) return [];
+    if (!isRouteEligible(requested, nowMs, { includeInactive, includeCoolingDown })) {
+      return options.fallback === false
+        ? []
+        : capAttemptConfigs(candidates.filter((cfg) => Number(cfg.id) !== requestedId), getRoutingPolicy(db, serviceType));
+    }
     const rest = options.fallback === false
       ? []
       : candidates.filter((cfg) => Number(cfg.id) !== requestedId);
-    return [requested, ...rest];
+    return capAttemptConfigs([requested, ...rest], getRoutingPolicy(db, serviceType));
   }
 
   if (preferredModel) {
@@ -356,10 +485,16 @@ function getRuntimeConfigCandidates(db, serviceType, options = {}) {
       return models.includes(model);
     });
     const rest = candidates.filter((cfg) => !matched.some((m) => Number(m.id) === Number(cfg.id)));
-    return [...matched, ...rest];
+    candidates = [...matched, ...rest];
   }
 
-  return candidates;
+  const policy = getRoutingPolicy(db, serviceType);
+  if (selectForRequest && policy.strategy === 'round_robin' && candidates.length > 1) {
+    const cursor = getRoutingCursor(db, serviceType);
+    candidates = rotateByCursor(candidates, cursor);
+    bumpRoutingCursor(db, serviceType);
+  }
+  return capAttemptConfigs(candidates, policy);
 }
 
 function sanitizeErrorMessage(err) {
@@ -370,31 +505,83 @@ function sanitizeErrorMessage(err) {
     .slice(0, 500);
 }
 
+function parseSettings(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function resolveConfigRoutingPolicy(db, config, serviceType, modelName) {
+  const key = normalizeServiceType(serviceType || config?.service_type || 'text');
+  const base = { ...getRoutingPolicy(db, key) };
+  if (config) {
+    if (Number(config.retry_count) > 0) base.retry_count = clampInt(config.retry_count, base.retry_count, 0, 5);
+    if (Number(config.cooldown_seconds) > 0) base.cooldown_seconds = clampInt(config.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
+    if (Number(config.request_timeout_ms) > 0) base.request_timeout_ms = clampInt(config.request_timeout_ms, base.request_timeout_ms, 1000, 30 * 60 * 1000);
+    const settings = parseSettings(config.settings);
+    const routing = settings.routing && typeof settings.routing === 'object' ? settings.routing : {};
+    if (routing.retry_count != null) base.retry_count = clampInt(routing.retry_count, base.retry_count, 0, 5);
+    if (routing.cooldown_seconds != null) base.cooldown_seconds = clampInt(routing.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
+    if (routing.cooldown_max_seconds != null) base.cooldown_max_seconds = clampInt(routing.cooldown_max_seconds, base.cooldown_max_seconds, 1, 24 * 3600);
+    if (routing.request_timeout_ms != null) base.request_timeout_ms = clampInt(routing.request_timeout_ms, base.request_timeout_ms, 1000, 30 * 60 * 1000);
+    const modelKey = modelName ? String(modelName).trim() : '';
+    const modelOverrides = routing.model_overrides && typeof routing.model_overrides === 'object' ? routing.model_overrides : {};
+    const modelPatch = modelKey ? modelOverrides[modelKey] : null;
+    if (modelPatch && typeof modelPatch === 'object') {
+      if (modelPatch.retry_count != null) base.retry_count = clampInt(modelPatch.retry_count, base.retry_count, 0, 5);
+      if (modelPatch.cooldown_seconds != null) base.cooldown_seconds = clampInt(modelPatch.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
+      if (modelPatch.request_timeout_ms != null) base.request_timeout_ms = clampInt(modelPatch.request_timeout_ms, base.request_timeout_ms, 1000, 30 * 60 * 1000);
+    }
+  }
+  return base;
+}
+
+function getConfigByIdForRuntime(db, configId) {
+  if (!db || !configId) return null;
+  try {
+    const row = db.prepare('SELECT * FROM ai_service_configs WHERE id = ? AND deleted_at IS NULL').get(configId);
+    return row ? rowToConfig(row) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getRetryCountForConfig(db, config, serviceType, modelName) {
+  return resolveConfigRoutingPolicy(db, config, serviceType, modelName).retry_count;
+}
+
+function getRequestTimeoutMsForConfig(db, config, serviceType, modelName, fallbackMs) {
+  const policy = resolveConfigRoutingPolicy(db, config, serviceType, modelName);
+  return clampInt(policy.request_timeout_ms, fallbackMs, 1000, 30 * 60 * 1000);
+}
+
 function classifyAiFailure(err) {
   const msg = sanitizeErrorMessage(err);
-  const lower = msg.toLowerCase();
   const statusMatch = msg.match(/\bhttp\s+(\d{3})\b/i) || msg.match(/\bstatus(?:Code)?[:= ]+(\d{3})\b/i);
   const status = statusMatch ? Number(statusMatch[1]) : 0;
-  const now = Date.now();
-  const until = (minutes) => new Date(now + minutes * 60 * 1000).toISOString();
 
   if (
     /quota|insufficient_quota|billing|balance|credit|resource exhausted/i.test(msg)
     || /额度|余额|欠费|用量|账单|资源已耗尽/.test(msg)
   ) {
-    return { message: msg, health_status: 'disabled', disabled_until: null, disableActive: true, fallbackable: true, reason: 'quota' };
+    return { message: msg, health_status: 'quota_exhausted', disabled_until: null, disableActive: false, fallbackable: true, reason: 'quota' };
   }
   if (status === 401 || status === 403 || /invalid api key|unauthorized|forbidden|permission denied|api key.*invalid|鉴权|认证|无权限/i.test(msg)) {
-    return { message: msg, health_status: 'disabled', disabled_until: null, disableActive: true, fallbackable: true, reason: 'auth' };
+    return { message: msg, health_status: 'auth_failed', disabled_until: null, disableActive: false, fallbackable: true, reason: 'auth' };
   }
   if (status === 429 || /rate limit|too many requests|限流|请求过多/i.test(msg)) {
-    return { message: msg, health_status: 'cooldown', disabled_until: until(30), disableActive: false, fallbackable: true, reason: 'rate_limit' };
+    return { message: msg, health_status: 'cooldown', disabled_until: null, disableActive: false, fallbackable: true, reason: 'rate_limit' };
   }
   if (status >= 500 || /timeout|timed out|fetch failed|network|econnreset|etimedout|socket hang up|超时|网络/i.test(msg)) {
-    return { message: msg, health_status: 'cooldown', disabled_until: until(10), disableActive: false, fallbackable: true, reason: 'transient' };
+    return { message: msg, health_status: 'cooldown', disabled_until: null, disableActive: false, fallbackable: true, reason: 'transient' };
   }
   if (/返回内容为空|empty|未返回|no image|no video/i.test(msg)) {
-    return { message: msg, health_status: 'cooldown', disabled_until: until(5), disableActive: false, fallbackable: true, reason: 'empty_result' };
+    return { message: msg, health_status: 'cooldown', disabled_until: null, disableActive: false, fallbackable: true, reason: 'empty_result' };
   }
   return { message: msg, health_status: 'failed', disabled_until: null, disableActive: false, fallbackable: false, reason: 'request_error' };
 }
@@ -404,17 +591,36 @@ function recordConfigSuccess(db, configId) {
   const now = new Date().toISOString();
   db.prepare(
     `UPDATE ai_service_configs
-     SET health_status = 'ok', disabled_until = NULL, failure_count = 0, updated_at = ?
+     SET health_status = 'ok',
+         disabled_until = NULL,
+         failure_count = 0,
+         last_error = NULL,
+         last_error_at = NULL,
+         updated_at = ?
      WHERE id = ? AND deleted_at IS NULL`
   ).run(now, configId);
 }
 
-function recordConfigFailure(db, configId, err) {
+function recordConfigFailure(db, configId, err, options = {}) {
   if (!configId) return classifyAiFailure(err);
   const info = classifyAiFailure(err);
   const now = new Date().toISOString();
+  const cfg = getConfigByIdForRuntime(db, configId);
+  const policy = resolveConfigRoutingPolicy(db, cfg, options.serviceType || cfg?.service_type, options.model);
+  const oldFailureCount = Number(cfg?.failure_count || 0);
+  const nextFailureCount = oldFailureCount + 1;
+  let disabledUntil = info.disabled_until;
+  if (info.reason === 'quota') {
+    disabledUntil = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+  } else if (info.health_status === 'cooldown') {
+    const baseSeconds = Math.max(0, Number(policy.cooldown_seconds || 0));
+    const maxSeconds = Math.max(1, Number(policy.cooldown_max_seconds || baseSeconds || 1));
+    const scaled = baseSeconds * Math.pow(2, Math.max(0, nextFailureCount - 1));
+    const seconds = Math.min(maxSeconds, Math.max(baseSeconds, scaled));
+    disabledUntil = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+  }
   const updates = [
-    'failure_count = COALESCE(failure_count, 0) + 1',
+    'failure_count = ?',
     'health_status = ?',
     'disabled_until = ?',
     'last_error = ?',
@@ -422,18 +628,16 @@ function recordConfigFailure(db, configId, err) {
     'updated_at = ?',
   ];
   const params = [
+    nextFailureCount,
     info.health_status,
-    info.disabled_until,
+    disabledUntil,
     info.message,
     now,
     now,
   ];
-  if (info.disableActive) {
-    updates.push('is_active = 0');
-  }
   params.push(configId);
   db.prepare(`UPDATE ai_service_configs SET ${updates.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...params);
-  return info;
+  return { ...info, disabled_until: disabledUntil };
 }
 
 /**
@@ -516,7 +720,7 @@ async function testConnection(opts) {
   }
 
   // service_type 作为主要判断信号
-  const isImageService = serviceType === 'image' || serviceType === 'storyboard_image';
+  const isImageService = normalizeServiceType(serviceType) === 'image';
   const isVideoService = serviceType === 'video';
   const hasImageEndpoint = !!(endpoint && endpoint.includes('/images/'));
 
@@ -725,10 +929,10 @@ function applyVendorLock(db, log, cfg) {
       : item.model ? JSON.stringify([item.model]) : '[]';
     db.prepare(
       `INSERT INTO ai_service_configs
-        (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, priority, is_default, is_active, settings, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+        (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, route_order, retry_count, cooldown_seconds, request_timeout_ms, is_active, settings, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
     ).run(
-      item.service_type || 'text',
+      normalizeServiceType(item.service_type || 'text'),
       item.provider || '',
       item.api_protocol || '',
       item.name || '',
@@ -738,8 +942,10 @@ function applyVendorLock(db, log, cfg) {
       item.default_model || null,
       item.endpoint || '',
       item.query_endpoint || '',
-      item.priority ?? 0,
-      item.is_default ? 1 : 0,
+      item.route_order ?? 0,
+      item.retry_count ?? 0,
+      item.cooldown_seconds ?? 0,
+      item.request_timeout_ms ?? 0,
       item.settings || null,
       now,
       now
@@ -765,6 +971,9 @@ function bulkUpdateApiKey(db, log, newKey) {
 
 module.exports = {
   listConfigs,
+  getRoutingPolicies,
+  getRoutingPolicy,
+  updateRoutingPolicy,
   getActivePublicConfig,
   listRuntimePublicConfigs,
   getRuntimeModelRoutes,
@@ -772,6 +981,9 @@ module.exports = {
   recordConfigSuccess,
   recordConfigFailure,
   classifyAiFailure,
+  getRetryCountForConfig,
+  getRequestTimeoutMsForConfig,
+  resolveConfigRoutingPolicy,
   getConfig,
   createConfig,
   updateConfig,

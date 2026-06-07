@@ -2,6 +2,7 @@ const response = require('../response');
 const videoService = require('../services/videoService');
 const taskService = require('../services/taskService');
 const { normalizeAspectRatioForApi } = require('../services/videoClient');
+const { resolveProjectVideoSpec } = require('../services/projectMediaSpec');
 
 function routes(db, log) {
   return {
@@ -35,9 +36,12 @@ function routes(db, log) {
         const model = body.model ?? null;
         const aiConfigId = body.ai_config_id || body.video_config_id || null;
         const duration = body.duration ?? null;
-        // 画幅：请求体归一化（全角冒号等）后写入 DB；未传则从 drama.metadata 读取并同样归一化
+        const projectVideoSpec = dramaId ? resolveProjectVideoSpec(db, dramaId) : null;
+        // 画幅：优先使用项目视频规格；请求体作为兼容兜底。
         let aspectRatio = null;
-        if (body.aspect_ratio != null && String(body.aspect_ratio).trim() !== '') {
+        if (projectVideoSpec?.aspect_ratio) {
+          aspectRatio = normalizeAspectRatioForApi(projectVideoSpec.aspect_ratio);
+        } else if (body.aspect_ratio != null && String(body.aspect_ratio).trim() !== '') {
           aspectRatio = normalizeAspectRatioForApi(body.aspect_ratio);
         }
         if (!aspectRatio && dramaId) {
@@ -49,7 +53,12 @@ function routes(db, log) {
             }
           } catch (_) {}
         }
-        const resolution = body.resolution ?? null;
+        const resolution = projectVideoSpec?.resolution || body.resolution || null;
+        const paramsJson = JSON.stringify({
+          product_video_spec: projectVideoSpec,
+          request_aspect_ratio: body.aspect_ratio || null,
+          request_resolution: body.resolution || null,
+        });
         const seed = body.seed != null ? Number(body.seed) : null;
         const cameraFixed = body.camera_fixed != null ? (body.camera_fixed ? 1 : 0) : null;
         const watermark = body.watermark != null ? (body.watermark ? 1 : 0) : 0;
@@ -63,9 +72,9 @@ function routes(db, log) {
             ? JSON.stringify(body.reference_image_urls.slice(0, 10))
             : null;
         db.prepare(
-          `INSERT INTO video_generations (drama_id, storyboard_id, provider, prompt, model, ai_config_id, duration, aspect_ratio, resolution, seed, camera_fixed, watermark, image_url, first_frame_url, last_frame_url, reference_image_urls, status, task_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)`
-        ).run(dramaId, storyboardId, provider, prompt, model, aiConfigId, duration, aspectRatio, resolution, seed, cameraFixed, watermark, imageUrl, firstFrameUrl, lastFrameUrl, refImagesJson, task.id, now, now);
+          `INSERT INTO video_generations (drama_id, storyboard_id, provider, prompt, model, ai_config_id, duration, aspect_ratio, resolution, seed, camera_fixed, watermark, image_url, first_frame_url, last_frame_url, reference_image_urls, params_json, status, task_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)`
+        ).run(dramaId, storyboardId, provider, prompt, model, aiConfigId, duration, aspectRatio, resolution, seed, cameraFixed, watermark, imageUrl, firstFrameUrl, lastFrameUrl, refImagesJson, paramsJson, task.id, now, now);
         const videoGenId = db.prepare('SELECT last_insert_rowid() as id').get().id;
         setImmediate(() => {
           videoService.processVideoGeneration(db, log, videoGenId);

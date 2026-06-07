@@ -111,6 +111,8 @@ function setupRouter(cfg, db, log) {
   r.post('/ai-configs/model-ark-asset', aiConfig.modelArkAsset);
   r.get('/ai-configs/vendor-lock', aiConfig.vendorLock);  // 必须在 /:id 之前
   r.put('/ai-configs/bulk-update-key', aiConfig.bulkUpdateKey);  // 必须在 /:id 之前
+  r.get('/ai-configs/routing-policies', aiConfig.routingPolicies);
+  r.put('/ai-configs/routing-policies/:service_type', aiConfig.updateRoutingPolicy);
   r.get('/ai-configs/:id', aiConfig.get);
   r.put('/ai-configs/:id', aiConfig.update);
   r.delete('/ai-configs/:id', aiConfig.delete);
@@ -233,6 +235,8 @@ function setupRouter(cfg, db, log) {
 
   // ---------- tasks ----------
   r.get('/tasks/:task_id', task.getTaskStatus);
+  r.post('/tasks/:task_id/cancel', task.cancelTask);
+  r.delete('/tasks/:task_id', task.deleteTask);
   r.get('/tasks', task.getResourceTasks);
 
   // ---------- scenes ----------

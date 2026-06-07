@@ -397,6 +397,23 @@
             </el-select>
           </label>
           <label class="project-setting-field">
+            <span>图像规格</span>
+            <el-button class="media-spec-button" @click="openImageSpecDialog">
+              {{ imageSpecSummary }}
+            </el-button>
+          </label>
+          <label class="project-setting-field">
+            <span>视频清晰度</span>
+            <el-select v-model="projectVideoResolution" style="width: 120px" @change="onProjectVideoResolutionChange">
+              <el-option
+                v-for="tier in videoTierOptions"
+                :key="tier.value"
+                :label="tier.label"
+                :value="tier.value"
+              />
+            </el-select>
+          </label>
+          <label class="project-setting-field">
             <span>默认每段时长</span>
             <el-select v-model="videoClipDuration" style="width: 110px" @change="() => scheduleProjectSettingsSave(false)">
               <el-option label="4秒/段" :value="4" />
@@ -499,8 +516,14 @@
             </div>
             <div v-show="!charactersBlockCollapsed" class="resource-block-body">
               <div class="asset-actions">
-                <el-button type="primary" size="small" :loading="charactersGenerating" :disabled="!dramaId" @click="onGenerateCharacters">
-                  剧本自动提取角色
+                <el-button
+                  :type="charactersGenerating ? 'warning' : 'primary'"
+                  size="small"
+                  :disabled="!charactersGenerating && !dramaId"
+                  @click="charactersGenerating ? stopEpisodeTask(GEN_RESOURCE.EXTRACT_CHARACTERS, '已停止角色提取') : onGenerateCharacters()"
+                >
+                  <el-icon v-if="charactersGenerating" class="is-loading"><Loading /></el-icon>
+                  {{ charactersGenerating ? '停止' : '剧本自动提取角色' }}
                 </el-button>
                 <el-button size="small" :disabled="!dramaId" @click="openAddCharacter">添加角色</el-button>
                 <el-button size="small" @click="showCharLibrary = true">本剧角色库</el-button>
@@ -611,6 +634,11 @@
                       <img v-if="hasAssetImage(char)" :src="assetImageUrl(char)" class="cover-img" alt="" />
                       <div v-else-if="char.error_msg || char.errorMsg" class="cover-placeholder error" :title="char.error_msg || char.errorMsg">{{ char.error_msg || char.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
+                      <div v-if="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id)" class="ai-generating-overlay">
+                        <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.CHAR_IMAGE, char.id) }}</span>
+                        <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
+                        <span class="ai-generating-text">生成中...</span>
+                      </div>
                       <div v-if="dragOverResourceKey === 'char-' + char.id" class="asset-cover-drop-hint">松开上传</div>
                     </div>
                     <!-- 额外参考图条 -->
@@ -624,9 +652,14 @@
                       </div>
                     </div>
                     <div class="asset-cover-actions">
-                      <el-button type="primary" size="small" :loading="generatingCharIds.has(char.id)" @click="onGenerateCharacterImage(char)">
-                        <el-icon v-if="!generatingCharIds.has(char.id)"><MagicStick /></el-icon>
-                        AI 生成
+                      <el-button
+                        :type="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id) ? 'warning' : 'primary'"
+                        size="small"
+                        @click="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id) ? stopResourceGeneration(GEN_RESOURCE.CHAR_IMAGE, char.id) : onGenerateCharacterImage(char)"
+                      >
+                        <el-icon v-if="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id)" class="is-loading"><Loading /></el-icon>
+                        <el-icon v-else><MagicStick /></el-icon>
+                        {{ isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id) ? '停止' : 'AI 生成' }}
                       </el-button>
                       <el-button type="success" size="small" :loading="uploadingResourceId === 'char-' + char.id" @click="onUploadResourceClick('character', char.id)">
                         <el-icon v-if="uploadingResourceId !== 'char-' + char.id"><Upload /></el-icon>
@@ -648,7 +681,15 @@
             </div>
             <div v-show="!propsBlockCollapsed" class="resource-block-body">
               <div class="asset-actions">
-                <el-button type="primary" size="small" :loading="propsExtracting" :disabled="!currentEpisodeId" @click="onExtractProps">从剧本提取道具</el-button>
+                <el-button
+                  :type="propsExtracting ? 'warning' : 'primary'"
+                  size="small"
+                  :disabled="!propsExtracting && !currentEpisodeId"
+                  @click="propsExtracting ? stopEpisodeTask(GEN_RESOURCE.EXTRACT_PROPS, '已停止道具提取') : onExtractProps()"
+                >
+                  <el-icon v-if="propsExtracting" class="is-loading"><Loading /></el-icon>
+                  {{ propsExtracting ? '停止' : '从剧本提取道具' }}
+                </el-button>
                 <el-button size="small" :disabled="!dramaId" @click="showAddProp = true">添加道具</el-button>
                 <el-button size="small" @click="showPropLibrary = true">本剧道具库</el-button>
               </div>
@@ -709,6 +750,11 @@
                       <img v-if="hasAssetImage(prop)" :src="assetImageUrl(prop)" class="cover-img" alt="" />
                       <div v-else-if="prop.error_msg || prop.errorMsg" class="cover-placeholder error" :title="prop.error_msg || prop.errorMsg">{{ prop.error_msg || prop.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
+                      <div v-if="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id)" class="ai-generating-overlay">
+                        <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.PROP_IMAGE, prop.id) }}</span>
+                        <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
+                        <span class="ai-generating-text">生成中...</span>
+                      </div>
                       <div v-if="dragOverResourceKey === 'prop-' + prop.id" class="asset-cover-drop-hint">松开上传</div>
                     </div>
                     <div v-if="parseExtraImages(prop).length" class="extra-images-strip">
@@ -722,9 +768,14 @@
                     </div>
                     <div class="asset-cover-actions">
                       <el-tooltip :content="propUseQuadGrid ? '四视图道具（前/侧/后/顶，纯色无缝背景）' : '单图道具（纯色无缝背景）'" placement="top">
-                        <el-button type="primary" size="small" :loading="generatingPropIds.has(prop.id)" @click="onGeneratePropImage(prop, propUseQuadGrid)">
-                          <el-icon v-if="!generatingPropIds.has(prop.id)"><MagicStick /></el-icon>
-                          AI 生成
+                        <el-button
+                          :type="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? 'warning' : 'primary'"
+                          size="small"
+                          @click="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? stopResourceGeneration(GEN_RESOURCE.PROP_IMAGE, prop.id) : onGeneratePropImage(prop, propUseQuadGrid)"
+                        >
+                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id)" class="is-loading"><Loading /></el-icon>
+                          <el-icon v-else><MagicStick /></el-icon>
+                          {{ isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? '停止' : 'AI 生成' }}
                         </el-button>
                       </el-tooltip>
                       <el-button type="success" size="small" :loading="uploadingResourceId === 'prop-' + prop.id" @click="onUploadResourceClick('prop', prop.id)">
@@ -747,8 +798,14 @@
             </div>
             <div v-show="!scenesBlockCollapsed" class="resource-block-body">
               <div class="asset-actions">
-                <el-button type="primary" size="small" :loading="scenesExtracting" :disabled="!currentEpisodeId" @click="onExtractScenes">
-                  从剧本提取场景
+                <el-button
+                  :type="scenesExtracting ? 'warning' : 'primary'"
+                  size="small"
+                  :disabled="!scenesExtracting && !currentEpisodeId"
+                  @click="scenesExtracting ? stopEpisodeTask(GEN_RESOURCE.EXTRACT_SCENES, '已停止场景提取') : onExtractScenes()"
+                >
+                  <el-icon v-if="scenesExtracting" class="is-loading"><Loading /></el-icon>
+                  {{ scenesExtracting ? '停止' : '从剧本提取场景' }}
                 </el-button>
                 <el-button size="small" :disabled="!dramaId" @click="openAddScene">添加场景</el-button>
                 <el-button size="small" @click="showSceneLibrary = true">本剧场景库</el-button>
@@ -810,6 +867,11 @@
                       <img v-if="hasAssetImage(scene)" :src="assetImageUrl(scene)" class="cover-img" alt="" />
                       <div v-else-if="scene.error_msg || scene.errorMsg" class="cover-placeholder error" :title="scene.error_msg || scene.errorMsg">{{ scene.error_msg || scene.errorMsg }}</div>
                       <div v-else class="cover-placeholder">暂无图</div>
+                      <div v-if="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id)" class="ai-generating-overlay">
+                        <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SCENE_IMAGE, scene.id) }}</span>
+                        <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
+                        <span class="ai-generating-text">生成中...</span>
+                      </div>
                       <div v-if="dragOverResourceKey === 'scene-' + scene.id" class="asset-cover-drop-hint">松开上传</div>
                     </div>
                     <div v-if="parseExtraImages(scene).length" class="extra-images-strip">
@@ -823,9 +885,14 @@
                     </div>
                     <div class="asset-cover-actions">
                       <el-tooltip :content="sceneUseQuadGrid ? '四宫格场景（正/侧/俯/仰）' : '单图场景'" placement="top">
-                        <el-button type="primary" size="small" :loading="generatingSceneIds.has(scene.id)" @click="onGenerateSceneImage(scene, sceneUseQuadGrid)">
-                          <el-icon v-if="!generatingSceneIds.has(scene.id)"><MagicStick /></el-icon>
-                          AI 生成
+                        <el-button
+                          :type="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? 'warning' : 'primary'"
+                          size="small"
+                          @click="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? stopResourceGeneration(GEN_RESOURCE.SCENE_IMAGE, scene.id) : onGenerateSceneImage(scene, sceneUseQuadGrid)"
+                        >
+                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id)" class="is-loading"><Loading /></el-icon>
+                          <el-icon v-else><MagicStick /></el-icon>
+                          {{ isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? '停止' : 'AI 生成' }}
                         </el-button>
                       </el-tooltip>
                       <el-button type="success" size="small" :loading="uploadingResourceId === 'scene-' + scene.id" @click="onUploadResourceClick('scene', scene.id)">
@@ -914,13 +981,14 @@
         <div class="asset-actions sb-batch-actions">
           <div class="flex">
             <el-button
-              type="primary"
+              :type="storyboardGenerating ? 'warning' : 'primary'"
               size="large"
-              :loading="storyboardGenerating || universalOmniPolishRunning"
-              :disabled="!currentEpisodeId || storyboardGenerating || universalOmniPolishRunning"
-              @click="onGenerateStoryboard"
+              :loading="universalOmniPolishRunning"
+              :disabled="!currentEpisodeId || universalOmniPolishRunning"
+              @click="storyboardGenerating ? stopEpisodeTask(GEN_RESOURCE.GENERATE_STORYBOARD, '已停止分镜生成') : onGenerateStoryboard()"
             >
-              {{ storyboards.length > 0 ? '重新生成分镜' : 'AI 生成分镜' }}
+              <el-icon v-if="storyboardGenerating" class="is-loading"><Loading /></el-icon>
+              {{ storyboardGenerating ? '停止' : (storyboards.length > 0 ? '重新生成分镜' : 'AI 生成分镜') }}
             </el-button>
             <ElButton type="info" plain size="large" @click="onAddSingleStoryboard">
             添加一个分镜
@@ -1340,12 +1408,24 @@
                         <template v-else>
                           <span class="sb-fl-empty">动作前静止</span>
                         </template>
+                        <div v-if="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id)" class="ai-generating-overlay">
+                          <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) }}</span>
+                          <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
+                          <span class="ai-generating-text">生成中...</span>
+                        </div>
                       </div>
                       <div v-if="getSbFirstImage(sb.id)?.prompt" class="sb-fl-slot-prompt" :title="getSbFirstImage(sb.id).prompt">
                         {{ getSbFirstImage(sb.id).prompt }}
                       </div>
                       <div class="sb-fl-slot-actions">
-                        <el-button type="primary" size="small" :loading="generatingSbFirstImageIds.has(sb.id)" @click="onGenerateSbFrameImage(sb, 'first')">生成</el-button>
+                        <el-button
+                          :type="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) ? 'warning' : 'primary'"
+                          size="small"
+                          @click="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) : onGenerateSbFrameImage(sb, 'first')"
+                        >
+                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
+                          {{ isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) ? '停止' : '生成' }}
+                        </el-button>
                         <el-tooltip v-if="canUsePrevTailAsFirst(sb)" content="直接使用上一分镜的尾帧图片（高清原图）替换本首帧，画面更清晰" placement="top">
                           <el-button size="small" :loading="usingPrevTailAsFirstIds.has(sb.id)" @click="onUsePrevTailAsFirst(sb)">上镜尾帧</el-button>
                         </el-tooltip>
@@ -1369,12 +1449,24 @@
                         <template v-else>
                           <span class="sb-fl-empty">动作后结果</span>
                         </template>
+                        <div v-if="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)" class="ai-generating-overlay">
+                          <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) }}</span>
+                          <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
+                          <span class="ai-generating-text">生成中...</span>
+                        </div>
                       </div>
                       <div v-if="getSbLastImage(sb.id)?.prompt" class="sb-fl-slot-prompt" :title="getSbLastImage(sb.id).prompt">
                         {{ getSbLastImage(sb.id).prompt }}
                       </div>
                       <div class="sb-fl-slot-actions">
-                        <el-button type="primary" size="small" :loading="generatingSbLastImageIds.has(sb.id)" @click="onGenerateSbFrameImage(sb, 'last')">生成</el-button>
+                        <el-button
+                          :type="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) ? 'warning' : 'primary'"
+                          size="small"
+                          @click="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) : onGenerateSbFrameImage(sb, 'last')"
+                        >
+                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
+                          {{ isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) ? '停止' : '生成' }}
+                        </el-button>
                         <el-checkbox
                           v-model="lastFrameUseFirstLayoutLock"
                           class="sb-fl-first-lock-opt"
@@ -1432,19 +1524,36 @@
                   </template>
                   <template v-else-if="sb.error_msg || sb.errorMsg">
                     <div class="sb-image-error" :title="sb.error_msg || sb.errorMsg">{{ sb.error_msg || sb.errorMsg }}</div>
-                    <el-button type="primary" size="small" class="sb-gen-btn" :loading="generatingSbImageIds.has(sb.id)" @click="onGenerateSbImage(sb)">
-                      <el-icon><Refresh /></el-icon>
-                      重试
+                    <el-button
+                      :type="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? 'warning' : 'primary'"
+                      size="small"
+                      class="sb-gen-btn"
+                      @click="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_IMAGE, sb.id) : onGenerateSbImage(sb)"
+                    >
+                      <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
+                      <el-icon v-else><Refresh /></el-icon>
+                      {{ isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? '停止' : '重试' }}
                     </el-button>
                     <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
                   </template>
                   <template v-else>
-                    <el-button type="primary" size="small" class="sb-gen-btn" :loading="generatingSbImageIds.has(sb.id)" @click="onGenerateSbImage(sb)">
-                      <el-icon><MagicStick /></el-icon>
-                      生成分镜参考图
+                    <el-button
+                      :type="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? 'warning' : 'primary'"
+                      size="small"
+                      class="sb-gen-btn"
+                      @click="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_IMAGE, sb.id) : onGenerateSbImage(sb)"
+                    >
+                      <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
+                      <el-icon v-else><MagicStick /></el-icon>
+                      {{ isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? '停止' : '生成分镜参考图' }}
                     </el-button>
                     <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
                   </template>
+                  <div v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="ai-generating-overlay">
+                    <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_IMAGE, sb.id) }}</span>
+                    <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
+                    <span class="ai-generating-text">生成中...</span>
+                  </div>
                 </div>
                 <div v-if="getStripItems(sb.id).length" class="sb-imgs-strip">
                   <el-tooltip content="历史图：点击设为主图，左上角放大预览，右上角删除" placement="top" :show-arrow="false">
@@ -1470,7 +1579,14 @@
               </div>
               <div v-if="hasSbImage(sb) || storyboardUseFirstLastFrame" class="sb-image-actions">
                 <template v-if="storyboardUseFirstLastFrame">
-                  <el-button size="small" :loading="generatingSbFirstImageIds.has(sb.id) || generatingSbLastImageIds.has(sb.id)" @click="onGenerateSbFramePair(sb)">{{ hasSbFirstLastPair(sb) ? '重新生成首尾帧' : '一键生成首尾帧' }}</el-button>
+                  <el-button
+                    size="small"
+                    :type="(isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)) ? 'warning' : 'default'"
+                    @click="(isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)) ? stopSbFramePair(sb) : onGenerateSbFramePair(sb)"
+                  >
+                    <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
+                    {{ (isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)) ? '停止' : (hasSbFirstLastPair(sb) ? '重新生成首尾帧' : '一键生成首尾帧') }}
+                  </el-button>
                   <el-tooltip content="高清放大仅作用于首帧" placement="top">
                     <el-button size="small" :loading="upscalingSbIds.has(sb.id)" :disabled="!getSbLocalImage(sb)" @click="onUpscaleSbImage(sb)">
                       <el-icon><ZoomIn /></el-icon>超分(首帧)
@@ -1478,7 +1594,14 @@
                   </el-tooltip>
                 </template>
                 <template v-else>
-                <el-button size="small" :loading="generatingSbImageIds.has(sb.id)" @click="onGenerateSbImage(sb)">重新生成</el-button>
+                <el-button
+                  size="small"
+                  :type="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? 'warning' : 'default'"
+                  @click="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_IMAGE, sb.id) : onGenerateSbImage(sb)"
+                >
+                  <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
+                  {{ isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? '停止' : '重新生成' }}
+                </el-button>
                 <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
                 <el-tooltip content="高清放大（2x超分辨率）" placement="top">
                   <el-button
@@ -1512,15 +1635,18 @@
                 >
                   {{ getSbVideoError(sb.id) || '视频地址无效，请重新生成' }}
                 </div>
-                <span v-if="generatingSbVideoIds.has(sb.id)" class="sb-video-regenerating-overlay">
+                <span v-if="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id)" class="sb-video-regenerating-overlay">
+                  <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_VIDEO, sb.id) }}</span>
                   <el-icon class="is-loading"><Loading /></el-icon>
                   正在重新生成...
                 </span>
               </div>
               <div v-else class="sb-video-area sb-video-placeholder">
-                <span v-if="generatingSbVideoIds.has(sb.id)" class="sb-video-generating-text">
+                <span v-if="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id)" class="sb-video-generating-text">
+                  <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_VIDEO, sb.id) }}</span>
                   <el-icon class="is-loading"><Loading /></el-icon>
                   正在生成视频...
+                  <el-button size="small" type="warning" plain @click.stop="stopResourceGeneration(GEN_RESOURCE.SB_VIDEO, sb.id)">停止</el-button>
                 </span>
                 <template v-else>
                   <div v-if="getSbVideoError(sb.id)" class="sb-video-error">
@@ -1530,7 +1656,6 @@
                     type="primary"
                     size="small"
                     class="sb-generate-video-btn"
-                    :loading="generatingSbVideoIds.has(sb.id)"
                     :disabled="!sbCanSubmitVideo(sb)"
                     @click="onGenerateSbVideo(sb)"
                   >
@@ -1555,7 +1680,15 @@
                 </div>
               </div>
               <div v-if="getSbVideo(sb.id)" class="sb-video-actions">
-                <el-button size="small" :loading="generatingSbVideoIds.has(sb.id)" :disabled="!sbCanSubmitVideo(sb)" @click="onGenerateSbVideo(sb)">重新生成</el-button>
+                <el-button
+                  size="small"
+                  :type="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) ? 'warning' : 'default'"
+                  :disabled="!isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) && !sbCanSubmitVideo(sb)"
+                  @click="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_VIDEO, sb.id) : onGenerateSbVideo(sb)"
+                >
+                  <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id)" class="is-loading"><Loading /></el-icon>
+                  {{ isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) ? '停止' : '重新生成' }}
+                </el-button>
                 <el-tooltip v-if="getNextStoryboard(sb.id)" content="提取本视频尾帧，设为下一个分镜的首帧" placement="top">
                   <el-button size="small" :loading="linkingTailFrameIds.has(sb.id)" @click="onLinkTailFrameToNext(sb)">尾帧衔接</el-button>
                 </el-tooltip>
@@ -1598,13 +1731,6 @@
       <section class="section card">
         <h2 class="section-title">视频配置</h2>
         <div class="config-grid">
-          <el-form-item label="分辨率">
-            <el-select v-model="videoResolution" style="width: 160px">
-              <el-option label="480p" value="480p" />
-              <el-option label="720p" value="720p" />
-              <el-option label="1080p" value="1080p" />
-            </el-select>
-          </el-form-item>
           <!--
           <el-form-item label="配乐">
             <el-select v-model="videoMusic" placeholder="无" clearable style="width: 160px">
@@ -2042,8 +2168,8 @@
                 <div class="library-item-desc">{{ (item.description || '').slice(0, 60) }}{{ (item.description || '').length > 60 ? '…' : '' }}</div>
                 <div class="library-item-actions">
                   <el-button size="small" type="primary" :loading="isCharAddToEpisodeLoading('library', item.id)" :disabled="!currentEpisodeId" @click="onAddCharFromLibrary(item)">加入本集</el-button>
-                  <el-button size="small" @click="openEditCharLibrary(item)">编辑</el-button>
-                  <el-button size="small" type="danger" plain @click="onDeleteCharLibrary(item)">删除</el-button>
+                  <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditCharLibrary(item)">编辑</el-button>
+                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="onDeleteCharLibrary(item)">删除</el-button>
                 </div>
               </div>
             </div>
@@ -2143,8 +2269,8 @@
                 <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}{{ (item.description || item.prompt || '').length > 60 ? '…' : '' }}</div>
                 <div class="library-item-actions">
                   <el-button size="small" type="primary" :loading="isPropAddToEpisodeLoading('library', item.id)" :disabled="!currentEpisodeId" @click="onAddPropFromLibrary(item)">加入本集</el-button>
-                  <el-button size="small" @click="openEditPropLibrary(item)">编辑</el-button>
-                  <el-button size="small" type="danger" plain @click="onDeletePropLibrary(item)">删除</el-button>
+                  <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditPropLibrary(item)">编辑</el-button>
+                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="onDeletePropLibrary(item)">删除</el-button>
                 </div>
               </div>
             </div>
@@ -2223,8 +2349,8 @@
                 <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}{{ (item.description || item.prompt || '').length > 60 ? '…' : '' }}</div>
                 <div class="library-item-actions">
                   <el-button size="small" type="primary" :loading="isSceneAddToEpisodeLoading('library', item.id)" :disabled="!currentEpisodeId" @click="onAddSceneFromLibrary(item)">加入本集</el-button>
-                  <el-button size="small" @click="openEditSceneLibrary(item)">编辑</el-button>
-                  <el-button size="small" type="danger" plain @click="onDeleteSceneLibrary(item)">删除</el-button>
+                  <el-button size="small" :disabled="!canManageLibrary(item)" @click="openEditSceneLibrary(item)">编辑</el-button>
+                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="onDeleteSceneLibrary(item)">删除</el-button>
                 </div>
               </div>
             </div>
@@ -2643,6 +2769,62 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="imageSpecDialogVisible" title="设置图像尺寸" width="520px" class="media-spec-dialog">
+      <div class="media-spec-current">当前：{{ imageSpecPreview.width }}x{{ imageSpecPreview.height }}</div>
+      <el-radio-group v-model="imageSpecDraft.mode" class="media-spec-mode">
+        <el-radio-button label="auto">自动</el-radio-button>
+        <el-radio-button label="ratio">按比例</el-radio-button>
+        <el-radio-button label="custom">自定义宽高</el-radio-button>
+      </el-radio-group>
+      <template v-if="imageSpecDraft.mode !== 'custom'">
+        <div class="media-spec-section-title">基准分辨率</div>
+        <div class="media-spec-tier-grid">
+          <button
+            v-for="tier in imageTierOptions"
+            :key="tier.value"
+            type="button"
+            class="media-spec-choice"
+            :class="{ active: imageSpecDraft.tier === tier.value }"
+            @click="imageSpecDraft.tier = tier.value"
+          >
+            {{ tier.label }}
+          </button>
+        </div>
+        <div class="media-spec-section-title">图像比例</div>
+        <div class="media-spec-ratio-grid">
+          <button
+            v-for="ratio in imageRatioOptions"
+            :key="ratio.value"
+            type="button"
+            class="media-spec-ratio-choice"
+            :class="{ active: imageSpecDraft.ratio === ratio.value }"
+            @click="imageSpecDraft.ratio = ratio.value"
+          >
+            <span class="media-spec-ratio-icon" :style="{ aspectRatio: ratio.aspect }" />
+            <span>{{ ratio.label }}</span>
+          </button>
+        </div>
+      </template>
+      <div v-else class="media-spec-custom-grid">
+        <label>
+          <span>宽度</span>
+          <el-input-number v-model="imageSpecDraft.width" :min="256" :max="8192" :step="64" />
+        </label>
+        <label>
+          <span>高度</span>
+          <el-input-number v-model="imageSpecDraft.height" :min="256" :max="8192" :step="64" />
+        </label>
+      </div>
+      <div class="media-spec-result">
+        <span>将使用</span>
+        <strong>{{ imageSpecPreview.width }}x{{ imageSpecPreview.height }}</strong>
+      </div>
+      <template #footer>
+        <el-button @click="imageSpecDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmImageSpec">确定</el-button>
+      </template>
+    </el-dialog>
+
     <!-- AI 配置弹窗（不跳转，避免本页内容丢失） -->
     <el-dialog v-if="isAdminUser" v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close class="ai-config-dialog">
       <AIConfigContent v-if="showAiConfigDialog && isAdminUser" />
@@ -2664,7 +2846,6 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
@@ -2711,9 +2892,12 @@ const router = useRouter()
 const store = useFilmStore()
 const genStore = useGenerationTaskStore()
 const { isDark, toggle: toggleTheme } = useTheme()
-const { videoResolution: storeVideoResolution } = storeToRefs(store)
 const currentUser = ref(getCurrentUser())
 const isAdminUser = ref(isAdmin())
+
+function canManageLibrary(item) {
+  return !!item?.can_manage || isAdminUser.value || (!!item?.created_by_user_id && String(item.created_by_user_id) === String(currentUser.value?.id))
+}
 
 // ── Composable: Navigation ─────────────────────────────
 const { navCollapsed, storyboardMenuExpanded, toggleNav, scrollToTop, scrollToAnchor } = useNavigation()
@@ -2738,22 +2922,19 @@ const aiRoutesLoaded = ref(false)
 const aiRoutesExpanded = ref(false)
 const aiRouteTypes = [
   { key: 'text', label: '文本' },
-  { key: 'image', label: '素材图' },
-  { key: 'storyboard_image', label: '分镜图' },
+  { key: 'image', label: '图像' },
   { key: 'video', label: '视频' },
   { key: 'tts', label: '音频' },
 ]
 const runtimeAiConfigs = reactive({
   text: [],
   image: [],
-  storyboard_image: [],
   video: [],
   tts: [],
 })
 const selectedAiConfigIds = reactive({
   text: '',
   image: '',
-  storyboard_image: '',
   video: '',
   tts: '',
 })
@@ -2832,7 +3013,7 @@ function imageAiPayload() {
 }
 
 function storyboardImageAiPayload() {
-  return aiRoutePayload('storyboard_image', 'image_config_id')
+  return imageAiPayload()
 }
 
 function videoAiPayload() {
@@ -2922,6 +3103,151 @@ const scriptGenerating = ref(false)
 const generationStyle = ref('')
 const projectAspectRatio = ref('16:9')
 const videoClipDuration = ref(5)
+const imageSpecDialogVisible = ref(false)
+
+const imageTierOptions = [
+  { value: '1K', label: '1K' },
+  { value: '2K', label: '2K' },
+  { value: '4K', label: '4K' },
+]
+const videoTierOptions = [
+  { value: '480p', label: '480P' },
+  { value: '720p', label: '720P' },
+  { value: '1080p', label: '1080P' },
+]
+const imageRatioOptions = [
+  { value: 'follow_project', label: '跟随项目', aspect: '16 / 9' },
+  { value: '1:1', label: '1:1', aspect: '1 / 1' },
+  { value: '3:2', label: '3:2', aspect: '3 / 2' },
+  { value: '2:3', label: '2:3', aspect: '2 / 3' },
+  { value: '16:9', label: '16:9', aspect: '16 / 9' },
+  { value: '9:16', label: '9:16', aspect: '9 / 16' },
+  { value: '4:3', label: '4:3', aspect: '4 / 3' },
+  { value: '3:4', label: '3:4', aspect: '3 / 4' },
+  { value: '21:9', label: '21:9', aspect: '21 / 9' },
+]
+const IMAGE_TIER_AREAS = {
+  '1K': 1280 * 720,
+  '2K': 1920 * 1080,
+  '4K': 3840 * 2160,
+}
+const VIDEO_TIER_AREAS = {
+  '480p': 854 * 480,
+  '720p': 1280 * 720,
+  '1080p': 1920 * 1080,
+}
+
+function defaultImageSpec() {
+  return { mode: 'ratio', tier: '2K', ratio: 'follow_project', width: 1920, height: 1080 }
+}
+
+function defaultVideoSpec() {
+  return { mode: 'ratio', tier: '1080p', ratio: 'follow_project' }
+}
+
+const projectImageSpec = ref(defaultImageSpec())
+const projectVideoSpec = ref(defaultVideoSpec())
+const imageSpecDraft = ref(defaultImageSpec())
+
+function parseRatioValue(value, fallback = '16:9') {
+  const raw = value === 'follow_project' ? projectAspectRatio.value : value
+  const s = String(raw || fallback || '16:9').trim()
+  const m = s.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
+  if (!m) return parseRatioValue(fallback === s ? '16:9' : fallback, '16:9')
+  const w = Number(m[1])
+  const h = Number(m[2])
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return { ratio: '16:9', w: 16, h: 9 }
+  return { ratio: `${m[1]}:${m[2]}`, w, h }
+}
+
+function roundToMultiple(value, multiple = 8) {
+  return Math.max(multiple, Math.round(value / multiple) * multiple)
+}
+
+function dimensionsForArea(area, ratioValue) {
+  const parsed = parseRatioValue(ratioValue)
+  const ratio = parsed.w / parsed.h
+  const width = roundToMultiple(Math.sqrt(area * ratio))
+  const height = roundToMultiple(width / ratio)
+  return { width, height, aspect_ratio: parsed.ratio }
+}
+
+function normalizeImageSpec(spec = {}) {
+  const base = defaultImageSpec()
+  const mode = ['auto', 'ratio', 'custom'].includes(spec.mode) ? spec.mode : base.mode
+  const tier = IMAGE_TIER_AREAS[spec.tier] ? spec.tier : base.tier
+  const ratioValues = new Set(imageRatioOptions.map((item) => item.value))
+  const ratio = ratioValues.has(spec.ratio) ? spec.ratio : base.ratio
+  const width = Math.max(256, Math.min(8192, Number(spec.width) || base.width))
+  const height = Math.max(256, Math.min(8192, Number(spec.height) || base.height))
+  return { mode, tier, ratio, width: Math.round(width), height: Math.round(height) }
+}
+
+function normalizeVideoSpec(spec = {}) {
+  const base = defaultVideoSpec()
+  const rawTier = String(spec.tier || spec.resolution || base.tier).trim().toLowerCase()
+  const tier = VIDEO_TIER_AREAS[rawTier] ? rawTier : base.tier
+  return { mode: 'ratio', tier, ratio: 'follow_project' }
+}
+
+function resolveImageSpec(spec) {
+  const normalized = normalizeImageSpec(spec)
+  if (normalized.mode === 'custom') {
+    return { ...normalized, aspect_ratio: `${normalized.width}:${normalized.height}` }
+  }
+  const tier = normalized.mode === 'auto' ? '2K' : normalized.tier
+  const ratio = normalized.mode === 'auto' ? 'follow_project' : normalized.ratio
+  return { ...normalized, tier, ratio, ...dimensionsForArea(IMAGE_TIER_AREAS[tier], ratio) }
+}
+
+function resolveVideoSpec(spec) {
+  const normalized = normalizeVideoSpec(spec)
+  const tier = normalized.tier
+  const ratio = 'follow_project'
+  return { ...normalized, tier, ratio, resolution: tier, ...dimensionsForArea(VIDEO_TIER_AREAS[tier], ratio) }
+}
+
+const imageSpecPreview = computed(() => resolveImageSpec(imageSpecDraft.value))
+const resolvedProjectImageSpec = computed(() => resolveImageSpec(projectImageSpec.value))
+const resolvedProjectVideoSpec = computed(() => resolveVideoSpec(projectVideoSpec.value))
+const imageSpecSummary = computed(() => {
+  const r = resolvedProjectImageSpec.value
+  return `${r.tier} · ${r.aspect_ratio} · ${r.width}x${r.height}`
+})
+const projectVideoResolution = computed({
+  get: () => normalizeVideoSpec(projectVideoSpec.value).tier,
+  set: (tier) => {
+    projectVideoSpec.value = normalizeVideoSpec({ tier })
+  },
+})
+const videoResolution = computed(() => resolvedProjectVideoSpec.value.resolution || '1080p')
+
+function cloneSpec(spec) {
+  return JSON.parse(JSON.stringify(spec || {}))
+}
+
+function openImageSpecDialog() {
+  imageSpecDraft.value = normalizeImageSpec(cloneSpec(projectImageSpec.value))
+  imageSpecDialogVisible.value = true
+}
+
+function confirmImageSpec() {
+  projectImageSpec.value = normalizeImageSpec(imageSpecDraft.value)
+  imageSpecDialogVisible.value = false
+  scheduleProjectSettingsSave(false)
+}
+
+function onProjectVideoResolutionChange() {
+  projectVideoSpec.value = normalizeVideoSpec(projectVideoSpec.value)
+  scheduleProjectSettingsSave(false)
+}
+
+function projectMediaSpecMetadata() {
+  return {
+    image_spec: normalizeImageSpec(projectImageSpec.value),
+    video_spec: normalizeVideoSpec(projectVideoSpec.value),
+  }
+}
 
 /** 根据 value 查找样式选项对象 */
 function _findStyleOption(val) {
@@ -2959,7 +3285,6 @@ const scriptContent = computed({
   get: () => store.scriptContent,
   set: (v) => store.setScriptContent(v)
 })
-const videoResolution = storeVideoResolution
 const videoMusic = ref('')
 const videoSfx = ref('')
 const videoQuality = ref('high')
@@ -3081,7 +3406,7 @@ const {
   openEditCharLibrary, submitEditCharLibrary,
   onDeleteCharLibrary, onAddCharacterToLibrary, onAddCharacterToMaterialLibrary,
   onAddCharFromLibrary, onAddDramaCharToEpisode,
-} = useCharacters({ store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage })
+} = useCharacters({ store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary })
 
 // ── Composable: Props ──────────────────────────────────
 const {
@@ -3104,7 +3429,7 @@ const {
   onDeletePropLibrary, onAddPropToLibrary, onAddPropToMaterialLibrary,
   onAddPropFromLibrary, onAddDramaPropToEpisode,
   doExtractFromRef2,
-} = usePropsComposable({ store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage })
+} = usePropsComposable({ store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary })
 
 // ── Composable: Scenes ─────────────────────────────────
 const {
@@ -3125,7 +3450,7 @@ const {
   openEditSceneLibrary, submitEditSceneLibrary,
   onDeleteSceneLibrary, onAddSceneToLibrary, onAddSceneToMaterialLibrary,
   onAddSceneFromLibrary, onAddDramaSceneToEpisode,
-} = useScenes({ store, dramaId, currentEpisodeId, getSelectedStyle, scriptLanguage, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, dramaAPI })
+} = useScenes({ store, dramaId, currentEpisodeId, getSelectedStyle, scriptLanguage, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, dramaAPI, isAdminUser, canManageLibrary })
 
 async function onGenerateCharacters() {
   trackFilmCreateAction('generate_characters_click')
@@ -3295,6 +3620,86 @@ const allActiveTasks = computed(() => {
   if (batchVideoRunning.value) addTask('批量生成分镜视频...')
   return tasks
 })
+
+const taskClockNow = ref(Date.now())
+let taskClockTimer = null
+
+function buildResourceTaskMeta(resourceType, resourceId) {
+  return {
+    dramaId: dramaId.value,
+    episodeId: currentEpisodeId.value,
+    resourceType,
+    resourceId,
+  }
+}
+
+function getRunningResourceTask(resourceType, resourceId) {
+  if (dramaId.value == null || currentEpisodeId.value == null || resourceId == null) return null
+  return genStore.getRunningTask(buildResourceTaskMeta(resourceType, resourceId))
+}
+
+function isResourceGenerating(resourceType, resourceId) {
+  return !!getRunningResourceTask(resourceType, resourceId)
+}
+
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(Number(ms || 0) / 1000))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
+function resourceElapsedLabel(resourceType, resourceId) {
+  const task = getRunningResourceTask(resourceType, resourceId)
+  return formatElapsed(task?.startedAt ? taskClockNow.value - task.startedAt : 0)
+}
+
+function clearLocalGeneratingState(resourceType, resourceId) {
+  const id = Number(resourceId)
+  switch (resourceType) {
+    case GEN_RESOURCE.CHAR_IMAGE:
+      generatingCharIds.delete(id)
+      break
+    case GEN_RESOURCE.PROP_IMAGE:
+      generatingPropIds.delete(id)
+      break
+    case GEN_RESOURCE.SCENE_IMAGE:
+      generatingSceneIds.delete(id)
+      break
+    case GEN_RESOURCE.SB_IMAGE:
+      generatingSbImageIds.delete(id)
+      break
+    case GEN_RESOURCE.SB_FIRST_IMAGE:
+      generatingSbFirstImageIds.delete(id)
+      break
+    case GEN_RESOURCE.SB_LAST_IMAGE:
+      generatingSbLastImageIds.delete(id)
+      break
+    case GEN_RESOURCE.SB_VIDEO:
+      generatingSbVideoIds.delete(id)
+      break
+    default:
+      break
+  }
+}
+
+function stopResourceGeneration(resourceType, resourceId, reason = '已停止生成') {
+  genStore.stopResourceTask(buildResourceTaskMeta(resourceType, resourceId), reason)
+  clearLocalGeneratingState(resourceType, resourceId)
+  ElMessage.info('已停止生成，可修改提示词后重新生成')
+}
+
+function stopSbFramePair(sb) {
+  if (!sb?.id) return
+  stopResourceGeneration(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id, '已停止首帧生成')
+  stopResourceGeneration(GEN_RESOURCE.SB_LAST_IMAGE, sb.id, '已停止尾帧生成')
+}
+
+function stopEpisodeTask(resourceType, reason = '已停止生成') {
+  if (!currentEpisodeId.value) return
+  genStore.stopResourceTask(buildResourceTaskMeta(resourceType, currentEpisodeId.value), reason)
+  ElMessage.info('已停止生成，可调整设置后重新生成')
+}
 const sbCharacterIds = ref({})  // sbId -> number[] 多选角色
 const sbPropIds = ref({})       // sbId -> number[] 多选物品
 const sbSceneId = ref({})
@@ -4412,6 +4817,7 @@ async function onGenerateSbFrameImage(sb, slot) {
       await storyboardsAPI.update(sb.id, { character_ids: Array.isArray(idsToSave) ? idsToSave : [] })
     } catch (e) {
       ElMessage.warning('保存分镜角色失败')
+      genStore.markFailed(meta, '保存分镜角色失败')
       return
     }
     // 尾帧可选附带首帧作构图/站位参考（「首帧站位」勾选时；后端亦会按 use_first_frame_layout_lock 兜底）
@@ -4441,9 +4847,7 @@ async function onGenerateSbFrameImage(sb, slot) {
     ElMessage.success(isLast ? '尾帧生成任务已提交' : '首帧生成任务已提交')
     if (res?.task_id) {
       const pollRes = await pollTask(res.task_id, () => loadSingleStoryboardMedia(sb.id), meta)
-      if (pollRes?.status === 'failed') {
-        sb.errorMsg = pollRes.error || '生成失败'
-      } else {
+      if (pollRes?.status === 'completed') {
         await loadDrama()
         restoreSelectionsFromBackend()
 
@@ -4456,10 +4860,13 @@ async function onGenerateSbFrameImage(sb, slot) {
             delete sbSelectedImgId.value[sb.id]
           }
         }
+      } else if (pollRes?.status === 'failed') {
+        sb.errorMsg = pollRes.error || '生成失败'
       }
     } else {
       await loadSingleStoryboardMedia(sb.id)
       restoreSelectionsFromBackend()
+      genStore.markDone(meta)
 
       if (storyboardUseFirstLastFrame.value) {
         if (isLast) {
@@ -4471,10 +4878,10 @@ async function onGenerateSbFrameImage(sb, slot) {
     }
   } catch (e) {
     sb.errorMsg = e.message || '生成失败'
+    genStore.markFailed(meta, e.message || '生成失败')
     ElMessage.error(e.message || '生成失败')
   } finally {
     loadingSet.delete(sb.id)
-    genStore.markDone(meta)
   }
 }
 
@@ -4509,6 +4916,7 @@ async function onGenerateSbImage(sb) {
     } catch (e) {
       console.warn('[分镜图] 保存角色勾选失败', e)
       ElMessage.warning('保存分镜角色失败，请稍后重试')
+      genStore.markFailed(meta, '保存分镜角色失败')
       return
     }
     const res = await imagesAPI.create({
@@ -4524,21 +4932,22 @@ async function onGenerateSbImage(sb) {
     ElMessage.success('分镜图生成任务已提交')
     if (res?.task_id) {
       const pollRes = await pollTask(res.task_id, () => loadSingleStoryboardMedia(sb.id), meta)
-      if (pollRes?.status === 'failed') {
-        sb.errorMsg = pollRes.error || '生成失败'
-      } else {
+      if (pollRes?.status === 'completed') {
         ElMessage.success('分镜图生成完成')
+      } else if (pollRes?.status === 'failed') {
+        sb.errorMsg = pollRes.error || '生成失败'
       }
     } else {
       await loadSingleStoryboardMedia(sb.id)
+      genStore.markDone(meta)
     }
   } catch (e) {
     console.error(e)
     sb.errorMsg = e.message || '生成失败'
+    genStore.markFailed(meta, e.message || '生成失败')
     ElMessage.error(e.message || '生成失败')
   } finally {
     generatingSbImageIds.delete(sb.id)
-    genStore.markDone(meta)
   }
 }
 
@@ -4709,7 +5118,7 @@ function onEpisodeSelect(epId) {
 
 let loadDramaPromise = null
 
-async function loadDrama({ force = false } = {}) {
+async function loadDrama({ force = false, recoverTasks = false } = {}) {
   if (!store.dramaId) return
   if (!force && loadDramaPromise) return loadDramaPromise
   loadDramaPromise = (async () => {
@@ -4724,6 +5133,8 @@ async function loadDrama({ force = false } = {}) {
       storyType.value = d.genre || ''
       generationStyle.value = d.style || ''
       projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
+      projectImageSpec.value = normalizeImageSpec(d.metadata?.image_spec || {})
+      projectVideoSpec.value = normalizeVideoSpec(d.metadata?.video_spec || {})
       videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
       scriptLanguage.value = (d.metadata && d.metadata.script_language) ? d.metadata.script_language : 'zh'
       storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
@@ -4759,7 +5170,9 @@ async function loadDrama({ force = false } = {}) {
     }
     syncStoryboardStateFromEpisode(ep)
     await loadStoryboardMedia()
-    await recoverAndSyncEpisodeTasks(ep?.id)
+    if (recoverTasks) {
+      await recoverAndSyncEpisodeTasks(ep?.id)
+    }
   })()
   try {
     return await loadDramaPromise
@@ -5041,6 +5454,7 @@ async function saveScriptToBackend(content) {
       style: generationStyle.value || undefined,
       metadata: {
         ...projectStylePromptMetadata(),
+        ...projectMediaSpecMetadata(),
         [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
@@ -5082,6 +5496,7 @@ async function saveScriptToBackend(content) {
         style: generationStyle.value || undefined,
         metadata: {
           ...projectStylePromptMetadata(),
+          ...projectMediaSpecMetadata(),
           [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
           story_style: storyStyle.value || undefined,
           aspect_ratio: projectAspectRatio.value || '16:9',
@@ -5123,6 +5538,7 @@ async function saveScriptToBackend(content) {
       style: generationStyle.value || undefined,
       metadata: {
         ...projectStylePromptMetadata(),
+        ...projectMediaSpecMetadata(),
         [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
@@ -5142,6 +5558,7 @@ async function saveScriptToBackend(content) {
 async function saveProjectSettings(includeGenerationStyle = false) {
   if (!store.dramaId) return
   const metadata = {
+    ...projectMediaSpecMetadata(),
     [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
     story_style: storyStyle.value || undefined,
     aspect_ratio: projectAspectRatio.value || '16:9',
@@ -6766,14 +7183,15 @@ async function onGenerateSbVideo(sb) {
       }
     } else {
       await loadSingleStoryboardMedia(sb.id)
+      genStore.markDone(meta)
       ElMessage.success('视频生成已提交，请稍后查看')
     }
   } catch (e) {
     sbVideoErrors.value[sb.id] = e.message || '提交失败'
+    genStore.markFailed(meta, e.message || '提交失败')
     ElMessage.error(e.message || '提交失败')
   } finally {
     generatingSbVideoIds.delete(sb.id)
-    genStore.markDone(meta)
     await loadSingleStoryboardMedia(sb.id)
   }
 }
@@ -6916,6 +7334,8 @@ async function onGenerateStoryboard() {
         sbTruncatedWarning.value = true
         sbTruncatedDismissed.value = false
       }
+    } else {
+      genStore.markDone(meta)
     }
     await loadDrama()
     // 生成完成后静默补全空缺的摄影参数（只填未填字段，不覆盖 AI 已填的）
@@ -6933,11 +7353,11 @@ async function onGenerateStoryboard() {
       extra: { storyboard_count: (store.storyboards || []).length },
     })
   } catch (e) {
+    genStore.markFailed(meta, e.message || '生成失败')
     // HTTP 错误由 request 拦截器统一展示，此处仅处理拦截器未覆盖的异常
     if (!e.response) ElMessage.error(e.message || '生成失败')
   } finally {
     clearInterval(refreshTimer)
-    genStore.markDone(meta)
   }
 }
 
@@ -8056,6 +8476,7 @@ async function runRepairPipeline() {
       pipelineCurrentStep.value = '正在生成分镜...'
       try {
         const res = await dramaAPI.generateStoryboard(episodeId, {
+          style,
           aspect_ratio: projectAspectRatio.value || '16:9',
           language: scriptLanguage.value || 'zh',
           storyboard_count: getStoryboardCountForApi(),
@@ -8163,6 +8584,7 @@ async function runRepairPipeline() {
             first_frame_url: vFirst,
             last_frame_url: vLast,
             reference_image_urls: refUrls,
+            style,
             aspect_ratio: projectAspectRatio.value || '16:9',
             resolution: videoResolution.value || undefined,
             duration: getSbVideoDurationForApi(sb),
@@ -8206,6 +8628,10 @@ async function runRepairPipeline() {
 
 onBeforeUnmount(() => {
   clearPendingProjectSettingsSave()
+  if (taskClockTimer) {
+    clearInterval(taskClockTimer)
+    taskClockTimer = null
+  }
 })
 
 function applyRouteToStore() {
@@ -8216,7 +8642,7 @@ function applyRouteToStore() {
     if (route.query.episode) {
       selectedEpisodeId.value = Number(route.query.episode)
     }
-    loadDrama({ force: true })
+    loadDrama({ force: true, recoverTasks: true })
   } else {
     store.reset()
     storyInput.value = ''
@@ -8233,6 +8659,9 @@ function applyRouteToStore() {
 }
 
 onMounted(async () => {
+  taskClockTimer = setInterval(() => {
+    taskClockNow.value = Date.now()
+  }, 1000)
   loadPipelineConcurrency()
   applyRouteToStore()
 })
@@ -9053,6 +9482,104 @@ html.light .section-title { color: #1e1b4b; }
 .project-setting-field--style {
   min-width: 220px;
 }
+.media-spec-button {
+  min-width: 150px;
+  justify-content: flex-start;
+  font-variant-numeric: tabular-nums;
+}
+.media-spec-current {
+  margin: -4px 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+.media-spec-mode {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 100%;
+  margin-bottom: 18px;
+}
+.media-spec-mode :deep(.el-radio-button__inner) {
+  width: 100%;
+}
+.media-spec-section-title {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+}
+.media-spec-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.media-spec-choice,
+.media-spec-ratio-choice {
+  border: 1px solid var(--el-border-color-light);
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-regular);
+  border-radius: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.media-spec-choice.active,
+.media-spec-ratio-choice.active {
+  border-color: var(--el-color-primary);
+  background: #ecf5ff;
+  color: var(--el-color-primary);
+}
+.media-spec-ratio-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.media-spec-ratio-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 72px;
+  font-size: 13px;
+}
+.media-spec-ratio-icon {
+  display: block;
+  width: 26px;
+  max-height: 28px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.72;
+}
+.media-spec-custom-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.media-spec-custom-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+.media-spec-custom-grid :deep(.el-input-number) {
+  width: 100%;
+}
+.media-spec-result {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--el-text-color-secondary);
+}
+.media-spec-result strong {
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
 .one-click-actions {
   display: flex;
   align-items: center;
@@ -9551,6 +10078,46 @@ html.light .story-episode-count {
   line-height: 1.4;
   word-break: break-all;
   text-align: center;
+}
+.ai-generating-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(24, 24, 27, 0.72);
+  color: #cbd5e1;
+  pointer-events: none;
+}
+.ai-generating-timer {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(39, 39, 42, 0.72);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.ai-generating-spinner {
+  font-size: 34px;
+  color: #93c5fd;
+}
+.ai-generating-text {
+  font-size: 14px;
+  font-weight: 600;
+}
+html.light .ai-generating-overlay {
+  background: rgba(248, 250, 252, 0.82);
+  color: #94a3b8;
+}
+html.light .ai-generating-timer {
+  background: rgba(31, 41, 55, 0.58);
 }
 .sb-image-error {
   width: 100%;
@@ -10272,6 +10839,7 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 8px;
   overflow: hidden;
+  position: relative;
 }
 .sb-fl-slot-body .sb-generated-img {
   max-height: 160px;
@@ -10379,6 +10947,9 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   align-items: center;
   justify-content: center;
   min-height: 80px;
+  position: relative;
+  width: 100%;
+  flex: 1;
 }
 /* 主图下方提示词预览 */
 .sb-main-img-prompt {
@@ -10425,6 +10996,8 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   align-items: center;
   justify-content: center;
   transition: border-color 0.2s;
+  position: relative;
+  overflow: hidden;
 }
 html.light .sb-video-area {
   background: linear-gradient(145deg, #f5f3ff 0%, #ede9fe 100%);
@@ -10443,10 +11016,13 @@ html.light .sb-video-placeholder {
 }
 .sb-video-generating-text {
   display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  color: #409eff;
-  font-size: 0.85rem;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  min-height: 120px;
 }
 .sb-video-error {
   color: #f56c6c;
@@ -10474,13 +11050,21 @@ html.light .sb-video-placeholder {
   padding-top: 6px;
 }
 .sb-video-regenerating-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  margin-top: 6px;
   font-size: 0.82rem;
-  color: #a78bfa;
+  color: #cbd5e1;
+  background: rgba(24, 24, 27, 0.68);
+}
+html.light .sb-video-regenerating-overlay {
+  background: rgba(248, 250, 252, 0.78);
+  color: #94a3b8;
 }
 .sb-videos-strip {
   display: flex;

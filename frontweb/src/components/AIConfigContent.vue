@@ -1,5 +1,10 @@
 <template>
   <div class="ai-config-content">
+    <div class="source-links-bar">
+      <span class="source-links-title">项目来源</span>
+      <a href="https://github.com/xuanyustudio/LocalMiniDrama" target="_blank" rel="noopener noreferrer">xuanyustudio/LocalMiniDrama</a>
+      <a href="https://github.com/363637570yy-lab/qnvideo-gzt" target="_blank" rel="noopener noreferrer">363637570yy-lab/qnvideo-gzt</a>
+    </div>
     <el-tabs v-model="activeTab" class="config-tabs">
       <el-tab-pane label="AI 配置" name="configs">
         <div class="tab-content">
@@ -50,7 +55,7 @@
               class="vendor-lock-tip"
             >
               <template #title>
-                <span>🔒 当前为厂商锁定模式，AI 服务由管理员统一配置。你只能修改 <b>API Key</b> 和 <b>默认模型</b>。</span>
+                <span>🔒 当前为厂商锁定模式，AI 服务由管理员统一配置。你可以修改 <b>API Key</b>、<b>默认模型</b> 和故障策略。</span>
               </template>
             </el-alert>
             <el-button type="primary" size="small" class="vendor-bulk-key-btn" @click="openBulkKey">
@@ -58,7 +63,7 @@
               一键换Key
             </el-button>
           </div>
-          <p class="default-tip">启用配置会按排序权重从高到低使用；额度或鉴权失败会自动停用，限流、网络故障会临时冷却并切到下一个。</p>
+          <p class="default-tip">启用配置会进入当前服务类型的路由池；临时错误会自动冷却并切换下一个，冷却结束后自动恢复。</p>
           <el-tabs v-model="activeConfigCategory" class="runtime-config-tabs">
             <el-tab-pane
               v-for="cat in configCategories"
@@ -67,6 +72,19 @@
               :name="cat.key"
             />
           </el-tabs>
+          <div v-if="activeRoutingPolicy" class="routing-policy-card">
+            <div class="routing-policy-title">路由/故障策略</div>
+            <el-select v-model="activeRoutingPolicy.strategy" size="small" style="width: 132px" @change="saveActiveRoutingPolicy">
+              <el-option label="顺序优先" value="sequential" />
+              <el-option label="轮询" value="round_robin" />
+            </el-select>
+            <el-input-number v-model="activeRoutingPolicy.retry_count" size="small" :min="0" :max="5" controls-position="right" @change="saveActiveRoutingPolicy" />
+            <span class="routing-policy-label">单配置重试</span>
+            <el-input-number v-model="activeRoutingPolicy.cooldown_seconds" size="small" :min="0" :max="86400" :step="30" controls-position="right" @change="saveActiveRoutingPolicy" />
+            <span class="routing-policy-label">冷却秒</span>
+            <el-input-number v-model="activeRoutingPolicy.request_timeout_ms" size="small" :min="1000" :max="1800000" :step="10000" controls-position="right" @change="saveActiveRoutingPolicy" />
+            <span class="routing-policy-label">路由池超时毫秒</span>
+          </div>
           <el-table
             v-loading="loading"
             :data="filteredConfigs"
@@ -75,8 +93,12 @@
             @selection-change="onSelectionChange"
           >
             <el-table-column v-if="!vendorLock.enabled" type="selection" width="46" />
+            <el-table-column prop="route_order" label="顺序" width="76" sortable />
             <el-table-column prop="name" label="名称" min-width="130" />
             <el-table-column prop="provider" label="提供商" width="96" />
+            <el-table-column prop="api_protocol" label="接口规范" min-width="128" show-overflow-tooltip>
+              <template #default="{ row }">{{ protocolLabel(row.api_protocol) }}</template>
+            </el-table-column>
             <el-table-column prop="base_url" label="Base URL" min-width="170" show-overflow-tooltip />
             <el-table-column prop="default_model" label="默认模型" min-width="130" show-overflow-tooltip>
               <template #default="{ row }">
@@ -89,7 +111,6 @@
                   <el-icon class="type-icon">
                     <ChatDotRound v-if="row.service_type === 'text'" />
                     <Picture v-else-if="row.service_type === 'image'" />
-                    <Film v-else-if="row.service_type === 'storyboard_image'" />
                     <VideoCamera v-else-if="row.service_type === 'video'" />
                     <Microphone v-else-if="row.service_type === 'tts'" />
                     <Key v-else-if="row.service_type === 'jimeng2_character_auth'" />
@@ -98,7 +119,6 @@
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="priority" label="排序" width="76" sortable />
             <el-table-column prop="health_status" label="状态" width="92">
               <template #default="{ row }">
                 <el-tooltip
@@ -122,12 +142,6 @@
                 />
                 <el-tag v-else-if="row.is_active" type="success" size="small">启用</el-tag>
                 <el-tag v-else type="info" size="small">停用</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="is_default" label="默认" width="60">
-              <template #default="{ row }">
-                <el-tag v-if="row.is_default" type="success" size="small">✓</el-tag>
-                <span v-else class="no-default">—</span>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="180" fixed="right">
@@ -262,20 +276,22 @@
             <p class="field-tip">实际调用时使用的模型，可从预设列表中选择。</p>
           </el-form-item>
           <el-form-item>
-            <template #label>
-              <span class="form-label-tip">设为默认
-                <el-tooltip placement="top" popper-class="cfg-tip-popper">
-                  <template #content>
-                    <div class="cfg-tip-content">
-                      每种服务类型只有一个「默认」配置。<br>
-                      生成时系统会优先使用默认配置，建议每类至少设一个默认。
-                    </div>
-                  </template>
-                  <el-icon class="tip-icon"><QuestionFilled /></el-icon>
-                </el-tooltip>
-              </span>
-            </template>
-            <el-switch v-model="form.is_default" />
+            <template #label><span class="form-label-tip">故障策略</span></template>
+            <div class="failure-policy-grid">
+              <label>
+                <span>重试次数</span>
+                <el-input-number v-model="form.retry_count" :min="0" :max="5" />
+              </label>
+              <label>
+                <span>冷却秒</span>
+                <el-input-number v-model="form.cooldown_seconds" :min="0" :max="86400" :step="30" />
+              </label>
+              <label>
+                <span>超时毫秒（0=继承）</span>
+                <el-input-number v-model="form.request_timeout_ms" :min="0" :max="1800000" :step="10000" />
+              </label>
+            </div>
+            <p class="field-tip">填 0 表示继承当前服务类型的路由池超时；不是无限制。</p>
           </el-form-item>
         </el-form>
       </template>
@@ -289,8 +305,7 @@
                 <template #content>
                   <div class="cfg-tip-content">
                     <b>文本/对话</b>：用于 AI 生成故事剧本<br>
-                    <b>文本生成图片</b>：角色、场景、道具的图片生成（不支持参考图）<br>
-                    <b>分镜图片生成</b>：生成分镜图片，支持传入角色参考图<br>
+                    <b>图像</b>：角色、场景、道具、分镜首尾帧与图生图<br>
                     <b>视频生成</b>：根据分镜图生成视频片段<br>
                     <b>语音合成 TTS</b>：为分镜对白自动合成语音（点分镜配音按钮时使用）<br>
                     <b>即梦2角色认证</b>：将角色主图登记到即梦业务素材库（SD2 认证），仅填网关 URL 与 Token
@@ -302,8 +317,7 @@
           </template>
           <el-select v-model="form.service_type" placeholder="选择类型" style="width: 100%" @change="onServiceTypeChange">
             <el-option label="文本/对话" value="text" />
-            <el-option label="文本生成图片" value="image" />
-            <el-option label="分镜图片生成" value="storyboard_image" />
+            <el-option label="图像" value="image" />
             <el-option label="视频生成" value="video" />
             <el-option label="语音合成 TTS" value="tts" />
             <el-option label="即梦2角色认证" value="jimeng2_character_auth" />
@@ -352,6 +366,7 @@
           </template>
           <el-select v-model="form.api_protocol" style="width: 100%" placeholder="选择接口规范（自定义厂商必选）" clearable>
             <el-option label="OpenAI 兼容（大多数中转站默认）" value="openai" />
+            <el-option label="OpenAI GPT Image（gpt-image 系列官方图片接口）" value="openai_gpt_image" />
             <el-option label="火山引擎（豆包 Seedream / Seedance）" value="volcengine" />
             <el-option label="火山即梦 Seedance 全能（方舟多图参考，Seedance 2.0 等）" value="volcengine_omni" />
             <el-option label="通义万象 DashScope" value="dashscope" />
@@ -852,29 +867,31 @@ input_reference = (图片文件，可选)</pre>
         </template>
         <el-form-item>
           <template #label>
-            <span class="form-label-tip">优先级
-              <el-tooltip content="同一服务类型有多个配置时，数字越大越优先被调用。默认 0，一般设为 10 即可。" placement="top" popper-class="cfg-tip-popper">
+            <span class="form-label-tip">路由顺序
+              <el-tooltip content="顺序优先模式下数字越小越先使用；轮询模式也按该顺序轮转。" placement="top" popper-class="cfg-tip-popper">
                 <el-icon class="tip-icon"><QuestionFilled /></el-icon>
               </el-tooltip>
             </span>
           </template>
-          <el-input-number v-model="form.priority" :min="0" :max="999" />
+          <el-input-number v-model="form.route_order" :min="0" :max="9999" />
         </el-form-item>
         <el-form-item>
-          <template #label>
-            <span class="form-label-tip">设为默认
-              <el-tooltip placement="top" popper-class="cfg-tip-popper">
-                <template #content>
-                  <div class="cfg-tip-content">
-                    每种服务类型只有一个「默认」配置。<br>
-                    生成时系统会优先使用默认配置，建议每类至少设一个默认。
-                  </div>
-                </template>
-                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
-              </el-tooltip>
-            </span>
-          </template>
-          <el-switch v-model="form.is_default" />
+          <template #label><span class="form-label-tip">故障策略</span></template>
+          <div class="failure-policy-grid">
+            <label>
+              <span>重试次数</span>
+              <el-input-number v-model="form.retry_count" :min="0" :max="5" />
+            </label>
+            <label>
+              <span>冷却秒</span>
+              <el-input-number v-model="form.cooldown_seconds" :min="0" :max="86400" :step="30" />
+            </label>
+          <label>
+            <span>超时毫秒（0=继承）</span>
+            <el-input-number v-model="form.request_timeout_ms" :min="0" :max="1800000" :step="10000" />
+          </label>
+          </div>
+          <p class="field-tip">填 0 表示继承当前服务类型的路由池超时；不是无限制。图片和视频默认失败后快速切换下一个配置。</p>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1023,7 +1040,7 @@ input_reference = (图片文件，可选)</pre>
       <p v-if="testResult === null">正在测试…</p>
       <template v-else-if="testResult">
         <el-alert
-          v-if="testServiceType === 'image' || testServiceType === 'storyboard_image' || testServiceType === 'video'"
+          v-if="testServiceType === 'image' || testServiceType === 'video'"
           type="success"
           title="连接成功"
           description="API Key 有效，网络已连通。提示：测试仅验证 Key 合法性，不实际生成图片/视频，模型名填错、账号未开通该功能或配额不足时实际生成仍可能报错。"
@@ -1076,7 +1093,7 @@ input_reference = (图片文件，可选)</pre>
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, Film, VideoCamera, Key, Microphone } from '@element-plus/icons-vue'
+import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, VideoCamera, Key, Microphone } from '@element-plus/icons-vue'
 import { aiAPI } from '@/api/ai'
 import { generationSettingsAPI } from '@/api/prompts'
 import PromptEditor from '@/components/PromptEditor.vue'
@@ -1093,7 +1110,7 @@ const configCategories = [
 ]
 const categoryServiceTypes = {
   text: ['text'],
-  image: ['image', 'storyboard_image', 'jimeng2_character_auth'],
+  image: ['image', 'jimeng2_character_auth'],
   video: ['video'],
   audio: ['tts'],
 }
@@ -1158,6 +1175,9 @@ const filteredConfigs = computed(() => {
   const types = categoryServiceTypes[activeConfigCategory.value] || []
   return (list.value || []).filter((row) => types.includes(row.service_type))
 })
+const routingPolicies = ref({})
+const activeRoutingPolicyKey = computed(() => activeConfigCategory.value === 'audio' ? 'tts' : activeConfigCategory.value)
+const activeRoutingPolicy = computed(() => routingPolicies.value?.[activeRoutingPolicyKey.value] || null)
 const selectedRows = ref([])
 watch(activeConfigCategory, () => {
   selectedRows.value = []
@@ -1190,8 +1210,10 @@ const form = ref({
   default_model: '',
   deepseek_thinking: 'disabled',
   deepseek_reasoning_effort: 'high',
-  priority: 0,
-  is_default: false,
+  route_order: 0,
+  retry_count: 0,
+  cooldown_seconds: 0,
+  request_timeout_ms: 0,
   // 可灵 Omni 官方 AK/SK（存 settings，后端生成 JWT）
   kling_access_key: '',
   kling_secret_key: '',
@@ -1201,6 +1223,26 @@ const form = ref({
   group_id: '',
 })
 const presetModelPick = ref('')
+
+async function loadRoutingPolicies() {
+  try {
+    routingPolicies.value = await aiAPI.routingPolicies()
+  } catch (_) {
+    routingPolicies.value = {}
+  }
+}
+
+async function saveActiveRoutingPolicy() {
+  const key = activeRoutingPolicyKey.value
+  const policy = routingPolicies.value?.[key]
+  if (!key || !policy) return
+  try {
+    const saved = await aiAPI.updateRoutingPolicy(key, policy)
+    routingPolicies.value = saved || routingPolicies.value
+  } catch (e) {
+    ElMessage.error('路由策略保存失败：' + (e?.message || ''))
+  }
+}
 
 const formModelList = computed(() => parseModelText(form.value.modelText))
 
@@ -1311,18 +1353,9 @@ const providerConfigs = {
     { id: 'nano_banana', name: 'NanoBanana', models: ['nano-banana-2', 'nano-banana-pro', 'nano-banana'] },
     // { id: 'chatfire', name: 'Chatfire', models: ['nano-banana-pro', 'doubao-seedream-4-5-251128', 'qwen-image'] },
     { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'] },
-    { id: 'openai', name: 'OpenAI', models: ['dall-e-3', 'dall-e-2'] },
+    { id: 'openai', name: 'OpenAI', models: ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1'] },
     { id: 'dashscope', name: '通义万象', models: ['wan2.6-image', 'qwen-image-edit-plus-2026-01-09', 'qwen-image-edit-plus', 'qwen-image-edit-max'] },
     { id: 'qwen_image', name: '通义千问', models: ['qwen-image-max', 'qwen-image-plus', 'qwen-image'] }
-  ],
-  storyboard_image: [
-    { id: 'dashscope', name: '通义万象', models: ['wan2.6-image', 'qwen-image-edit-plus-2026-01-09', 'qwen-image-edit-plus', 'qwen-image-edit-max'] },
-    { id: 'volcengine', name: '火山引擎', models: ['doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'] },
-    { id: 'kling', name: '可灵 Kling', models: ['kling-image', 'kling-omni-image'] },
-    { id: 'nano_banana', name: 'NanoBanana', models: ['nano-banana-2', 'nano-banana-pro', 'nano-banana'] },
-    // { id: 'chatfire', name: 'Chatfire', models: ['nano-banana-pro', 'doubao-seedream-4-5-251128', 'qwen-image'] },
-    { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'] },
-    { id: 'openai', name: 'OpenAI', models: ['dall-e-3', 'dall-e-2'] }
   ],
   video: [
     { id: 'klingai', name: '可灵官方 Omni (api-beijing.klingai.com)', models: ['kling-video-o1', 'kling-v3-omni'] },
@@ -1359,7 +1392,7 @@ const providerConfigs = {
 
 /** 厂商 id → 默认接口规范（api_protocol） */
 const providerProtocolMap = {
-  // image / storyboard_image
+  // image
   volcengine: 'volcengine',
   volces: 'volcengine',
   volc: 'volcengine',
@@ -1497,7 +1530,7 @@ const endpointPreviewInfo = computed(() => {
     } else {
       submitPath = endpoint || '/tts'
     }
-  } else if (service_type === 'image' || service_type === 'storyboard_image') {
+  } else if (service_type === 'image') {
     if (endpoint) {
       submitPath = endpoint
     } else if (proto === 'volcengine' || p === 'volcengine' || p === 'volces') {
@@ -1512,10 +1545,12 @@ const endpointPreviewInfo = computed(() => {
       submitPath = '/v1/images/generations'  // nano_banana base_url 无 /v1
     } else if (proto === 'kling' || p === 'kling' || p === 'klingai') {
       submitPath = '/v1/images/generations'
+    } else if (proto === 'openai_gpt_image') {
+      submitPath = '/images/generations 或 /images/edits'
     } else {
       submitPath = '/images/generations'  // openai 兼容：base_url 已含 /v1
     }
-    } else if (service_type === 'video') {
+  } else if (service_type === 'video') {
     if (endpoint) {
       submitPath = endpoint
     } else if (proto === 'volcengine_omni') {
@@ -1628,7 +1663,9 @@ function onProviderChange(providerId) {
     form.value.deepseek_reasoning_effort = 'high'
   }
   // 自动填充接口规范
-  form.value.api_protocol = providerProtocolMap[providerId] || (st === 'text' ? '' : 'openai')
+  form.value.api_protocol = st === 'image' && providerId === 'openai'
+    ? 'openai_gpt_image'
+    : (providerProtocolMap[providerId] || (st === 'text' ? '' : 'openai'))
   if (st === 'video' && providerId === 'jimeng_ai_api') {
     form.value.endpoint = ''
     form.value.query_endpoint = ''
@@ -1650,30 +1687,46 @@ function onProviderChange(providerId) {
 /** 通义一键配置用 */
 const TONGYI_CONFIGS = [
   { service_type: 'text', name: '通义千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', provider: 'qwen', model: ['qwen-plus'] },
-  { service_type: 'image', name: '通义万象 文本生图', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.6-image'] },
+  { service_type: 'image', name: '通义万象 图像', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.6-image'] },
   { service_type: 'image', name: '通义千问 文本生图', base_url: 'https://dashscope.aliyuncs.com', provider: 'qwen_image', model: ['qwen-image-max', 'qwen-image-plus', 'qwen-image'] },
-  { service_type: 'storyboard_image', name: '通义万象 分镜图', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.6-image'] },
   { service_type: 'video', name: '通义万相', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.2-kf2v-flash'] }
 ]
 
 /** 火山引擎一键配置用 */
 const VOLCENGINE_CONFIGS = [
   { service_type: 'text', name: '火山引擎 文本', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volcengine', model: ['deepseek-v3-2-251201', 'doubao-1-5-pro-32k-250115', 'kimi-k2-thinking-251104'] },
-  { service_type: 'image', name: '火山引擎 即梦 文本生图', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volcengine', model: ['doubao-seedream-4-5-251128'] },
-  { service_type: 'storyboard_image', name: '火山引擎 即梦 分镜图', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volcengine', model: ['doubao-seedream-4-5-251128'] },
+  { service_type: 'image', name: '火山引擎 即梦 图像', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volcengine', model: ['doubao-seedream-4-5-251128'] },
   { service_type: 'video', name: '火山引擎 即梦 视频', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volces', model: ['doubao-seedance-1-5-pro-251215'] }
 ]
 
 function serviceTypeLabel(t) {
   const map = {
     text: '文本',
-    image: '文本生成图片',
-    storyboard_image: '分镜图片生成',
+    image: '图像',
     video: '视频',
     tts: '语音合成 TTS',
     jimeng2_character_auth: '即梦2角色认证',
   }
   return map[t] || t
+}
+
+function protocolLabel(p) {
+  const map = {
+    openai: 'OpenAI 兼容',
+    openai_compatible: 'OpenAI 兼容',
+    openai_gpt_image: 'OpenAI GPT Image',
+    volcengine: '火山引擎',
+    volcengine_omni: '火山全能',
+    dashscope: '通义万象',
+    gemini: 'Gemini',
+    sora: 'Sora',
+    veo3: 'Veo3',
+    vidu: 'Vidu',
+    kling_omni: '可灵 Omni',
+    xai: 'xAI',
+    nano_banana: 'NanoBanana',
+  }
+  return map[p] || p || '自动'
 }
 
 function healthStatusLabel(row) {
@@ -1684,6 +1737,8 @@ function healthStatusLabel(row) {
     cooldown: '冷却',
     failed: '异常',
     disabled: '停用',
+    auth_failed: '鉴权失败',
+    quota_exhausted: '额度异常',
   }
   return map[status] || status
 }
@@ -1745,8 +1800,10 @@ function resetForm() {
     default_model: '',
     deepseek_thinking: 'disabled',
     deepseek_reasoning_effort: 'high',
-    priority: 0,
-    is_default: true,  // 新增时默认勾选「设为默认」，便于理解当前会使用哪条配置
+    route_order: 0,
+    retry_count: 0,
+    cooldown_seconds: 0,
+    request_timeout_ms: 0,
     voice_id: '',
     group_id: '',
     kling_access_key: '',
@@ -1802,8 +1859,10 @@ function openEdit(row) {
     default_model: defaultInList ? row.default_model : (modelList[0] || ''),
     deepseek_thinking: deepseekSettings.thinking,
     deepseek_reasoning_effort: deepseekSettings.effort,
-    priority: row.priority ?? 0,
-    is_default: !!row.is_default,
+    route_order: row.route_order ?? 0,
+    retry_count: row.retry_count ?? 0,
+    cooldown_seconds: row.cooldown_seconds ?? 0,
+    request_timeout_ms: row.request_timeout_ms ?? 0,
     voice_id,
     group_id,
     kling_access_key,
@@ -1870,8 +1929,10 @@ async function submit() {
       query_endpoint: form.value.query_endpoint || '',
       model: modelList,
       default_model: defaultModel,
-      priority: form.value.priority,
-      is_default: form.value.is_default,
+      route_order: form.value.route_order,
+      retry_count: form.value.retry_count,
+      cooldown_seconds: form.value.cooldown_seconds,
+      request_timeout_ms: form.value.request_timeout_ms,
       ...(settings !== undefined ? { settings } : {}),
     }
     if (editingId.value) {
@@ -2042,11 +2103,10 @@ async function submitOneKeyTongyi() {
         api_key: apiKey,
         model: models,
         default_model: models[0] || null,
-        priority: 10,
-        is_default: true
+        route_order: 10
       })
     }
-    ElMessage.success('已创建通义文本、文本生图、分镜图、视频配置')
+    ElMessage.success('已创建通义文本、图像、视频配置')
     oneKeyTongyiVisible.value = false
     await loadList()
   } catch (_) {
@@ -2076,11 +2136,10 @@ async function submitOneKeyVolc() {
         api_key: apiKey,
         model: models,
         default_model: models[0] || null,
-        priority: 10,
-        is_default: true
+        route_order: 10
       })
     }
-    ElMessage.success('已创建火山引擎文本、文本生图、分镜图、视频配置')
+    ElMessage.success('已创建火山引擎文本、图像、视频配置')
     oneKeyVolcVisible.value = false
     await loadList()
   } catch (_) {
@@ -2137,8 +2196,10 @@ async function importConfigs(event) {
           query_endpoint: cfg.query_endpoint || null,
           model: models,
           default_model: cfg.default_model || null,
-          priority: cfg.priority ?? 0,
-          is_default: !!cfg.is_default,
+          route_order: cfg.route_order ?? 0,
+          retry_count: cfg.retry_count ?? 0,
+          cooldown_seconds: cfg.cooldown_seconds ?? 0,
+          request_timeout_ms: cfg.request_timeout_ms ?? 0,
           settings: cfg.settings || null
         })
         success++
@@ -2166,6 +2227,7 @@ async function loadVendorLock() {
 onMounted(() => {
   loadVendorLock()
   loadList()
+  loadRoutingPolicies()
   loadGenerationSettings()
 })
 </script>
@@ -2183,6 +2245,30 @@ onMounted(() => {
 <style scoped>
 .ai-config-content {
   padding: 0;
+}
+.source-links-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.06);
+  color: var(--el-text-color-secondary, #606266);
+  font-size: 13px;
+}
+.source-links-title {
+  font-weight: 600;
+  color: var(--el-text-color-primary, #303133);
+}
+.source-links-bar a {
+  color: var(--el-color-primary, #409eff);
+  text-decoration: none;
+}
+.source-links-bar a:hover {
+  text-decoration: underline;
 }
 .config-tabs {
   margin-top: -4px;
@@ -2251,12 +2337,6 @@ onMounted(() => {
   background: rgba(16, 185, 129, 0.12);
   color: #10b981;
   border-color: rgba(16, 185, 129, 0.25);
-}
-/* 分镜图片生成 — 紫色 */
-.type-storyboard_image {
-  background: rgba(139, 92, 246, 0.12);
-  color: #8b5cf6;
-  border-color: rgba(139, 92, 246, 0.25);
 }
 /* 视频 — 橙色 */
 .type-video {
@@ -2365,6 +2445,28 @@ code {
 .runtime-config-tabs :deep(.el-tabs__header) {
   margin-bottom: 8px;
 }
+.routing-policy-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+.routing-policy-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-right: 4px;
+}
+.routing-policy-label {
+  font-size: 12px;
+  color: #606266;
+  margin-right: 6px;
+}
 .vendor-lock-bar {
   display: flex;
   align-items: center;
@@ -2389,6 +2491,23 @@ code {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+.failure-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+.failure-policy-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: #606266;
+}
+.failure-policy-grid :deep(.el-input-number) {
+  width: 100%;
 }
 .field-tip {
   margin: 6px 0 0;

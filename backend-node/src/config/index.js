@@ -34,9 +34,7 @@ function loadConfig() {
     process.env.PGHOST ||
     process.env.POSTGRES_HOST
   );
-  const legacySqlitePath = process.env.LEGACY_SQLITE_DB_PATH || process.env.SQLITE_DB_PATH || parsed.database.path;
   if (process.env.SQLITE_DB_PATH) parsed.database.path = process.env.SQLITE_DB_PATH;
-  parsed.database.sqlite_path = legacySqlitePath;
   if (hasPgEnv) {
     parsed.database.type = 'postgres';
   }

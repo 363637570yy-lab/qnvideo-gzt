@@ -13,7 +13,7 @@ function loadAiJimeng2AuthRow(db) {
       .prepare(
         `SELECT id, name, base_url, api_key FROM ai_service_configs
          WHERE deleted_at IS NULL AND service_type = ? AND is_active = 1
-         ORDER BY is_default DESC, priority DESC, id ASC LIMIT 1`
+         ORDER BY route_order ASC, id ASC LIMIT 1`
       )
       .get('jimeng2_character_auth');
   } catch (_) {

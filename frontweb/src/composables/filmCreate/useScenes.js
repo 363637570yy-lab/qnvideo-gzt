@@ -21,7 +21,7 @@ import { buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/use
  * @param {object} deps.dramaAPI
  */
 export function useScenes(deps) {
-  const { store, dramaId, currentEpisodeId, getSelectedStyle, scriptLanguage, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, dramaAPI } = deps
+  const { store, dramaId, currentEpisodeId, getSelectedStyle, scriptLanguage, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, dramaAPI, isAdminUser, canManageLibrary } = deps
   const genStore = useGenerationTaskStore()
 
   function buildSceneImageMeta(scene) {
@@ -107,17 +107,17 @@ export function useScenes(deps) {
       const taskId = res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)
-        if (pollRes?.status !== 'failed') {
+        if (pollRes?.status === 'completed') {
           ElMessage.success('场景提取完成')
         }
       } else {
         await loadDrama()
+        genStore.markDone(meta)
         ElMessage.success('场景提取任务已提交')
       }
     } catch (e) {
+      genStore.markFailed(meta, e.message || '提取失败')
       ElMessage.error(e.message || '提取失败')
-    } finally {
-      genStore.markDone(meta)
     }
   }
 
@@ -327,10 +327,10 @@ export function useScenes(deps) {
       const taskId = res?.image_generation?.task_id ?? res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)
-        if (pollRes?.status === 'failed') {
-          scene.errorMsg = pollRes.error || '生成失败'
-        } else {
+        if (pollRes?.status === 'completed') {
           ElMessage.success('场景图片已生成')
+        } else if (pollRes?.status === 'failed') {
+          scene.errorMsg = pollRes.error || '生成失败'
         }
       } else {
         await loadDrama()
@@ -339,15 +339,16 @@ export function useScenes(deps) {
           const s = list.find((x) => Number(x.id) === Number(scene.id))
           return !!(s && (s.image_url || s.local_path))
         })
+        genStore.markDone(meta)
         ElMessage.success('场景图片已生成')
       }
     } catch (e) {
       console.error(e)
       scene.errorMsg = e.message || '生成失败'
+      genStore.markFailed(meta, e.message || '提交失败')
       ElMessage.error(e.message || '提交失败')
     } finally {
       generatingSceneIds.delete(scene.id)
-      genStore.markDone(meta)
     }
   }
 
@@ -477,6 +478,10 @@ export function useScenes(deps) {
   }
 
   async function onDeleteSceneLibrary(item) {
+    if (!(typeof canManageLibrary === 'function' ? canManageLibrary(item) : isAdminUser?.value)) {
+      ElMessage.warning('只能删除自己创建的素材')
+      return
+    }
     try {
       const name = (item.location || item.time || '未命名').slice(0, 20)
       await ElMessageBox.confirm(

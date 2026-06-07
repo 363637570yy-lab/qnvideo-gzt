@@ -22,6 +22,25 @@ function setVideoGenFailed(db, videoGenId, errorMsg, now) {
   }
 }
 
+function setVideoGenCancelled(db, videoGenId, now) {
+  try {
+    db.prepare('UPDATE video_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
+      'cancelled', '任务已停止', now, videoGenId
+    );
+  } catch (e) {
+    if ((e.message || '').includes('error_msg')) {
+      db.prepare('UPDATE video_generations SET status = ?, updated_at = ? WHERE id = ?').run('cancelled', now, videoGenId);
+    } else throw e;
+  }
+}
+
+function isVideoTaskCancelled(db, row, videoGenId, now, log) {
+  if (!row?.task_id || !taskService.isTaskCancelled(db, row.task_id)) return false;
+  setVideoGenCancelled(db, videoGenId, now || new Date().toISOString());
+  log.info('[视频] 已停止，忽略模型返回结果', { id: videoGenId, task_id: row.task_id });
+  return true;
+}
+
 function list(db, query) {
   let sql = 'FROM video_generations WHERE deleted_at IS NULL';
   const params = [];
@@ -106,6 +125,8 @@ const videoClient = require('./videoClient');
 const taskService = require('./taskService');
 const storageLayout = require('./storageLayout');
 const { getFfmpegPath, hasLocalFfmpeg } = require('../utils/ffmpegPath');
+const { resolveProjectVideoSpec } = require('./projectMediaSpec');
+const { safeDeleteFile } = require('./storageCleanupService');
 
 /** @returns {{ dir: string, relPrefix: string }} 与图片 uploads 一致的工程子目录规则 */
 function resolveVideosDir(storagePath, projectSubdir) {
@@ -221,7 +242,13 @@ function normalizeVideoFileToTargetPixels(absPath, tw, th, log, videoGenId) {
 function maybeNormalizeVideoAfterDownload(storagePath, localPath, row, videoGenId, log) {
   if (!localPath) return;
   const abs = path.join(storagePath, localPath);
-  const dim = targetVideoPixelsForAspect(row.aspect_ratio);
+  let dim = null;
+  try {
+    const params = row.params_json ? JSON.parse(row.params_json) : null;
+    const spec = params?.product_video_spec;
+    if (spec?.width && spec?.height) dim = { w: Number(spec.width), h: Number(spec.height) };
+  } catch (_) {}
+  if (!dim) dim = targetVideoPixelsForAspect(row.aspect_ratio);
   normalizeVideoFileToTargetPixels(abs, dim.w, dim.h, log, videoGenId);
 }
 
@@ -235,6 +262,7 @@ async function processVideoGeneration(db, log, videoGenId) {
   const now = new Date().toISOString();
   try {
     db.prepare('UPDATE video_generations SET status = ?, updated_at = ? WHERE id = ?').run('processing', now, videoGenId);
+    if (isVideoTaskCancelled(db, row, videoGenId, new Date().toISOString(), log)) return;
     const loadConfig = require('../config').loadConfig;
     const cfg = loadConfig();
     const filesBaseUrl = (cfg.storage && cfg.storage.base_url) ? String(cfg.storage.base_url).replace(/\/$/, '') : '';
@@ -270,14 +298,8 @@ async function processVideoGeneration(db, log, videoGenId) {
     }
     if (!aspectForVideo && row.drama_id) {
       try {
-        const dramaRow = db.prepare('SELECT metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(row.drama_id);
-        if (dramaRow && dramaRow.metadata) {
-          const meta =
-            typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;
-          if (meta && meta.aspect_ratio) {
-            aspectForVideo = videoClient.normalizeAspectRatioForApi(meta.aspect_ratio);
-          }
-        }
+        const spec = resolveProjectVideoSpec(db, row.drama_id);
+        if (spec?.aspect_ratio) aspectForVideo = videoClient.normalizeAspectRatioForApi(spec.aspect_ratio);
       } catch (_) {}
     }
     const rowForAspect = { ...row, aspect_ratio: aspectForVideo || row.aspect_ratio };
@@ -303,6 +325,7 @@ async function processVideoGeneration(db, log, videoGenId) {
       video_gen_id: videoGenId,
     });
     const now2 = new Date().toISOString();
+    if (isVideoTaskCancelled(db, row, videoGenId, now2, log)) return;
     if (result.error) {
       setVideoGenFailed(db, videoGenId, result.error, now2);
       if (row.task_id) taskService.updateTaskError(db, row.task_id, result.error);
@@ -312,16 +335,23 @@ async function processVideoGeneration(db, log, videoGenId) {
     const directVideo = resolveRemoteVideoUrl(result.video_url, result.error);
     if (directVideo.ok) {
       let localPath = null;
+      let storagePath = null;
       try {
         const loadConfig = require('../config').loadConfig;
         const cfg = loadConfig();
-        const storagePath = path.isAbsolute(cfg.storage?.local_path)
+        storagePath = path.isAbsolute(cfg.storage?.local_path)
           ? cfg.storage.local_path
           : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
         const projectSubdir = storageLayout.getProjectStorageSubdir(db, row.drama_id);
         localPath = await downloadVideoToLocal(storagePath, directVideo.video_url, videoGenId, log, projectSubdir);
         maybeNormalizeVideoAfterDownload(storagePath, localPath, rowForAspect, videoGenId, log);
       } catch (_) {}
+      if (isVideoTaskCancelled(db, row, videoGenId, new Date().toISOString(), log)) {
+        if (localPath && storagePath) {
+          try { safeDeleteFile(storagePath, localPath); } catch (_) {}
+        }
+        return;
+      }
       try {
         db.prepare(
           'UPDATE video_generations SET status = ?, video_url = ?, local_path = ?, completed_at = ?, updated_at = ? WHERE id = ?'
@@ -372,22 +402,31 @@ async function processVideoGeneration(db, log, videoGenId) {
         result.task_id,
         config,
         pollMaxAttempts,
-        POLL_INTERVAL_MS
+        POLL_INTERVAL_MS,
+        { localTaskId: row.task_id }
       );
       const now3 = new Date().toISOString();
+      if (isVideoTaskCancelled(db, row, videoGenId, now3, log)) return;
       const polledVideo = resolveRemoteVideoUrl(pollResult.video_url, pollResult.error);
       if (polledVideo.ok) {
         let localPath = null;
+        let storagePath = null;
         try {
           const loadConfig = require('../config').loadConfig;
           const cfg = loadConfig();
-          const storagePath = path.isAbsolute(cfg.storage?.local_path)
+          storagePath = path.isAbsolute(cfg.storage?.local_path)
             ? cfg.storage.local_path
             : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
           const projectSubdir = storageLayout.getProjectStorageSubdir(db, row.drama_id);
           localPath = await downloadVideoToLocal(storagePath, polledVideo.video_url, videoGenId, log, projectSubdir);
           maybeNormalizeVideoAfterDownload(storagePath, localPath, rowForAspect, videoGenId, log);
         } catch (_) {}
+        if (isVideoTaskCancelled(db, row, videoGenId, new Date().toISOString(), log)) {
+          if (localPath && storagePath) {
+            try { safeDeleteFile(storagePath, localPath); } catch (_) {}
+          }
+          return;
+        }
         try {
           db.prepare(
             'UPDATE video_generations SET status = ?, video_url = ?, local_path = ?, completed_at = ?, updated_at = ? WHERE id = ?'
@@ -421,6 +460,7 @@ async function processVideoGeneration(db, log, videoGenId) {
     if (row.task_id) taskService.updateTaskError(db, row.task_id, '未返回 task_id 或 video_url');
   } catch (err) {
     const now2 = new Date().toISOString();
+    if (row && isVideoTaskCancelled(db, row, videoGenId, now2, log)) return;
     setVideoGenFailed(db, videoGenId, err.message, now2);
     if (row && row.task_id) taskService.updateTaskError(db, row.task_id, err.message);
     log.error('Video generation error', { id: videoGenId, error: err.message });
@@ -428,9 +468,8 @@ async function processVideoGeneration(db, log, videoGenId) {
 }
 
 function deleteById(db, log, id) {
-  const now = new Date().toISOString();
-  const result = db.prepare('UPDATE video_generations SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL').run(now, Number(id));
-  return result.changes > 0;
+  const cleanup = require('./storageCleanupService');
+  return !!cleanup.deleteVideoGenerationById(db, log, id);
 }
 
 module.exports = {

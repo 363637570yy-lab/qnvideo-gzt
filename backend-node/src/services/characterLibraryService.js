@@ -2,7 +2,6 @@
 const path = require('path');
 const crypto = require('crypto');
 const imageClient = require('./imageClient');
-const { aspectRatioToSize } = require('./imageService');
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const { mergeCfgStyleWithDrama } = require('../utils/dramaStyleMerge');
@@ -83,21 +82,13 @@ function generateCharacterImage(db, log, cfg, characterId, modelName, style) {
     ? String(effectiveCfg.style.default_role_ratio)
     : (effectiveCfg?.style?.default_image_ratio ? 'image ratio: ' + effectiveCfg.style.default_image_ratio : '');
   prompt = appendPrompt(prompt, ratioText);
-  // 根据项目 aspect_ratio 动态计算图片尺寸，兜底 1920x1920
-  let imageSize = null;
-  try {
-    const meta = drama.metadata ? (typeof drama.metadata === 'string' ? JSON.parse(drama.metadata) : drama.metadata) : null;
-    if (meta && meta.aspect_ratio) imageSize = aspectRatioToSize(meta.aspect_ratio);
-  } catch (_) {}
-  imageSize = imageSize || '1920x1920';
   const userNeg = imageClient.resolveAssetUserNegativeForApi(modelName, charRow.negative_prompt);
   const imageGen = imageClient.createAndGenerateImage(db, log, {
     drama_id: charRow.drama_id,
     character_id: charRow.id,
     prompt,
     model: modelName || undefined,
-    size: imageSize,
-    quality: 'standard',
+    size: undefined,
     provider: 'openai',
     user_negative_prompt: userNeg || undefined,
   });
@@ -609,8 +600,7 @@ async function generateCharacterFourViewImage(db, log, cfg, characterId, modelNa
     character_id: charRow.id,
     prompt: imagePrompt,
     model: modelName || undefined,
-    size: '1792x1024',
-    quality: 'standard',
+    size: undefined,
     provider: 'openai',
     ai_config_id: aiConfigId || undefined,
     user_negative_prompt: userNeg || undefined,

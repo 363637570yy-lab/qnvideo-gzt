@@ -188,7 +188,7 @@
                 <div class="library-item-desc">{{ (item.description || '').slice(0, 60) }}</div>
                 <div class="library-item-actions">
                   <el-button size="small" @click="openEditChar(item)">编辑</el-button>
-                  <el-button size="small" type="danger" plain @click="deleteChar(item)">删除</el-button>
+                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="deleteChar(item)">删除</el-button>
                 </div>
               </div>
             </div>
@@ -216,7 +216,7 @@
                 <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}</div>
                 <div class="library-item-actions">
                   <el-button size="small" @click="openEditScene(item)">编辑</el-button>
-                  <el-button size="small" type="danger" plain @click="deleteScene(item)">删除</el-button>
+                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="deleteScene(item)">删除</el-button>
                 </div>
               </div>
             </div>
@@ -244,7 +244,7 @@
                 <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}</div>
                 <div class="library-item-actions">
                   <el-button size="small" @click="openEditProp(item)">编辑</el-button>
-                  <el-button size="small" type="danger" plain @click="deleteProp(item)">删除</el-button>
+                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="deleteProp(item)">删除</el-button>
                 </div>
               </div>
             </div>
@@ -574,11 +574,17 @@ import { characterAPI } from '@/api/characters'
 import { sceneAPI } from '@/api/scenes'
 import { propAPI } from '@/api/props'
 import { stylePromptMetadataForSave, backfillDramaStylePromptMetadataIfNeeded } from '@/constants/styleOptions'
+import { isAdmin } from '@/utils/auth'
 
 const route = useRoute()
 const { isDark, toggle: toggleTheme } = useTheme()
 const router = useRouter()
 const dramaId = Number(route.params.id)
+const isAdminUser = ref(isAdmin())
+
+function canManageLibrary(item) {
+  return !!item?.can_manage || isAdminUser.value
+}
 
 // 图片编辑 – 文件输入 refs（各资源类型独立）
 const charFileRef  = ref(null)
@@ -1042,6 +1048,7 @@ async function saveChar() {
   } catch (e) { ElMessage.error(e.message || '保存失败') } finally { editCharSaving.value = false }
 }
 async function deleteChar(item) {
+  if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   try { await ElMessageBox.confirm(`确定删除「${(item.name || '未命名').slice(0, 20)}」？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await characterLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadCharList() } catch (e) { ElMessage.error(e.message || '删除失败') }
 }
@@ -1070,6 +1077,7 @@ async function saveScene() {
   } catch (e) { ElMessage.error(e.message || '保存失败') } finally { editSceneSaving.value = false }
 }
 async function deleteScene(item) {
+  if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   const n = (item.location || item.time || '未命名').slice(0, 20)
   try { await ElMessageBox.confirm(`确定删除「${n}」？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await sceneLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadSceneList() } catch (e) { ElMessage.error(e.message || '删除失败') }
@@ -1099,6 +1107,7 @@ async function saveProp() {
   } catch (e) { ElMessage.error(e.message || '保存失败') } finally { editPropSaving.value = false }
 }
 async function deleteProp(item) {
+  if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   try { await ElMessageBox.confirm(`确定删除「${(item.name || '未命名').slice(0, 20)}」？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await propLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadPropList() } catch (e) { ElMessage.error(e.message || '删除失败') }
 }
