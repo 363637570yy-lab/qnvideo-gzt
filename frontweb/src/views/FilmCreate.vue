@@ -3256,12 +3256,13 @@ const scriptTitle = ref('')
 const selectedEpisodeId = ref(null)
 /** 保存剧本后用于恢复选中集（后端重插后 id 会变，用 episode_number 匹配） */
 const savedCurrentEpisodeNumber = ref(1)
+const DEFAULT_GENERATION_STYLE = 'xianxia 3d'
 const scriptLanguage = ref('zh')
 const scriptStoryboardStyle = ref('')
 const scriptGenerating = ref(false)
-const generationStyle = ref('')
+const generationStyle = ref(DEFAULT_GENERATION_STYLE)
 const projectAspectRatio = ref('16:9')
-const videoClipDuration = ref(5)
+const videoClipDuration = ref(10)
 const imageSpecDialogVisible = ref(false)
 
 const imageTierOptions = [
@@ -3297,11 +3298,11 @@ const VIDEO_TIER_AREAS = {
 }
 
 function defaultImageSpec() {
-  return { mode: 'ratio', tier: '2K', ratio: 'follow_project', width: 1920, height: 1080 }
+  return { mode: 'ratio', tier: '4K', ratio: 'follow_project', width: 3840, height: 2160 }
 }
 
 function defaultVideoSpec() {
-  return { mode: 'ratio', tier: '1080p', ratio: 'follow_project' }
+  return { mode: 'ratio', tier: '720p', ratio: 'follow_project' }
 }
 
 const projectImageSpec = ref(defaultImageSpec())
@@ -3354,7 +3355,7 @@ function resolveImageSpec(spec) {
   if (normalized.mode === 'custom') {
     return { ...normalized, aspect_ratio: `${normalized.width}:${normalized.height}` }
   }
-  const tier = normalized.mode === 'auto' ? '2K' : normalized.tier
+  const tier = normalized.mode === 'auto' ? '4K' : normalized.tier
   const ratio = normalized.mode === 'auto' ? 'follow_project' : normalized.ratio
   return { ...normalized, tier, ratio, ...dimensionsForArea(IMAGE_TIER_AREAS[tier], ratio) }
 }
@@ -3379,7 +3380,7 @@ const projectVideoResolution = computed({
     projectVideoSpec.value = normalizeVideoSpec({ tier })
   },
 })
-const videoResolution = computed(() => resolvedProjectVideoSpec.value.resolution || '1080p')
+const videoResolution = computed(() => resolvedProjectVideoSpec.value.resolution || '720p')
 
 function cloneSpec(spec) {
   return JSON.parse(JSON.stringify(spec || {}))
@@ -4013,7 +4014,7 @@ function effectiveStoryboardFrameCount(frameType = null) {
 /** 用于估算的每段时长（秒），与一键成片处「X秒/段」一致 */
 function clipSecondsForStoryboardEstimate() {
   const c = Number(videoClipDuration.value)
-  return Math.max(2, Math.min(60, Number.isFinite(c) && c > 0 ? c : 5))
+  return Math.max(2, Math.min(60, Number.isFinite(c) && c > 0 ? c : 10))
 }
 
 /** 由估算总时长与每段秒数得镜数中枢与宽松参考区间（±1 镜） */
@@ -5901,7 +5902,7 @@ function syncStoryboardStateFromEpisode(ep) {
     nextTitle[sb.id] = (sb.title ?? '').toString()
     nextLocation[sb.id] = (sb.location ?? '').toString()
     nextTime[sb.id] = (sb.time ?? '').toString()
-    nextDuration[sb.id] = sb.duration != null ? Number(sb.duration) : 5
+    nextDuration[sb.id] = sb.duration != null ? Number(sb.duration) : (Number(videoClipDuration.value) || 10)
     nextAction[sb.id] = (sb.action ?? '').toString()
     nextResult[sb.id] = (sb.result ?? '').toString()
     nextAtmosphere[sb.id] = (sb.atmosphere ?? '').toString()
@@ -5984,11 +5985,11 @@ async function loadDrama({ force = false, recoverTasks = false } = {}) {
       storyInput.value = (d.description || '').toString().trim()
       storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
       storyType.value = d.genre || ''
-      generationStyle.value = d.style || ''
+      generationStyle.value = d.style || DEFAULT_GENERATION_STYLE
       projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
       projectImageSpec.value = normalizeImageSpec(d.metadata?.image_spec || {})
       projectVideoSpec.value = normalizeVideoSpec(d.metadata?.video_spec || {})
-      videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 5
+      videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 10
       scriptLanguage.value = (d.metadata && d.metadata.script_language) ? d.metadata.script_language : 'zh'
       storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
       storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
@@ -6291,7 +6292,7 @@ async function saveScriptToBackend(content) {
         [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
-        video_clip_duration: videoClipDuration.value || 5,
+        video_clip_duration: videoClipDuration.value || 10,
         script_language: scriptLanguage.value || 'zh',
       },
     })
@@ -6333,7 +6334,7 @@ async function saveScriptToBackend(content) {
           [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
           story_style: storyStyle.value || undefined,
           aspect_ratio: projectAspectRatio.value || '16:9',
-          video_clip_duration: videoClipDuration.value || 5,
+          video_clip_duration: videoClipDuration.value || 10,
           script_language: scriptLanguage.value || 'zh',
         },
       }).catch(() => {})
@@ -6375,7 +6376,7 @@ async function saveScriptToBackend(content) {
         [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
         story_style: storyStyle.value || undefined,
         aspect_ratio: projectAspectRatio.value || '16:9',
-        video_clip_duration: videoClipDuration.value || 5,
+        video_clip_duration: videoClipDuration.value || 10,
         script_language: scriptLanguage.value || 'zh',
       },
     }).catch(() => {})
@@ -6395,7 +6396,7 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
     story_style: storyStyle.value || undefined,
     aspect_ratio: projectAspectRatio.value || '16:9',
-    video_clip_duration: videoClipDuration.value || 5,
+    video_clip_duration: videoClipDuration.value || 10,
     script_language: scriptLanguage.value || 'zh',
     storyboard_include_narration: !!storyboardIncludeNarration.value,
     storyboard_universal_omni: !!storyboardUniversalOmni.value,
@@ -7899,7 +7900,7 @@ async function onSaveSbVideoFields(sb) {
       title: (sbTitle.value[sb.id] || '').toString().trim() || null,
       location: (sbLocation.value[sb.id] || '').toString().trim() || null,
       time: (sbTime.value[sb.id] || '').toString().trim() || null,
-      duration: Number(sbDuration.value[sb.id]) || 5,
+      duration: Number(sbDuration.value[sb.id]) || Number(videoClipDuration.value) || 10,
       action: (sbAction.value[sb.id] || '').toString().trim() || null,
       dialogue: (sbDialogue.value[sb.id] || '').toString().trim() || null,
       narration: (sbNarration.value[sb.id] || '').toString().trim() || null,
@@ -8302,6 +8303,7 @@ async function onGenerateStoryboard() {
       style: getSelectedStyle(),
       storyboard_count: getStoryboardCountForApi(),
       video_duration: getVideoDurationForApi(),
+      video_clip_duration: videoClipDuration.value || 10,
       aspect_ratio: projectAspectRatio.value || '16:9',
       language: scriptLanguage.value || 'zh',
       include_narration: !!storyboardIncludeNarration.value,
@@ -8953,6 +8955,7 @@ async function runOneClickPipeline(textOnly = false) {
           language: scriptLanguage.value || 'zh',
           storyboard_count: getStoryboardCountForApi(),
           video_duration: getVideoDurationForApi(),
+          video_clip_duration: videoClipDuration.value || 10,
           include_narration: !!storyboardIncludeNarration.value,
           universal_omni_storyboard: !!storyboardUniversalOmni.value,
           ...textAiPayload(),
@@ -9465,6 +9468,7 @@ async function runRepairPipeline() {
           language: scriptLanguage.value || 'zh',
           storyboard_count: getStoryboardCountForApi(),
           video_duration: getVideoDurationForApi(),
+          video_clip_duration: videoClipDuration.value || 10,
           include_narration: !!storyboardIncludeNarration.value,
           universal_omni_storyboard: !!storyboardUniversalOmni.value,
           ...textAiPayload(),
@@ -9634,7 +9638,11 @@ function applyRouteToStore() {
     storyType.value = ''
     scriptLanguage.value = 'zh'
     scriptStoryboardStyle.value = ''
-    generationStyle.value = ''
+    generationStyle.value = DEFAULT_GENERATION_STYLE
+    projectAspectRatio.value = '16:9'
+    videoClipDuration.value = 10
+    projectImageSpec.value = defaultImageSpec()
+    projectVideoSpec.value = defaultVideoSpec()
     applyProjectAiRouteSelection({})
   }
 }

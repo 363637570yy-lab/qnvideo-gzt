@@ -178,7 +178,7 @@ function lightingStyleHintZh(code) {
 
 /** 按时长与已有运镜字段拼灵境式「运镜链」（至少两步，强调摄影机在动） */
 function buildCameraMotionChain(movement, shotType, durationSec) {
-  const dur = Math.max(1, Number(durationSec) || 5);
+  const dur = Math.max(1, Number(durationSec) || 10);
   const mv = String(movement || '').trim();
   const st = String(shotType || '').trim();
   const parts = [];
@@ -213,7 +213,7 @@ function buildFallbackUniversalSeedanceLine(sb, d, styleHint) {
   const atm = (sb.atmosphere || '').replace(/\s+/g, ' ').trim().slice(0, 100);
   const shotBits = [d.shotType, d.angle].filter(Boolean).join('，').trim();
   const loc = [sb.location, sb.time].filter(Boolean).join('，').trim() || '叙事空间';
-  const dur = Math.max(1, Number(d.durationSec) || normalizeDuration(sb.duration) || 5);
+  const dur = Math.max(1, Number(d.durationSec) || normalizeDuration(sb.duration) || 10);
   const lightZh = lightingStyleHintZh(d.lightingStyle);
   const dof = d.depthOfField === 'extreme_shallow' ? '浅景深前景虚化明显' : d.depthOfField === 'shallow' ? '浅景深背景柔化' : d.depthOfField === 'deep' ? '深焦前后景均清晰' : d.depthOfField === 'medium' ? '景深适中' : '景深随景别可感';
   const shotNum = Math.max(1, Number(d.shotNumber) || 1);
@@ -388,7 +388,7 @@ function generateVideoPrompt(sb, style, videoRatio) {
   if (sb.bgm_prompt) parts.push('配乐：' + sb.bgm_prompt);
   if (sb.sound_effect) parts.push('音效：' + sb.sound_effect);
   // 时长
-  const durationSec = normalizeDuration(sb.duration) || 5;
+  const durationSec = normalizeDuration(sb.duration) || 10;
   parts.push('时长：' + durationSec + '秒');
   // 风格（英文 token 保持英文以兼容视频 AI）与画面比例
   if (style) parts.push('风格：' + style);
@@ -484,6 +484,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     narration,
     result,
     emotion,
+    durationSec,
     segmentIndex,
     segmentTitle,
     lightingStyle,
@@ -521,7 +522,7 @@ function updateStoryboardRowFromDerived(db, existingId, episodeIdNum, d, sb, now
     d.description,
     sb.location ?? null,
     sb.time ?? null,
-    sb.duration ?? 5,
+    d.durationSec,
     d.dialogue || null,
     d.narration || null,
     d.action || null,
@@ -569,7 +570,7 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
     ).run(
       episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
-      sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
+      sb.location ?? null, sb.time ?? null, d.durationSec,
       d.dialogue || null, d.narration || null, d.action || null, d.result || null, sb.atmosphere ?? null,
       d.imagePrompt, d.videoPrompt, d.charactersJson,
       d.shotType || null, d.angle, d.angleH, d.angleV, d.angleS,
@@ -748,7 +749,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
       ).run(
         episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
-        sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
+        sb.location ?? null, sb.time ?? null, d.durationSec,
         d.dialogue || null, d.narration || null, d.action || null, d.result || null, sb.atmosphere ?? null,
         d.imagePrompt, d.videoPrompt, d.charactersJson,
         d.shotType || null, d.angle, d.angleH, d.angleV, d.angleS,
@@ -765,7 +766,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
         ).run(
           episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
-          sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
+          sb.location ?? null, sb.time ?? null, d.durationSec,
           d.dialogue || null, d.action || null, sb.atmosphere ?? null,
           d.imagePrompt, d.videoPrompt, d.charactersJson,
           d.creationMode || 'classic',
@@ -792,7 +793,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
       description: d.description,
       location: sb.location ?? null,
       time: sb.time ?? null,
-      duration: sb.duration ?? 5,
+      duration: d.durationSec,
       dialogue: d.dialogue || null,
       narration: d.narration || null,
       action: d.action || null,
@@ -1147,11 +1148,11 @@ function normalizeOutputLanguage(language) {
 
 function outputLanguageInstruction(language) {
   return normalizeOutputLanguage(language) === 'en'
-    ? '\nOutput language: write all storyboard text fields in English, including title, description, action, dialogue, narration, image_prompt and video_prompt.'
-    : '\n输出语言：所有分镜文本字段请使用简体中文，包括标题、描述、动作、对白、旁白、图片提示词和视频提示词。';
+    ? '\nOutput language: write generated structural/description fields in English. Keep dialogue, quoted text, proper nouns, titles, and any foreign-language source text exactly in the original language; do not translate user-provided lines.'
+    : '\n生成文本语言：结构化说明字段请使用简体中文，如标题、描述、动作、旁白、图片提示词和视频提示词。对白、引用语、专有名词、论文/书名/咒语/外语原文必须保持剧本原语言，不要强行翻译。';
 }
 
-function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, language, includeNarration, universalOmni, aiConfigId) {
+function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, language, includeNarration, universalOmni, aiConfigId, user, videoClipDurationOverride) {
   const cfg = loadConfig();
   const episode = db.prepare(
     'SELECT id, script_content, description, drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL'
@@ -1175,6 +1176,9 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
       if (meta && meta.video_clip_duration) videoClipDuration = Number(meta.video_clip_duration) || null;
     }
   } catch (_) {}
+  if (videoClipDurationOverride != null && Number(videoClipDurationOverride) > 0) {
+    videoClipDuration = Number(videoClipDurationOverride);
+  }
   const imageRatio = aspectRatio || dramaAspectRatio || cfg?.style?.default_video_ratio || '16:9';
 
   // 计算单镜建议时长（秒）：
@@ -1333,7 +1337,11 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
     systemPrompt += promptI18n.getStoryboardUniversalOmniModeSuffix(cfg);
   }
 
-  const task = taskService.createTask(db, log, 'storyboard_generation', String(episodeId));
+  const task = taskService.createTask(db, log, 'storyboard_generation', String(episodeId), {
+    drama_id: episode.drama_id,
+    episode_id: episodeId,
+    user,
+  });
   log.info('Generating storyboard asynchronously', {
     task_id: task.id,
     episode_id: episodeId,

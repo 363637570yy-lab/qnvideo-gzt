@@ -13,7 +13,12 @@ function createDb() {
       status TEXT,
       progress INTEGER,
       message TEXT,
+      drama_id INTEGER,
+      episode_id INTEGER,
+      resource_type TEXT,
       resource_id TEXT,
+      owner_user_id TEXT,
+      operator_user_id TEXT,
       created_at TEXT,
       updated_at TEXT,
       completed_at TEXT,
@@ -125,6 +130,71 @@ test('ordinary users only see tasks from their own projects', () => {
 
   assert.deepEqual(userTasks.map((t) => t.id), ['own-storyboard']);
   assert.deepEqual(adminTasks.map((t) => t.id).sort(), ['other-storyboard', 'own-storyboard']);
+});
+
+test('created tasks store explicit project ownership and operator context', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO dramas (id, owner_user_id) VALUES (?, ?)').run(9, 'owner-1');
+  db.prepare('INSERT INTO episodes (id, drama_id) VALUES (?, ?)').run(27, 9);
+
+  const task = taskService.createTask(db, { info() {} }, 'storyboard_generation', 27, {
+    episode_id: 27,
+    user: { id: 'admin-1', role: 'admin' },
+  });
+
+  assert.equal(task.drama_id, 9);
+  assert.equal(task.episode_id, 27);
+  assert.equal(task.owner_user_id, 'owner-1');
+  assert.equal(task.operator_user_id, 'admin-1');
+  assert.equal(taskService.canUserSeeTask(db, task, { id: 'owner-1', role: 'user' }), true);
+});
+
+test('scene image tasks resolve scene id without treating it as a drama id', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO dramas (id, owner_user_id) VALUES (?, ?), (?, ?)').run(12, 'u-wrong', 99, 'u-right');
+  db.prepare('INSERT INTO scenes (id, drama_id) VALUES (?, ?)').run(12, 99);
+
+  const task = taskService.createTask(db, { info() {} }, 'image_generation', 12, {
+    resource_type: 'scene',
+    user: { id: 'operator-1', role: 'admin' },
+  });
+
+  assert.equal(task.drama_id, 99);
+  assert.equal(task.owner_user_id, 'u-right');
+  assert.equal(taskService.canUserSeeTask(db, task, { id: 'u-right', role: 'user' }), true);
+  assert.equal(taskService.canUserSeeTask(db, task, { id: 'u-wrong', role: 'user' }), false);
+});
+
+test('character extraction tasks resolve project ownership from episode id', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO dramas (id, owner_user_id) VALUES (?, ?)').run(21, 'writer-1');
+  db.prepare('INSERT INTO episodes (id, drama_id) VALUES (?, ?)').run(77, 21);
+
+  const task = taskService.createTask(db, { info() {} }, 'character_extraction', 77, {
+    episode_id: 77,
+    user: { id: 'admin-1', role: 'admin' },
+  });
+
+  assert.equal(task.drama_id, 21);
+  assert.equal(task.episode_id, 77);
+  assert.equal(task.owner_user_id, 'writer-1');
+  assert.equal(task.operator_user_id, 'admin-1');
+  assert.equal(taskService.canUserSeeTask(db, task, { id: 'writer-1', role: 'user' }), true);
+  assert.equal(taskService.canUserSeeTask(db, task, { id: 'writer-2', role: 'user' }), false);
+});
+
+test('projectless tasks are visible only to their operator', () => {
+  const db = createDb();
+
+  const task = taskService.createTask(db, { info() {} }, 'image_generation', '', {
+    user: { id: 'operator-1', role: 'user' },
+  });
+
+  assert.equal(task.drama_id, null);
+  assert.equal(task.owner_user_id, null);
+  assert.equal(task.operator_user_id, 'operator-1');
+  assert.equal(taskService.canUserSeeTask(db, task, { id: 'operator-1', role: 'user' }), true);
+  assert.equal(taskService.canUserSeeTask(db, task, { id: 'operator-2', role: 'user' }), false);
 });
 
 test('linked generation rows take precedence over ambiguous numeric resource ids', () => {

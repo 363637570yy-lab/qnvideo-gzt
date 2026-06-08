@@ -294,7 +294,7 @@ function routes(db, log) {
         const frameType = body.frame_type || 'first';
         const panelCount = body.panel_count || 3;
         const model = body.model || '';
-        const taskId = framePromptService.generateFramePrompt(db, log, req.params.id, frameType, panelCount, model);
+        const taskId = framePromptService.generateFramePrompt(db, log, req.params.id, frameType, panelCount, model, req.user);
         response.success(res, {
           task_id: taskId,
           status: 'pending',
@@ -392,7 +392,11 @@ function routes(db, log) {
           undefined,
           undefined,
           undefined,
-          req.query.language || 'zh'
+          req.query.language || 'zh',
+          undefined,
+          undefined,
+          undefined,
+          req.user
         );
         response.success(res, { task_id: taskId, status: 'pending', message: '分镜头生成任务已创建，正在后台处理...' });
       } catch (err) {

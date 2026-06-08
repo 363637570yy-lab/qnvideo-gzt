@@ -57,6 +57,24 @@ function selectDramaId(db, sql, id) {
   return db.prepare(sql).get(n)?.drama_id || null;
 }
 
+function selectGenerationAccessRow(db, table, id) {
+  const n = finiteNumber(id);
+  if (!n) return null;
+  return db.prepare(
+    `SELECT g.drama_id, t.operator_user_id
+     FROM ${table} g
+     LEFT JOIN async_tasks t ON t.id = g.task_id AND t.deleted_at IS NULL
+     WHERE g.id = ? AND g.deleted_at IS NULL`
+  ).get(n) || null;
+}
+
+function pushProjectlessGenerationOwner(db, owners, table, id) {
+  const row = selectGenerationAccessRow(db, table, id);
+  if (!row) return;
+  if (finiteNumber(row.drama_id)) return;
+  owners.push(row.operator_user_id || '');
+}
+
 function resolveEpisodeDramaId(db, id) {
   return selectDramaId(db, 'SELECT drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL', id);
 }
@@ -101,6 +119,7 @@ function pushDirectDramaIfExists(db, ids, id) {
 }
 
 function pushTaskResourceDramaIds(db, ids, task) {
+  pushResolved(ids, task?.drama_id);
   const type = String(task?.type || '');
   const resourceId = String(task?.resource_id || '').trim();
   if (!resourceId) return;
@@ -118,7 +137,7 @@ function pushTaskResourceDramaIds(db, ids, task) {
     pushResolved(ids, selectDramaId(db, 'SELECT drama_id FROM props WHERE id = ? AND deleted_at IS NULL', resourceId));
     return;
   }
-  if (type === 'prop_extraction' || type === 'background_extraction' || type === 'storyboard_generation' || type === 'video_merge') {
+  if (type === 'prop_extraction' || type === 'background_extraction' || type === 'storyboard_generation' || type === 'video_merge' || type === 'character_extraction') {
     pushResolved(ids, resolveEpisodeDramaId(db, resourceId));
     return;
   }
@@ -134,7 +153,7 @@ function pushTaskResourceDramaIds(db, ids, task) {
 
 function resolveTaskDramaIds(db, taskId) {
   if (!taskId) return [];
-  const task = db.prepare('SELECT id, type, resource_id FROM async_tasks WHERE id = ? AND deleted_at IS NULL').get(String(taskId));
+  const task = db.prepare('SELECT id, type, drama_id, resource_id FROM async_tasks WHERE id = ? AND deleted_at IS NULL').get(String(taskId));
   if (!task) return [];
   const ids = [];
   for (const row of db.prepare('SELECT drama_id FROM image_generations WHERE task_id = ? AND deleted_at IS NULL').all(String(taskId))) {
@@ -212,6 +231,27 @@ function lookupDramaIds(db, req) {
   return Array.from(new Set(ids));
 }
 
+function lookupProjectlessGenerationOwnerIds(db, req) {
+  const p = req.path || '';
+  const body = req.body || {};
+  const query = req.query || {};
+  const owners = [];
+
+  pushProjectlessGenerationOwner(db, owners, 'image_generations', body.image_gen_id || query.image_gen_id);
+  pushProjectlessGenerationOwner(db, owners, 'video_generations', body.video_gen_id || query.video_gen_id);
+
+  const imageId = pathNumber(p, /^\/images\/(\d+)(?:\/|$)/) || pathNumber(p, /^\/assets\/import\/image\/(\d+)(?:\/|$)/);
+  pushProjectlessGenerationOwner(db, owners, 'image_generations', imageId);
+
+  const videoFromImageId = pathNumber(p, /^\/videos\/image\/(\d+)(?:\/|$)/);
+  pushProjectlessGenerationOwner(db, owners, 'image_generations', videoFromImageId);
+
+  const videoId = pathNumber(p, /^\/videos\/(\d+)(?:\/|$)/) || pathNumber(p, /^\/assets\/import\/video\/(\d+)(?:\/|$)/);
+  pushProjectlessGenerationOwner(db, owners, 'video_generations', videoId);
+
+  return Array.from(new Set(owners));
+}
+
 function canAccessDrama(db, user, dramaId) {
   if (!dramaId || !Number.isFinite(Number(dramaId))) return true;
   if (user?.role === 'admin') return true;
@@ -226,6 +266,10 @@ function authorizeProjectAccess(db, log) {
     if (req.user?.role === 'admin') return next();
     try {
       const dramaIds = lookupDramaIds(db, req);
+      const projectlessOwnerIds = lookupProjectlessGenerationOwnerIds(db, req);
+      if (projectlessOwnerIds.some((ownerId) => !ownerId || String(ownerId) !== String(req.user.id))) {
+        return response.forbidden(res, '只能访问自己账号下的视频项目');
+      }
       if (!dramaIds.length) return next();
       if (dramaIds.every((dramaId) => canAccessDrama(db, req.user, dramaId))) return next();
       return response.forbidden(res, '只能访问自己账号下的视频项目');

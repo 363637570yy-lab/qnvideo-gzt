@@ -16,7 +16,7 @@ function routes(db, log) {
     create: (req, res) => {
       try {
         const body = req.body || {};
-        const rec = videoMergeService.create(db, log, body);
+        const rec = videoMergeService.create(db, log, { ...body, user: req.user });
         response.success(res, { merge_id: rec.merge_id, task_id: rec.task_id, ...rec });
       } catch (err) {
         log.error('video-merges create', { error: err.message });

@@ -590,7 +590,7 @@ async function processFramePromptGeneration(db, log, taskId, storyboardId, frame
   }
 }
 
-function generateFramePrompt(db, log, storyboardId, frameType, panelCount, model) {
+function generateFramePrompt(db, log, storyboardId, frameType, panelCount, model, user) {
   const sid = Number(storyboardId);
   const sb = db.prepare('SELECT id FROM storyboards WHERE id = ? AND deleted_at IS NULL').get(sid);
   if (!sb) {
@@ -600,7 +600,10 @@ function generateFramePrompt(db, log, storyboardId, frameType, panelCount, model
   if (!validTypes) {
     throw new Error('不支持的 frame_type，可选: first, key, last, panel, action');
   }
-  const task = taskService.createTask(db, log, 'frame_prompt_generation', String(storyboardId));
+  const task = taskService.createTask(db, log, 'frame_prompt_generation', String(storyboardId), {
+    storyboard_id: storyboardId,
+    user,
+  });
   setImmediate(() => {
     processFramePromptGeneration(db, log, task.id, storyboardId, frameType, panelCount || 0, model);
   });

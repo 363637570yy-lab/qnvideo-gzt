@@ -621,10 +621,16 @@ function mergePromptWithStyle(prompt, style) {
 
 function create(db, log, req) {
   const now = new Date().toISOString();
-  const task = taskService.createTask(db, log, 'image_generation', String(req.drama_id || ''));
-  const taskId = task.id;
   const frameType = req.frame_type ?? null;
   const sceneId = req.scene_id != null ? Number(req.scene_id) : null;
+  const task = taskService.createTask(db, log, 'image_generation', String(req.drama_id || ''), {
+    drama_id: req.drama_id,
+    episode_id: req.episode_id,
+    storyboard_id: req.storyboard_id,
+    resource_type: frameType || 'image_generation',
+    user: req.user,
+  });
+  const taskId = task.id;
   const refImagesJson =
     req.reference_images && Array.isArray(req.reference_images)
       ? JSON.stringify(req.reference_images.slice(0, 10))

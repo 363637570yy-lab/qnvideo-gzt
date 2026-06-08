@@ -125,7 +125,7 @@ function setupRouter(cfg, db, log) {
       if (!body.drama_id) {
         return response.badRequest(res, 'drama_id 必填');
       }
-      const taskId = characterGenerationService.generateCharacters(db, cfg, log, body);
+      const taskId = characterGenerationService.generateCharacters(db, cfg, log, { ...body, user: req.user });
       response.success(res, { task_id: taskId, status: 'pending' });
     } catch (err) {
       log.error('generation/characters', { error: err.message });

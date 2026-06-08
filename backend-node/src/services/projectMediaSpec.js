@@ -1,4 +1,7 @@
 const DEFAULT_PROJECT_ASPECT_RATIO = '16:9';
+const DEFAULT_IMAGE_TIER = '4K';
+const DEFAULT_VIDEO_TIER = '720p';
+const LEGACY_VIDEO_FALLBACK_TIER = '1080p';
 
 const IMAGE_TIER_AREAS = {
   '1K': 1280 * 720,
@@ -75,12 +78,14 @@ function dimensionsFromArea(area, ratio) {
 function normalizeImageSpec(raw, projectAspectRatio) {
   const spec = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const mode = spec.mode === 'custom' ? 'custom' : (spec.mode === 'auto' ? 'auto' : 'ratio');
-  const tier = IMAGE_TIER_AREAS[spec.tier] ? spec.tier : '2K';
+  const tier = IMAGE_TIER_AREAS[spec.tier] ? spec.tier : DEFAULT_IMAGE_TIER;
   const ratio = normalizeRatio(spec.ratio || 'follow_project', projectAspectRatio);
   if (mode === 'custom') {
-    const width = even(spec.width);
-    const height = even(spec.height);
-    if (width > 0 && height > 0) {
+    const rawWidth = Number(spec.width);
+    const rawHeight = Number(spec.height);
+    if (Number.isFinite(rawWidth) && rawWidth > 0 && Number.isFinite(rawHeight) && rawHeight > 0) {
+      const width = even(rawWidth);
+      const height = even(rawHeight);
       return { mode, tier, ratio, width, height };
     }
   }
@@ -95,8 +100,11 @@ function normalizeImageSpec(raw, projectAspectRatio) {
 
 function normalizeVideoSpec(raw, projectAspectRatio) {
   const spec = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const rawTier = String(spec.tier || spec.resolution || '1080p').trim().toLowerCase();
-  const tier = VIDEO_TIER_AREAS[rawTier] ? rawTier : '1080p';
+  const rawTier = String(spec.tier || spec.resolution || (spec.mode === 'custom' ? LEGACY_VIDEO_FALLBACK_TIER : DEFAULT_VIDEO_TIER)).trim().toLowerCase();
+  const hasExplicitTier = spec.tier != null || spec.resolution != null || spec.mode === 'custom';
+  const tier = VIDEO_TIER_AREAS[rawTier]
+    ? rawTier
+    : (hasExplicitTier ? LEGACY_VIDEO_FALLBACK_TIER : DEFAULT_VIDEO_TIER);
   return { mode: 'ratio', tier, ratio: normalizeRatio('follow_project', projectAspectRatio), width: null, height: null };
 }
 
@@ -107,7 +115,7 @@ function resolveProjectImageSpecFromMetadata(metadata) {
   if (spec.mode === 'custom' && spec.width && spec.height) {
     return { ...spec, size: `${spec.width}x${spec.height}`, aspect_ratio: normalizeRatio(`${spec.width}:${spec.height}`, projectRatio) };
   }
-  const dim = dimensionsFromArea(IMAGE_TIER_AREAS[spec.tier] || IMAGE_TIER_AREAS['2K'], spec.ratio);
+  const dim = dimensionsFromArea(IMAGE_TIER_AREAS[spec.tier] || IMAGE_TIER_AREAS[DEFAULT_IMAGE_TIER], spec.ratio);
   return { ...spec, width: dim.width, height: dim.height, size: `${dim.width}x${dim.height}`, aspect_ratio: spec.ratio };
 }
 
@@ -115,7 +123,7 @@ function resolveProjectVideoSpecFromMetadata(metadata) {
   const meta = parseMetadata(metadata);
   const projectRatio = normalizeRatio(meta.aspect_ratio || DEFAULT_PROJECT_ASPECT_RATIO);
   const spec = normalizeVideoSpec(meta.video_spec, projectRatio);
-  const dim = dimensionsFromArea(VIDEO_TIER_AREAS[spec.tier] || VIDEO_TIER_AREAS['1080p'], spec.ratio);
+  const dim = dimensionsFromArea(VIDEO_TIER_AREAS[spec.tier] || VIDEO_TIER_AREAS[DEFAULT_VIDEO_TIER], spec.ratio);
   return { ...spec, width: dim.width, height: dim.height, resolution: spec.tier, aspect_ratio: spec.ratio, size: `${dim.width}x${dim.height}` };
 }
 
@@ -171,6 +179,8 @@ function openAiGptImageSize(size, mode = 'direct') {
 
 module.exports = {
   DEFAULT_PROJECT_ASPECT_RATIO,
+  DEFAULT_IMAGE_TIER,
+  DEFAULT_VIDEO_TIER,
   IMAGE_TIER_AREAS,
   VIDEO_TIER_AREAS,
   normalizeRatio,

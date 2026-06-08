@@ -4,6 +4,8 @@ const storageLayout = require('./storageLayout');
 const { resolveStylePreset } = require('../constants/generationStylePresets');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
 
+const DEFAULT_PROJECT_STYLE = 'xianxia 3d';
+
 /**
  * 清理 image_url：如果数据库中存储的是 base64 data URL，则返回 null。
  * 图片应通过 local_path → /static/{local_path} 访问，base64 不应通过 API 透传（会严重膨胀响应体）。
@@ -24,17 +26,44 @@ function parseJsonColumn(value) {
   }
 }
 
+function defaultProjectMetadata(style = DEFAULT_PROJECT_STYLE) {
+  const preset = resolveStylePreset(style) || resolveStylePreset(DEFAULT_PROJECT_STYLE);
+  return {
+    aspect_ratio: '16:9',
+    image_spec: { mode: 'ratio', tier: '4K', ratio: 'follow_project', width: 3840, height: 2160 },
+    video_spec: { mode: 'ratio', tier: '720p', ratio: 'follow_project' },
+    video_clip_duration: 10,
+    script_language: 'zh',
+    ...(preset ? { style_prompt_zh: preset.zh, style_prompt_en: preset.en } : {}),
+  };
+}
+
+function resolveProjectClipDuration(metadata, fallback = 10) {
+  const meta = parseJsonColumn(metadata) || {};
+  const value = Number(meta.video_clip_duration);
+  return Number.isFinite(value) && value > 0 ? Math.min(120, Math.max(1, value)) : fallback;
+}
+
 function createDrama(db, log, req) {
   const now = new Date().toISOString();
-  let meta = {};
+  const styleValue = req.style || DEFAULT_PROJECT_STYLE;
+  let meta = defaultProjectMetadata(styleValue);
   if (req.metadata) {
     try {
-      meta =
+      const incoming =
         typeof req.metadata === 'string'
           ? JSON.parse(req.metadata)
           : { ...req.metadata };
+      meta = { ...meta, ...(incoming && typeof incoming === 'object' ? incoming : {}) };
     } catch (_) {
-      meta = {};
+      meta = defaultProjectMetadata(styleValue);
+    }
+  }
+  if (!meta.style_prompt_zh && !meta.style_prompt_en) {
+    const preset = resolveStylePreset(styleValue);
+    if (preset) {
+      meta.style_prompt_zh = preset.zh;
+      meta.style_prompt_en = preset.en;
     }
   }
   if (!meta.storage_folder_label) {
@@ -49,7 +78,7 @@ function createDrama(db, log, req) {
     req.title || '',
     req.description || null,
     req.genre || null,
-    req.style || 'realistic',
+    styleValue,
     metadataStr,
     req.owner_user_id || null,
     req.created_by_user_id || req.owner_user_id || null,
@@ -300,7 +329,7 @@ function updateDrama(db, log, dramaId, req) {
 
 function generateStoryboard(db, log, episodeId, options) {
   const episodeStoryboardService = require('./episodeStoryboardService');
-  const { model, style, storyboard_count, video_duration, aspect_ratio, language, include_narration, universal_omni_storyboard, ai_config_id, text_config_id } = options || {};
+  const { model, style, storyboard_count, video_duration, video_clip_duration, aspect_ratio, language, include_narration, universal_omni_storyboard, ai_config_id, text_config_id, user } = options || {};
   // 转换可能为字符串的数字
   const count = storyboard_count ? Number(storyboard_count) : undefined;
   const duration = video_duration ? Number(video_duration) : undefined;
@@ -316,7 +345,9 @@ function generateStoryboard(db, log, episodeId, options) {
     language,
     include_narration,
     universal_omni_storyboard,
-    ai_config_id || text_config_id || null
+    ai_config_id || text_config_id || null,
+    user,
+    video_clip_duration
   );
 }
 
@@ -807,7 +838,8 @@ function getVideoUrlForStoryboard(db, storyboardId, baseUrl) {
 function finalizeEpisode(db, log, episodeId, baseUrl, body = {}) {
   const ep = db.prepare('SELECT id, drama_id, episode_number FROM episodes WHERE id = ? AND deleted_at IS NULL').get(episodeId);
   if (!ep) return null;
-  const drama = db.prepare('SELECT title FROM dramas WHERE id = ? AND deleted_at IS NULL').get(ep.drama_id);
+  const drama = db.prepare('SELECT title, metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(ep.drama_id);
+  const projectClipDuration = resolveProjectClipDuration(drama?.metadata);
   const storyboards = db.prepare(
     'SELECT id, storyboard_number, duration FROM storyboards WHERE episode_id = ? AND deleted_at IS NULL ORDER BY storyboard_number ASC'
   ).all(episodeId);
@@ -823,7 +855,7 @@ function finalizeEpisode(db, log, episodeId, baseUrl, body = {}) {
     scenes.push({
       scene_id: sb.id,
       video_url: videoUrl,
-      duration: Number(sb.duration) || 5,
+      duration: Number(sb.duration) || projectClipDuration,
       order: i,
     });
   }
@@ -838,6 +870,7 @@ function finalizeEpisode(db, log, episodeId, baseUrl, body = {}) {
     title,
     scenes,
     provider: 'ffmpeg',
+    user: body?.user,
     merge_options: {
       burn_narration_subtitles: !!(body && body.burn_narration_subtitles),
       burn_dialogue_audio: !!(body && body.burn_dialogue_audio),

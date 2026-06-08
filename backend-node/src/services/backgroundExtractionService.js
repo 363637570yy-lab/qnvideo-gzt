@@ -174,7 +174,7 @@ async function processBackgroundExtraction(db, cfg, log, taskID, episodeId, mode
   log.info('Background extraction completed', { task_id: taskID, episode_id: episodeId, count: scenes.length });
 }
 
-function extractBackgroundsForEpisode(db, cfg, log, episodeId, model, style, language, aiConfigId) {
+function extractBackgroundsForEpisode(db, cfg, log, episodeId, model, style, language, aiConfigId, user) {
   const episode = db.prepare('SELECT id, drama_id, script_content FROM episodes WHERE id = ? AND deleted_at IS NULL').get(Number(episodeId));
   if (!episode) throw new Error('episode not found');
   if (!episode.script_content || !String(episode.script_content).trim()) {
@@ -193,7 +193,11 @@ function extractBackgroundsForEpisode(db, cfg, log, episodeId, model, style, lan
       }
     } catch (_) {}
   }
-  const task = taskService.createTask(db, log, 'background_extraction', String(episodeId));
+  const task = taskService.createTask(db, log, 'background_extraction', String(episodeId), {
+    drama_id: episode.drama_id,
+    episode_id: episodeId,
+    user,
+  });
   setImmediate(() => {
     processBackgroundExtraction(db, runCfg, log, task.id, episodeId, model, style, language, aiConfigId).catch((err) => {
       log.error('processBackgroundExtraction fatal', { error: err.message, task_id: task.id });

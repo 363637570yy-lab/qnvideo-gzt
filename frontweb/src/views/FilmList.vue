@@ -392,11 +392,13 @@ import { imagesAPI } from '@/api/images'
 import { taskAPI } from '@/api/task'
 import { authAPI } from '@/api/auth'
 import { getCurrentUser, isAdmin } from '@/utils/auth'
+import { stylePromptMetadataForSave } from '@/constants/styleOptions'
 
 const router = useRouter()
 const { isDark, toggle: toggleTheme } = useTheme()
 const currentUser = ref(getCurrentUser())
 const isAdminUser = ref(isAdmin())
+const DEFAULT_GENERATION_STYLE = 'xianxia 3d'
 
 // 库编辑图片 – 文件输入 refs
 const charLibFileRef  = ref(null)
@@ -793,12 +795,28 @@ function resetNewForm() {
   newForm.value = { title: '', description: '', aspect_ratio: '16:9' }
 }
 
+function defaultProjectMetadata(aspectRatio = '16:9') {
+  return {
+    aspect_ratio: aspectRatio || '16:9',
+    image_spec: { mode: 'ratio', tier: '4K', ratio: 'follow_project', width: 3840, height: 2160 },
+    video_spec: { mode: 'ratio', tier: '720p', ratio: 'follow_project' },
+    video_clip_duration: 10,
+    script_language: 'zh',
+    ...stylePromptMetadataForSave(DEFAULT_GENERATION_STYLE),
+  }
+}
+
 async function submitNew() {
   const title = newForm.value.title?.trim()
   if (!title) return
   newSaving.value = true
   try {
-    const drama = await dramaAPI.create({ title, description: newForm.value.description?.trim() || undefined, metadata: { aspect_ratio: newForm.value.aspect_ratio || '16:9' } })
+    const drama = await dramaAPI.create({
+      title,
+      description: newForm.value.description?.trim() || undefined,
+      style: DEFAULT_GENERATION_STYLE,
+      metadata: defaultProjectMetadata(newForm.value.aspect_ratio || '16:9'),
+    })
     showNewDialog.value = false
     ElMessage.success('项目已创建')
     loadList()

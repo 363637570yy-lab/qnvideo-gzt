@@ -1862,6 +1862,7 @@ function createAndGenerateImage(db, log, opts) {
     ai_config_id,
     image_config_id,
     user_negative_prompt,
+    user,
   } = opts;
   const negRow = (user_negative_prompt && String(user_negative_prompt).trim()) || null;
   const now = new Date().toISOString();
@@ -1873,7 +1874,11 @@ function createAndGenerateImage(db, log, opts) {
   if (charIdNum != null) resourceId = `character_${charIdNum}`;
   else if (sceneIdNum != null) resourceId = `scene_${sceneIdNum}`;
   else resourceId = String(dramaIdNum);
-  const task = taskService.createTask(db, log, 'image_generation', resourceId);
+  const task = taskService.createTask(db, log, 'image_generation', resourceId, {
+    drama_id: dramaIdNum,
+    resource_type: charIdNum != null ? 'character' : sceneIdNum != null ? 'scene' : 'image_generation',
+    user,
+  });
   const taskId = task.id;
   const projectImageSpec = dramaIdNum ? resolveProjectImageSpec(db, dramaIdNum) : null;
   const effectiveSize = size || projectImageSpec?.size || null;

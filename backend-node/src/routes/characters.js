@@ -81,7 +81,8 @@ function routes(db, cfg, log, uploadService) {
           characterIds,
           body.model,
           body.style,
-          body.ai_config_id || body.image_config_id || null
+          body.ai_config_id || body.image_config_id || null,
+          req.user
         );
         if (!out.ok) {
           return response.badRequest(res, out.error);
@@ -105,7 +106,8 @@ function routes(db, cfg, log, uploadService) {
           req.params.id,
           body.model,
           body.style,
-          body.ai_config_id || body.image_config_id || null
+          body.ai_config_id || body.image_config_id || null,
+          req.user
         );
         if (!out.ok) {
           if (out.error === 'character not found') return response.notFound(res, '角色不存在');
@@ -263,7 +265,8 @@ function routes(db, cfg, log, uploadService) {
           req.params.id,
           modelName,
           style,
-          body.ai_config_id || body.image_config_id || null
+          body.ai_config_id || body.image_config_id || null,
+          req.user
         );
         if (!out.ok) {
           if (out.error === 'character not found') return response.notFound(res, '角色不存在');

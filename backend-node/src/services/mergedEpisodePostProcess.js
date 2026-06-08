@@ -240,7 +240,7 @@ async function runMergedEpisodePostProcess(db, log, opts) {
       for (let i = 0; i < scenes.length; i++) {
         const sc = scenes[i];
         const sbId = Number(sc.scene_id);
-        const slotSec = Math.max(0.2, Number(sc.duration) || 5);
+        const slotSec = Math.max(0.2, Number(sc.duration) || 10);
         const row = db.prepare(
           'SELECT dialogue, narration, audio_local_path, narration_audio_local_path FROM storyboards WHERE id = ? AND deleted_at IS NULL'
         ).get(sbId);

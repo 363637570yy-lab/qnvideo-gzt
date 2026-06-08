@@ -67,7 +67,10 @@ module.exports = function stubRoutes(db, cfg, log) {
       response.success(res, list);
     },
     episodeCharactersExtract: (req, res) => {
-      const task = taskService.createTask(db, log, 'character_extraction', req.params.episode_id);
+      const task = taskService.createTask(db, log, 'character_extraction', req.params.episode_id, {
+        episode_id: req.params.episode_id,
+        user: req.user,
+      });
       setTimeout(() => taskService.updateTaskResult(db, task.id, { characters: [], count: 0 }), 100);
       response.success(res, { task_id: task.id });
     },

@@ -19,10 +19,14 @@ function routes(db, log) {
     create: (req, res) => {
       try {
         const body = req.body || {};
-        const task = taskService.createTask(db, log, 'video_generation', String(body.drama_id || ''));
         const now = new Date().toISOString();
         const dramaId = Number(body.drama_id) || 0;
         const storyboardId = body.storyboard_id != null ? Number(body.storyboard_id) : null;
+        const task = taskService.createTask(db, log, 'video_generation', String(dramaId || ''), {
+          drama_id: dramaId,
+          storyboard_id: storyboardId,
+          user: req.user,
+        });
         const provider = body.provider || 'chatfire';
         let prompt = body.prompt || '';
         const style = (body.style || '').toString().trim();
@@ -108,7 +112,10 @@ function routes(db, log) {
     },
     fromImage: (req, res) => {
       try {
-        const task = taskService.createTask(db, log, 'video_generation', req.params.image_gen_id);
+        const task = taskService.createTask(db, log, 'video_generation', req.params.image_gen_id, {
+          resource_type: 'image_generation',
+          user: req.user,
+        });
         response.success(res, { task_id: task.id });
       } catch (err) {
         log.error('videos fromImage', { error: err.message });

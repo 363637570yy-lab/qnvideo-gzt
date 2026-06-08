@@ -170,7 +170,12 @@ function generatePropImage(db, log, propId, opts) {
     throw new Error('道具没有图片提示词');
   }
 
-  const task = taskService.createTask(db, log, 'prop_image_generation', String(propId));
+  const task = taskService.createTask(db, log, 'prop_image_generation', String(propId), {
+    drama_id: prop.drama_id,
+    episode_id: prop.episode_id,
+    resource_type: 'prop',
+    user: opts?.user,
+  });
   setImmediate(() => {
     processPropImageGeneration(db, log, task.id, propId, opts || {}).catch((err) => {
       log.error('processPropImageGeneration fatal', { error: err.message, task_id: task.id });

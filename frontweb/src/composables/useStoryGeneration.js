@@ -4,11 +4,38 @@ import { generationAPI } from '@/api/generation'
 import { stylePromptMetadataForSave } from '@/constants/styleOptions'
 
 const MAX_STORY_EPISODE_COUNT = 100
+const DEFAULT_GENERATION_STYLE = 'xianxia 3d'
+const DEFAULT_PROJECT_ASPECT_RATIO = '16:9'
+const DEFAULT_VIDEO_CLIP_DURATION = 10
 
 function normalizeEpisodeCount(value) {
   const n = Number(value)
   if (!Number.isFinite(n)) return 1
   return Math.max(1, Math.min(MAX_STORY_EPISODE_COUNT, Math.trunc(n)))
+}
+
+function buildProjectMetadata({ generationStyle, storyStyle, projectAspectRatio, videoClipDuration, scriptLanguage }) {
+  const style = generationStyle || DEFAULT_GENERATION_STYLE
+  const aspectRatio = projectAspectRatio || DEFAULT_PROJECT_ASPECT_RATIO
+  return {
+    ...stylePromptMetadataForSave(style),
+    story_style: storyStyle || undefined,
+    aspect_ratio: aspectRatio,
+    image_spec: {
+      mode: 'ratio',
+      tier: '4K',
+      ratio: 'follow_project',
+      width: 3840,
+      height: 2160,
+    },
+    video_spec: {
+      mode: 'ratio',
+      tier: '720p',
+      ratio: 'follow_project',
+    },
+    video_clip_duration: videoClipDuration || DEFAULT_VIDEO_CLIP_DURATION,
+    script_language: scriptLanguage || 'zh',
+  }
 }
 
 /**
@@ -68,18 +95,13 @@ export async function runGenerateStoryFromPremise({
     try {
       let dramaId = store.dramaId
       if (!dramaId) {
+        const projectStyle = generationStyle || DEFAULT_GENERATION_STYLE
         const drama = await dramaAPI.create({
           title: scriptTitle || '新故事',
           description: text,
           genre: storyType || undefined,
-          style: generationStyle || undefined,
-          metadata: {
-            ...stylePromptMetadataForSave(generationStyle),
-            story_style: storyStyle || undefined,
-            aspect_ratio: projectAspectRatio || '16:9',
-            video_clip_duration: videoClipDuration || 5,
-            script_language: scriptLanguage || 'zh',
-          },
+          style: projectStyle,
+          metadata: buildProjectMetadata({ generationStyle: projectStyle, storyStyle, projectAspectRatio, videoClipDuration, scriptLanguage }),
         })
         store.setDrama(drama)
         dramaId = drama.id
@@ -101,11 +123,7 @@ export async function runGenerateStoryFromPremise({
         genre: storyType || undefined,
         style: generationStyle || undefined,
         metadata: {
-          ...stylePromptMetadataForSave(generationStyle),
-          story_style: storyStyle || undefined,
-          aspect_ratio: projectAspectRatio || '16:9',
-          video_clip_duration: videoClipDuration || 5,
-          script_language: scriptLanguage || 'zh',
+          ...buildProjectMetadata({ generationStyle, storyStyle, projectAspectRatio, videoClipDuration, scriptLanguage }),
         },
       }).catch(() => {})
 

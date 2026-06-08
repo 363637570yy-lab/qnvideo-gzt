@@ -392,7 +392,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
   const charCount = charNamesOrdered.length;
   const propCount = propNames.length;
 
-  let projectClipSec = 5;
+  let projectClipSec = 10;
   if (dramaRow?.metadata) {
     try {
       const m = typeof dramaRow.metadata === 'string' ? JSON.parse(dramaRow.metadata) : dramaRow.metadata;

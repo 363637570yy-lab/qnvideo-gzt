@@ -18,7 +18,7 @@ function routes(db, cfg, log) {
     create: (req, res) => {
       try {
         const body = req.body || {};
-        const rec = imageService.create(db, log, body);
+        const rec = imageService.create(db, log, { ...body, user: req.user });
         response.created(res, rec);
       } catch (err) {
         log.error('images create', { error: err.message });
@@ -57,7 +57,10 @@ function routes(db, cfg, log) {
     },
     scene: (req, res) => {
       try {
-        const task = taskService.createTask(db, log, 'image_generation', req.params.scene_id);
+        const task = taskService.createTask(db, log, 'image_generation', req.params.scene_id, {
+          resource_type: 'scene',
+          user: req.user,
+        });
         setTimeout(() => taskService.updateTaskResult(db, task.id, []), 100);
         response.success(res, { task_id: task.id });
       } catch (err) {
@@ -85,7 +88,8 @@ function routes(db, cfg, log) {
           body.model,
           body.style,
           body.language,
-          body.ai_config_id || body.text_config_id || null
+          body.ai_config_id || body.text_config_id || null,
+          req.user
         );
         response.success(res, { task_id: taskId, status: 'pending', message: '场景提取任务已创建，正在后台处理...' });
       } catch (err) {

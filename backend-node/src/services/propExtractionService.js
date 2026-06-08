@@ -134,7 +134,7 @@ async function processPropExtraction(db, log, taskId, episodeId, aiConfigId) {
   });
 }
 
-function extractPropsForEpisode(db, log, episodeId, cfg, aiConfigId) {
+function extractPropsForEpisode(db, log, episodeId, cfg, aiConfigId, user) {
   if (cfg) _cfg = cfg;
   const episode = db.prepare(
     'SELECT id, drama_id, script_content FROM episodes WHERE id = ? AND deleted_at IS NULL'
@@ -144,7 +144,11 @@ function extractPropsForEpisode(db, log, episodeId, cfg, aiConfigId) {
     throw new Error('剧集剧本内容为空，无法提取道具');
   }
 
-  const task = taskService.createTask(db, log, 'prop_extraction', String(episodeId));
+  const task = taskService.createTask(db, log, 'prop_extraction', String(episodeId), {
+    drama_id: episode.drama_id,
+    episode_id: episodeId,
+    user,
+  });
   setImmediate(() => {
     processPropExtraction(db, log, task.id, episodeId, aiConfigId).catch((err) => {
       log.error('processPropExtraction fatal', { error: err.message, task_id: task.id });

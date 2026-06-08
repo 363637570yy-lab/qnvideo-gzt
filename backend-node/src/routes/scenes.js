@@ -98,7 +98,8 @@ function routes(db, log, cfg) {
           sceneId,
           body.model || undefined,
           body.style || undefined,
-          body.ai_config_id || body.image_config_id || null
+          body.ai_config_id || body.image_config_id || null,
+          req.user
         );
         if (!out.ok) {
           if (out.error === 'scene not found') return response.notFound(res, '场景不存在');
@@ -153,7 +154,8 @@ function routes(db, log, cfg) {
           req.params.scene_id,
           modelName,
           style,
-          body.ai_config_id || body.image_config_id || null
+          body.ai_config_id || body.image_config_id || null,
+          req.user
         );
         if (!out.ok) {
           if (out.error === 'scene not found') return response.notFound(res, '场景不存在');
