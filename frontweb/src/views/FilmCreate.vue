@@ -436,21 +436,23 @@
               <el-option label="15秒/段" :value="15" />
             </el-select>
           </label>
-          <label class="project-setting-field">
-            <span>默认语言</span>
-            <el-select v-model="scriptLanguage" placeholder="默认语言" style="width: 105px" @change="() => scheduleProjectSettingsSave(false)">
-              <el-option label="中文" value="zh" />
-              <el-option label="英文" value="en" />
-            </el-select>
-          </label>
-          <label class="project-setting-field project-setting-field--style">
-            <span>主画风</span>
-            <StylePickerButton
-              v-model="generationStyle"
-              :options="generationStyleOptions"
-              @change="() => scheduleProjectSettingsSave(true)"
-            />
-          </label>
+          <div class="project-setting-inline-group">
+            <label class="project-setting-field">
+              <span>默认语言</span>
+              <el-select v-model="scriptLanguage" placeholder="默认语言" style="width: 105px" @change="() => scheduleProjectSettingsSave(false)">
+                <el-option label="中文" value="zh" />
+                <el-option label="英文" value="en" />
+              </el-select>
+            </label>
+            <label class="project-setting-field project-setting-field--style">
+              <span>主画风</span>
+              <StylePickerButton
+                v-model="generationStyle"
+                :options="generationStyleOptions"
+                @change="() => scheduleProjectSettingsSave(true)"
+              />
+            </label>
+          </div>
         </div>
         <div class="one-click-actions">
           <span class="one-click-label">🚀 一键动作</span>
@@ -460,7 +462,7 @@
             :disabled="!currentEpisodeId || pipelineRunning"
             @click="startOneClickPipeline"
           >
-            一键成片带图片视频
+            一键成片（测试中慎用！）
           </el-button>
           <el-button
             :loading="pipelineRunning && !pipelinePaused"
@@ -468,7 +470,7 @@
             title="仅提取角色、场景、道具与生成分镜文本，不生成图片与视频"
             @click="startTextFrameworkPipeline"
           >
-            生成文本框架
+            一键生成素材及分镜文本
           </el-button>
           <template v-if="pipelineRunning">
             <el-button v-if="!pipelinePaused" type="warning" @click="pipelinePaused = true">⏸ 暂停</el-button>
@@ -539,8 +541,6 @@
                 </el-button>
                 <el-button size="small" :disabled="!dramaId" @click="openAddCharacter">添加角色</el-button>
                 <el-button size="small" @click="showCharLibrary = true">本剧角色库</el-button>
-              </div>
-              <div class="workflow-preset-row">
                 <span class="workflow-preset-label">生成规范</span>
                 <el-select
                   v-model="selectedWorkflowPresetIds.character"
@@ -723,8 +723,6 @@
                 </el-button>
                 <el-button size="small" :disabled="!dramaId" @click="showAddProp = true">添加道具</el-button>
                 <el-button size="small" @click="showPropLibrary = true">本剧道具库</el-button>
-              </div>
-              <div class="workflow-preset-row">
                 <span class="workflow-preset-label">生成规范</span>
                 <el-select
                   v-model="selectedWorkflowPresetIds.prop"
@@ -856,8 +854,6 @@
                 </el-button>
                 <el-button size="small" :disabled="!dramaId" @click="openAddScene">添加场景</el-button>
                 <el-button size="small" @click="showSceneLibrary = true">本剧场景库</el-button>
-              </div>
-              <div class="workflow-preset-row">
                 <span class="workflow-preset-label">生成规范</span>
                 <el-select
                   v-model="selectedWorkflowPresetIds.scene"
@@ -8954,7 +8950,7 @@ async function pipelineWithRetry(stepName, fn, maxRetries = 3) {
 
 async function startOneClickPipeline() {
   if (!currentEpisodeId.value || pipelineRunning.value) return
-  if (!(await confirmAdminProjectOperation('一键生成完整视频流程'))) return
+  if (!(await confirmAdminProjectOperation('一键成片（测试中慎用！）'))) return
   trackFilmCreateAction('one_click_generate_start')
   pipelineErrorLog.value = []
   pipelineCurrentStep.value = ''
@@ -8973,7 +8969,7 @@ async function startOneClickPipeline() {
 
 async function startTextFrameworkPipeline() {
   if (!currentEpisodeId.value || pipelineRunning.value) return
-  if (!(await confirmAdminProjectOperation('生成文本框架'))) return
+  if (!(await confirmAdminProjectOperation('一键生成素材及分镜文本'))) return
   pipelineErrorLog.value = []
   pipelineCurrentStep.value = ''
   pipelineStepIndex.value = 0
@@ -10655,6 +10651,12 @@ html.light .section-title { color: #1e1b4b; }
   align-items: center;
   gap: 7px;
 }
+.project-setting-inline-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
 .project-setting-field > span {
   font-size: 13px;
   color: var(--el-text-color-secondary);
@@ -11138,14 +11140,14 @@ html.light .resource-block-title {
   padding: 12px 14px 14px;
 }
 .resource-block-body .asset-actions {
-  margin-bottom: 12px;
-}
-.workflow-preset-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 12px;
   flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.resource-block-body .asset-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 .workflow-preset-label {
   font-size: 13px;
@@ -11153,7 +11155,8 @@ html.light .resource-block-title {
   white-space: nowrap;
 }
 .workflow-preset-select {
-  width: min(360px, 100%);
+  width: 280px;
+  max-width: min(320px, 100%);
 }
 html.light .workflow-preset-label {
   color: #64748b;
