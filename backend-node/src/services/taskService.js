@@ -18,21 +18,162 @@ function getTask(db, taskId) {
   return rowToTask(row);
 }
 
-function getTasksByResource(db, resourceId) {
+function taskTypesFromFilter(filters = {}) {
+  const raw = filters.types || filters.type || filters.task_type || '';
+  return [...new Set(String(raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean))];
+}
+
+function parsePositiveInt(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function pushUnique(list, value) {
+  const n = parsePositiveInt(value);
+  if (n && !list.includes(n)) list.push(n);
+}
+
+function getOneSafe(db, sql, ...params) {
+  try {
+    return db.prepare(sql).get(...params) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getAllSafe(db, sql, ...params) {
+  try {
+    return db.prepare(sql).all(...params) || [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function resolveTaskDramaIds(db, task) {
+  const ids = [];
+  const type = String(task?.type || '');
+  const resourceId = String(task?.resource_id || '').trim();
+
+  for (const row of getAllSafe(db, 'SELECT drama_id FROM image_generations WHERE task_id = ? AND deleted_at IS NULL', task.id)) {
+    pushUnique(ids, row.drama_id);
+  }
+  for (const row of getAllSafe(db, 'SELECT drama_id FROM video_generations WHERE task_id = ? AND deleted_at IS NULL', task.id)) {
+    pushUnique(ids, row.drama_id);
+  }
+  for (const row of getAllSafe(db, 'SELECT drama_id FROM video_merges WHERE task_id = ? AND deleted_at IS NULL', task.id)) {
+    pushUnique(ids, row.drama_id);
+  }
+  if (ids.length > 0) return ids;
+
+  if (type === 'prop_image_generation') {
+    pushUnique(ids, getOneSafe(db, 'SELECT drama_id FROM props WHERE id = ? AND deleted_at IS NULL', resourceId)?.drama_id);
+  } else if (type === 'prop_extraction' || type === 'background_extraction' || type === 'storyboard_generation' || type === 'video_merge') {
+    pushUnique(ids, getOneSafe(db, 'SELECT drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL', resourceId)?.drama_id);
+  } else if (type === 'image_generation' || type === 'character_generation' || type === 'video_generation') {
+    pushUnique(ids, getOneSafe(db, 'SELECT id FROM dramas WHERE id = ? AND deleted_at IS NULL', resourceId)?.id);
+    if (type === 'video_generation') {
+      pushUnique(ids, getOneSafe(db, 'SELECT drama_id FROM image_generations WHERE id = ? AND deleted_at IS NULL', resourceId)?.drama_id);
+    }
+  }
+
+  if (/^scene_(\d+)$/i.test(resourceId)) {
+    const id = Number(resourceId.match(/^scene_(\d+)$/i)[1]);
+    pushUnique(ids, getOneSafe(db, 'SELECT drama_id FROM scenes WHERE id = ? AND deleted_at IS NULL', id)?.drama_id);
+  }
+  if (/^character_(\d+)$/i.test(resourceId)) {
+    const id = Number(resourceId.match(/^character_(\d+)$/i)[1]);
+    pushUnique(ids, getOneSafe(db, 'SELECT drama_id FROM characters WHERE id = ? AND deleted_at IS NULL', id)?.drama_id);
+  }
+
+  return ids;
+}
+
+function resolveTaskEpisodeIds(db, task) {
+  const ids = [];
+  const type = String(task?.type || '');
+  const resourceId = String(task?.resource_id || '').trim();
+
+  if (type === 'prop_image_generation') {
+    pushUnique(ids, getOneSafe(db, 'SELECT episode_id FROM props WHERE id = ? AND deleted_at IS NULL', resourceId)?.episode_id);
+    for (const row of getAllSafe(
+      db,
+      `SELECT sb.episode_id
+       FROM storyboard_props sp
+       INNER JOIN storyboards sb ON sb.id = sp.storyboard_id
+       WHERE sp.prop_id = ? AND sb.deleted_at IS NULL`,
+      resourceId
+    )) {
+      pushUnique(ids, row.episode_id);
+    }
+  } else if (type === 'prop_extraction' || type === 'background_extraction' || type === 'storyboard_generation' || type === 'video_merge') {
+    pushUnique(ids, resourceId);
+  }
+  for (const row of getAllSafe(
+    db,
+    `SELECT sb.episode_id
+     FROM image_generations ig
+     INNER JOIN storyboards sb ON sb.id = ig.storyboard_id
+     WHERE ig.task_id = ? AND ig.deleted_at IS NULL AND sb.deleted_at IS NULL`,
+    task.id
+  )) {
+    pushUnique(ids, row.episode_id);
+  }
+  for (const row of getAllSafe(
+    db,
+    `SELECT sb.episode_id
+     FROM video_generations vg
+     INNER JOIN storyboards sb ON sb.id = vg.storyboard_id
+     WHERE vg.task_id = ? AND vg.deleted_at IS NULL AND sb.deleted_at IS NULL`,
+    task.id
+  )) {
+    pushUnique(ids, row.episode_id);
+  }
+
+  return ids;
+}
+
+function canUserSeeTask(db, task, user) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  const dramaIds = resolveTaskDramaIds(db, task);
+  if (dramaIds.length === 0) return false;
+  return dramaIds.every((dramaId) => {
+    const row = getOneSafe(db, 'SELECT owner_user_id FROM dramas WHERE id = ? AND deleted_at IS NULL', dramaId);
+    return row?.owner_user_id && String(row.owner_user_id) === String(user.id);
+  });
+}
+
+function filterTasks(db, tasks, filters = {}) {
+  const types = taskTypesFromFilter(filters);
+  const dramaId = parsePositiveInt(filters.drama_id);
+  const episodeId = parsePositiveInt(filters.episode_id);
+  return tasks.filter((task) => {
+    if (types.length > 0 && !types.includes(String(task.type || ''))) return false;
+    if (dramaId && !resolveTaskDramaIds(db, task).includes(dramaId)) return false;
+    if (episodeId && !resolveTaskEpisodeIds(db, task).includes(episodeId)) return false;
+    if (!canUserSeeTask(db, task, filters.user)) return false;
+    return true;
+  });
+}
+
+function getTasksByResource(db, resourceId, filters = {}) {
   const rows = db.prepare(
     'SELECT * FROM async_tasks WHERE resource_id = ? AND deleted_at IS NULL ORDER BY created_at DESC'
   ).all(resourceId);
-  return rows.map(rowToTask);
+  return filterTasks(db, rows.map(rowToTask), filters);
 }
 
-function getTasksByResources(db, resourceIds) {
+function getTasksByResources(db, resourceIds, filters = {}) {
   const ids = [...new Set((resourceIds || []).map((id) => String(id)).filter(Boolean))];
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => '?').join(',');
   const rows = db.prepare(
     `SELECT * FROM async_tasks WHERE resource_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY created_at DESC`
   ).all(...ids);
-  return rows.map(rowToTask);
+  return filterTasks(db, rows.map(rowToTask), filters);
 }
 
 function updateTaskStatus(db, taskId, status, progress, message) {
@@ -113,6 +254,7 @@ module.exports = {
   getTask,
   getTasksByResource,
   getTasksByResources,
+  canUserSeeTask,
   cancelTask,
   deleteTask,
   isTaskCancelled,

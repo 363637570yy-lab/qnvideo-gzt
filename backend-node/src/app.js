@@ -47,6 +47,44 @@ function createApp() {
     : path.join(process.cwd(), 'data', 'storage');
   try {
     if (!fs.existsSync(storageRoot)) fs.mkdirSync(storageRoot, { recursive: true });
+    app.get('/static-thumb/:width/*', async (req, res, next) => {
+      const width = Math.max(64, Math.min(960, Number(req.params.width) || 320));
+      const relRaw = String(req.params[0] || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      const rel = relRaw.split('/').filter(Boolean).join('/');
+      if (!rel || rel.startsWith('_thumbs/')) return res.status(404).end();
+
+      const sourcePath = path.resolve(storageRoot, rel);
+      const storageResolved = path.resolve(storageRoot);
+      if (!sourcePath.startsWith(storageResolved + path.sep) && sourcePath !== storageResolved) {
+        return res.status(400).end();
+      }
+      if (!fs.existsSync(sourcePath)) return res.status(404).end();
+
+      const cachePath = path.resolve(storageRoot, '_thumbs', `w${width}`, rel + '.webp');
+      if (!cachePath.startsWith(path.resolve(storageRoot, '_thumbs') + path.sep)) {
+        return res.status(400).end();
+      }
+
+      try {
+        const srcStat = fs.statSync(sourcePath);
+        const cacheStat = fs.existsSync(cachePath) ? fs.statSync(cachePath) : null;
+        if (!cacheStat || cacheStat.mtimeMs < srcStat.mtimeMs) {
+          const sharp = require('sharp');
+          fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+          await sharp(sourcePath, { failOn: 'none' })
+            .rotate()
+            .resize({ width, withoutEnlargement: true })
+            .webp({ quality: 78, effort: 4 })
+            .toFile(cachePath);
+        }
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.type('image/webp');
+        return res.sendFile(cachePath);
+      } catch (e) {
+        log.warn('Static thumbnail generation failed, fallback to source', { path: rel, width, error: e.message });
+        return res.sendFile(sourcePath);
+      }
+    });
     app.use('/static', express.static(storageRoot));
   } catch (e) {
     console.warn('Static storage mount skipped:', e.message);

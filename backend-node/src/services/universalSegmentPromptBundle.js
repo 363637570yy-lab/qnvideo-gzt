@@ -15,7 +15,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
       action, dialogue, narration, result, atmosphere,
       image_prompt, polished_prompt, video_prompt, universal_segment_text,
       shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field,
-      characters, local_path, duration, segment_index, segment_title
+      characters, image_url, local_path, composed_image, duration, segment_index, segment_title
      FROM storyboards WHERE id = ? AND deleted_at IS NULL`
   ).get(sbId);
   if (!sb) return { ok: false, code: 'not_found', message: '分镜不存在' };
@@ -105,7 +105,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
       nameHint: nameHint != null && String(nameHint).trim() ? String(nameHint).trim() : '',
     });
   };
-  /** 与前端 collectSbOmniReferenceAbsoluteUrls / 视频 API 参考图顺序一致：仅以分镜 characters JSON 的本剧角色顺序为准，避免再追加 storyboard_characters 导致槽位与界面 @图片N 错位。 */
+  /** 与前端 collectSbOmniReferenceAbsoluteUrls / 视频 API 参考图顺序一致：角色仅以分镜 characters JSON 的本剧角色顺序为准，避免再追加 storyboard_characters 导致槽位与界面 @图片N 错位。 */
   let charOrderFromDramaJson = false;
   try {
     if (sb.characters) {
@@ -207,27 +207,134 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     const brief = String(summary || '').trim() || kind;
     slots.push({ num, tag: `@图片${num}`, kind, summary: brief });
   };
-  if (sceneRow && hasMediaRef(sceneRow)) {
-    pushSlot('场景', String(sceneRow.location || '').trim() || '场景环境');
-  }
-  for (const ent of charOrderEntries) {
-    let row = null;
-    if (ent.key.startsWith('drama:')) {
-      row = db
-        .prepare('SELECT name, local_path, image_url FROM characters WHERE id = ? AND deleted_at IS NULL')
-        .get(Number(ent.key.slice(6)));
-    } else if (ent.key.startsWith('lib:')) {
-      row = db
-        .prepare('SELECT name, local_path, image_url FROM character_libraries WHERE id = ? AND deleted_at IS NULL')
-        .get(Number(ent.key.slice(4)));
+  const auxFrameTypes = new Set([
+    'storyboard_motion_sketch',
+    'storyboard_layout_sketch',
+    'storyboard_pose_ref',
+    'storyboard_camera_path',
+    'storyboard_aux_ref',
+  ]);
+  const auxRoleLabel = (role, frameType) => {
+    const map = {
+      motion_sketch: '运动线稿',
+      layout_sketch: '构图稿',
+      pose_ref: '姿态参考',
+      camera_path: '镜头路径',
+      aux_ref: '辅助参考',
+    };
+    if (role && map[role]) return map[role];
+    if (frameType === 'storyboard_motion_sketch') return '运动线稿';
+    if (frameType === 'storyboard_layout_sketch') return '构图稿';
+    if (frameType === 'storyboard_pose_ref') return '姿态参考';
+    if (frameType === 'storyboard_camera_path') return '镜头路径';
+    return '辅助参考';
+  };
+  const isAuxImageRow = (row) => {
+    const ft = String(row?.frame_type || '');
+    return !!row?.aux_role || auxFrameTypes.has(ft);
+  };
+  const imageTimeValue = (row) => {
+    const t = Date.parse(row?.created_at || row?.updated_at || '');
+    return Number.isFinite(t) ? t : Number(row?.id || 0);
+  };
+  const sortStoryboardRefs = (a, b) => {
+    const sa = Number(a?.slot_index ?? 999);
+    const sb = Number(b?.slot_index ?? 999);
+    if (sa !== sb) return sa - sb;
+    return imageTimeValue(a) - imageTimeValue(b);
+  };
+  const latestKeyframeBatch = (rows) => {
+    const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+    const withBatch = list.filter((row) => row.batch_id);
+    if (!withBatch.length) return list;
+    const batches = new Map();
+    for (const row of withBatch) {
+      const key = String(row.batch_id);
+      const item = batches.get(key) || { rows: [], newest: 0 };
+      item.rows.push(row);
+      item.newest = Math.max(item.newest, imageTimeValue(row));
+      batches.set(key, item);
     }
+    let chosen = null;
+    for (const item of batches.values()) {
+      if (!chosen || item.newest > chosen.newest) chosen = item;
+    }
+    return chosen?.rows || list;
+  };
+  const latestAuxRows = (rows) => {
+    const latest = new Map();
+    for (const row of rows.filter(isAuxImageRow).sort((a, b) => imageTimeValue(b) - imageTimeValue(a))) {
+      const key = row.aux_role || row.frame_type || String(row.id);
+      if (!latest.has(key)) latest.set(key, row);
+    }
+    return Array.from(latest.values());
+  };
+  const collectStoryboardRefRows = () => {
+    let rows = [];
+    try {
+      rows = db
+        .prepare(
+          `SELECT id, frame_type, prompt, image_url, local_path, batch_id, slot_index, batch_count, selected, aux_role, created_at, updated_at
+           FROM image_generations
+           WHERE storyboard_id = ?
+             AND deleted_at IS NULL
+             AND status = 'completed'
+             AND frame_type NOT IN ('quad_grid', 'nine_grid')
+             AND ((image_url IS NOT NULL AND TRIM(image_url) != '') OR (local_path IS NOT NULL AND TRIM(local_path) != ''))
+           ORDER BY created_at DESC, id DESC`
+        )
+        .all(sbId) || [];
+    } catch (_) {
+      rows = [];
+    }
+    const keyframes = rows.filter((row) => !isAuxImageRow(row) && row.frame_type === 'storyboard_keyframe');
+    const confirmed = keyframes.filter((row) => !!row.selected);
+    let primaryRows = (confirmed.length ? confirmed : latestKeyframeBatch(keyframes)).slice().sort(sortStoryboardRefs);
+    if (!primaryRows.length && (sb.local_path || sb.image_url || sb.composed_image)) {
+      primaryRows = [{
+        id: `storyboard-${sb.id}`,
+        frame_type: 'storyboard_legacy',
+        image_url: sb.composed_image || sb.image_url || '',
+        local_path: sb.local_path || '',
+      }];
+    }
+    return [...primaryRows, ...latestAuxRows(rows)];
+  };
+  const storyboardRefSummary = (row) => {
+    if (isAuxImageRow(row)) return auxRoleLabel(row.aux_role, row.frame_type);
+    if (row?.slot_index != null && row?.batch_count) return `关键帧 ${Number(row.slot_index) + 1}/${row.batch_count}`;
+    if (row?.frame_type === 'storyboard_legacy') return '分镜主图';
+    return '关键帧';
+  };
+  const storyboardRefRows = collectStoryboardRefRows();
+  const primaryStoryboardRefCount = storyboardRefRows.filter((row) => !isAuxImageRow(row)).length;
+  for (const row of storyboardRefRows) {
     if (!hasMediaRef(row)) continue;
-    const cn = String(row.name || ent.nameHint || '角色').trim();
-    pushSlot('角色', cn);
+    pushSlot(isAuxImageRow(row) ? '辅助稿' : '分镜图', storyboardRefSummary(row));
   }
-  for (const pr of propRows) {
-    if (!hasMediaRef(pr)) continue;
-    pushSlot('道具', String(pr.name || '道具').trim());
+  if (primaryStoryboardRefCount < 2) {
+    if (sceneRow && hasMediaRef(sceneRow)) {
+      pushSlot('场景', String(sceneRow.location || '').trim() || '场景环境');
+    }
+    for (const ent of charOrderEntries) {
+      let row = null;
+      if (ent.key.startsWith('drama:')) {
+        row = db
+          .prepare('SELECT name, local_path, image_url FROM characters WHERE id = ? AND deleted_at IS NULL')
+          .get(Number(ent.key.slice(6)));
+      } else if (ent.key.startsWith('lib:')) {
+        row = db
+          .prepare('SELECT name, local_path, image_url FROM character_libraries WHERE id = ? AND deleted_at IS NULL')
+          .get(Number(ent.key.slice(4)));
+      }
+      if (!hasMediaRef(row)) continue;
+      const cn = String(row.name || ent.nameHint || '角色').trim();
+      pushSlot('角色', cn);
+    }
+    for (const pr of propRows) {
+      if (!hasMediaRef(pr)) continue;
+      pushSlot('道具', String(pr.name || '道具').trim());
+    }
   }
 
   const charSlots = slots.filter((s) => s.kind === '角色');
@@ -258,7 +365,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
     return {
       ok: false,
       code: 'bad_request',
-      message: '请至少为场景、角色或道具上传一张参考图后再生成，以便对应 @图片1、@图片2 与 API 参考顺序一致',
+      message: '请至少为场景、角色、道具或分镜上传一张参考图后再生成，以便对应 @图片1、@图片2 与 API 参考顺序一致',
     };
   }
 
@@ -266,7 +373,7 @@ function buildUniversalSegmentUserPromptBundle(db, sbId, reqBody, opts = {}) {
   let line3Required;
   if (slots.length === 0) {
     imageSlotMapBlock = [
-      'IMAGE_SLOT_MAP（无图强制模式：尚无已上传场景/角色/道具参考图；视频 API 当前无实际参考图槽位。若正文仍写 @图片N，仅表示与将来补图顺序对齐的占位，出片前须核对）:',
+      'IMAGE_SLOT_MAP（无图强制模式：尚无已上传场景/角色/道具/分镜参考图；视频 API 当前无实际参考图槽位。若正文仍写 @图片N，仅表示与将来补图顺序对齐的占位，出片前须核对）:',
       '（解析结果：无已绑定图像的槽位 — 优先依据剧本与分镜字段写清运镜、节奏与情绪；可不使用 @图片N，或自 @图片1 起预留占位，勿编造与剧本矛盾的细节。）',
     ].join('\n');
     line3Required =

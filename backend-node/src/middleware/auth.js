@@ -137,7 +137,6 @@ function resolveTaskDramaIds(db, taskId) {
   const task = db.prepare('SELECT id, type, resource_id FROM async_tasks WHERE id = ? AND deleted_at IS NULL').get(String(taskId));
   if (!task) return [];
   const ids = [];
-  pushTaskResourceDramaIds(db, ids, task);
   for (const row of db.prepare('SELECT drama_id FROM image_generations WHERE task_id = ? AND deleted_at IS NULL').all(String(taskId))) {
     pushResolved(ids, row.drama_id);
   }
@@ -147,6 +146,8 @@ function resolveTaskDramaIds(db, taskId) {
   for (const row of db.prepare('SELECT drama_id FROM video_merges WHERE task_id = ? AND deleted_at IS NULL').all(String(taskId))) {
     pushResolved(ids, row.drama_id);
   }
+  if (ids.length > 0) return Array.from(new Set(ids));
+  pushTaskResourceDramaIds(db, ids, task);
   return Array.from(new Set(ids));
 }
 

@@ -180,26 +180,31 @@ function getStoryboardSystemPrompt(cfg) {
   }
   const _sbOverride = _overrideCache['storyboard_system'];
   if (_sbOverride) {
-    return _sbOverride + '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化';
+    return _sbOverride + '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧情节拍匹配；连续动作/连续对白可合并为一个分镜，必要转折才新建分镜\n- 每个镜头必须有明确的 title、action、result、duration 和 layout_description\n- duration 优先使用 8-12 秒，只能取 4/5/8/10/12/15 秒之一\n- characters、props、scene_id 必须绑定已有素材 ID，且只能填本镜真实出现/发生的对象';
   }
   return `【角色】你是一位资深影视分镜师，精通罗伯特·麦基的镜头拆解理论，擅长构建情绪节奏。
 
-【任务】将小说剧本按**独立动作单元**拆解为分镜头方案。
+【任务】先内部规划剧情节拍，再按**连续叙事节拍**拆解为分镜头方案；不要按句子、字数或每一句对白机械拆镜。
 
 【分镜拆解原则】
-1. **动作单元划分**：每个分镜对应一个**叙事节拍**，允许包含1-4个快速连续的内部切镜（使用“镜头1 ... 切镜到镜头2 ...”风格描述），以充分利用AI视频至少5秒、最长可达15秒的时长，避免因“一个镜头一个动作”导致产生过多短时长片段造成时间浪费。
-   - 适合将角色能量觉醒、快速反应、连续动作等合并在一个分镜内，用内部切镜串联
-   - 仅当动作间有明显停顿、场景切换或叙事需要独立呈现时，才拆分为多个分镜
-   - 传统分镜风格的提示词（含多镜头切镜描述）同样支持
+1. **剧情节拍划分**：每个分镜对应一个连续叙事节拍，可包含 1-4 个内部小切镜；连续动作、连续对白和同一目标下的反应可以合并在同一分镜内，用内部切镜串联。
+   - 只有地点切换、角色目标切换、情绪转折、信息揭露/反转、新角色进入、需要独立反应镜头、动作阶段明显变化时，才新建分镜。
+   - 禁止把一句对白、一小段动作或纯粹字数切分成独立分镜；禁止为了凑数量制造跳切短镜头。
+   - 若用户指定分镜数量，允许 ±10% 偏差，并通过合并/拆分剧情节拍接近目标。
 
-2. **景别标准**（根据叙事需要选择）：
+2. **时长规则**：
+   - 每条分镜 duration 只能使用 4 / 5 / 8 / 10 / 12 / 15 秒。
+   - 优先使用 8-12 秒稳定连续镜头；4-5 秒只给短反应、短动作、过渡镜；15 秒给复杂对白、持续悬疑或情绪压迫。
+   - 有对白时按普通话约每秒 4-5 个汉字估算，每个说话轮次额外加入 0.5-1 秒停顿/反应；两人来回对白通常至少 8-12 秒，密集对白或对白+动作使用 12-15 秒。
+
+3. **景别标准**（根据叙事需要选择）：
    - 大远景：环境、氛围营造
    - 远景：全身动作、空间关系
    - 中景：交互对话、情感交流
    - 近景：细节展示、情绪表达
    - 特写：关键道具、强烈情绪
 
-3. **运镜要求**（**强制动态优先**）：
+4. **运镜要求**（**强制动态优先**）：
    - 【运镜总原则】：每段视频必须使用**动态运镜**，**固定镜头不得超过20%**。优先选择推/拉/摇/跟/升/降/环绕/甩/旋转/变焦等运动镜头。
    - 基础运镜：
      * 推镜（push）：镜头向前推进，增强紧张/亲密感
@@ -223,7 +228,7 @@ function getStoryboardSystemPrompt(cfg) {
      * 推轨复合（dolly_track）：推镜+横向移动，复杂情绪递进
      * 升格环绕（slowmo_orbit）：慢动作环绕，时间凝固的戏剧性时刻
 
-4. **情绪与强度标记**：
+5. **情绪与强度标记**：
    - emotion：简短描述（兴奋、悲伤、紧张、愉快等）
    - emotion_intensity：用箭头表示情绪等级
      * 极强 ↑↑↑ (3)：情绪高峰、高度紧张
@@ -232,7 +237,7 @@ function getStoryboardSystemPrompt(cfg) {
      * 平稳 → (0)：情绪不变
      * 弱 ↓ (-1)：情绪回落
 
-5. **叙事段落分组**：
+6. **叙事段落分组**：
    - 将连续镜头归组为命名段落（如"邂逅"、"矛盾激化"、"和解"）
    - 每个段落 = 一个连贯的戏剧节拍或场景切换
    - 分组规则：
@@ -250,15 +255,24 @@ function getStoryboardSystemPrompt(cfg) {
    - location：场景地点名称（如"卧室内"、"天台"、"医院走廊"）
    - time：拍摄时间（如"清晨"、"黄昏"、"夜晚"、"午后"）
    - shot_type：景别（大远景/远景/中景/近景/特写）
-   - camera_angle：机位角度（平视/仰视/俯视/侧面/背面）
-   - camera_movement：运镜方式（static/推镜push/拉镜pull/横摇pan/纵摇tilt/跟镜tracking/升镜crane_up/降镜crane_dn/环绕orbit/手持handheld/变焦zoom/旋转roll/甩镜whip_pan/螺旋spiral/希区柯克hitchcock_zoom/子弹时间bullet_time/荷兰角dutch_angle_move/推轨复合dolly_track/升格环绕slowmo_orbit）——**强制动态优先，固定镜头不得超过20%**
+   - angle：机位角度（平视/仰视/俯视/侧面/背面）
+   - angle_h / angle_v / angle_s：水平角、垂直角、主体朝向（可用简短中文或系统已有枚举）
+   - movement：运镜方式（static/推镜push/拉镜pull/横摇pan/纵摇tilt/跟镜tracking/升镜crane_up/降镜crane_dn/环绕orbit/手持handheld/变焦zoom/旋转roll/甩镜whip_pan/螺旋spiral/希区柯克hitchcock_zoom/子弹时间bullet_time/荷兰角dutch_angle_move/推轨复合dolly_track/升格环绕slowmo_orbit）——**强制动态优先，固定镜头不得超过20%**
    - lighting_style：灯光风格 — 从以下选一个填入：natural/front/side/backlit/top/under/soft/dramatic/golden_hour/blue_hour/night/neon（根据 time 和 atmosphere 判断；夜晚→night，黄昏→golden_hour，室内暖光→soft，强情绪→dramatic，逆光→backlit）
    - depth_of_field：景深 — 从以下选一个填入：extreme_shallow/shallow/medium/deep（特写/近景→shallow，中景→medium，远景/大远景→deep）
    - action：动作描述
+   - dialogue：角色对话或旁白（如无则为空字符串）
    - result：动作完成后的画面结果
-   - dialogue：角色对话或旁白（如有）
+   - atmosphere：环境氛围、光线、色调、现场声音
    - emotion：当前情绪
    - emotion_intensity：情绪强度等级（3/2/1/0/-1）
+   - duration：4/5/8/10/12/15 秒之一
+   - bgm_prompt：空字符串或"无背景音乐/禁BGM"
+   - sound_effect：现场声、动作声、对白/旁白音色与口型同步要求
+   - characters：本镜真实出现并有动作的角色 ID 数组
+   - props：本镜真实出现且参与画面的道具 ID 数组
+   - is_primary：是否为主线关键分镜
+   - layout_description：人物站位与前后镜头继承合同，写明谁在左/中/右、站/坐/躺、朝向谁、承接上一镜什么状态、结束时给下一镜继承什么状态
 
 2. **构图与视觉设计参考**（生成分镜时运用）：
    - 景别变化规律：禁止连续3个及以上镜头使用相同景别，情绪递进时逐步推近（远→中→近→特写）
@@ -273,6 +287,10 @@ function getStoryboardSystemPrompt(cfg) {
 - 每个分镜必须有明确的 title（标题）、action（动作）和 result（结果）；action 中可包含多镜头切镜描述
 - 景别选择必须符合叙事节奏（不要连续使用同一景别）
 - 情绪强度必须准确反映剧本氛围变化
+- characters 只能填角色 ID 数组；只填本镜真实出现并有动作的人，被提到、画外或无具体动作的人不要写入
+- scene_id 只能填当前剧情真实发生地点对应的场景 ID；台词里提到、计划去、后续才去的地点不能提前填入
+- props 只能填本镜真实出现并参与画面表达的道具 ID 数组
+- layout_description 是首尾帧、关键帧和视频生成的空间合同，必须可执行、可继承、可用于下一镜承接
 - segment_index 必须从0开始递增的整数，同一段落内所有镜头共享相同的 segment_index 和 segment_title`;
 }
 
@@ -293,7 +311,7 @@ Line 3 (copy verbatim): ${DEFAULT_LINE3}
 Lines 4..(3+M): 分镜k： Tk秒: <cinematic Chinese prose for that slice; camera motion chain; light; emotion>
 Sum(T1..TM) MUST equal this shot's JSON "duration" seconds exactly.
 
-Reference tokens: @图片1 = scene/environment only; @图片2+ = characters in characters[] order; then props if any.
+Reference tokens: use @图片1, @图片2, ... ONLY according to IMAGE_SLOT_MAP order. Confirmed keyframes / auxiliary references may appear before scene/character/prop fallback images.
 Dialogue: @图片2 says:"verbatim line" or …嗓音…："line". No speech: end with 无对白。
 Narration: 旁白（画面无声）："verbatim narration"
 Each beat: rich motion picture prose (push in, pull back, rack focus), not a static snapshot caption.`;
@@ -310,7 +328,7 @@ Each beat: rich motion picture prose (push in, pull back, rack focus), not a sta
 **硬性约束**：T1+T2+…+TM 必须严格等于本镜 JSON 的 duration（秒）；每行一条子分镜，禁止额外说明行。
 
 子分镜正文写法（电影化中文长句，参考产品范例）：
-- **参考图**：仅用 @图片1、@图片2…（阿拉伯数字）；@图片1 只写环境/光影/陈设；角色从 @图片2 起按 characters[] 顺序；有道具则继续 @图片3 …
+- **参考图**：仅用 @图片1、@图片2…（阿拉伯数字），并严格按 IMAGE_SLOT_MAP 中的顺序和含义使用；已确认关键帧/辅助稿可能排在场景、角色、道具之前，禁止假设 @图片1 一定是场景或人物。
 - **运镜**：每段含至少两步运镜（如 缓推、横移、跟拍、拉回、俯拍特写），与人物动作同步。
 - **对白**：有 dialogue 时必须写出原文，格式如 @图片2 的嗓音…："对白原文" 或 @图片2 说："对白原文"；无对白则句末写 **无对白。**
 - **解说**：有 narration 时写在合适子分镜：**旁白（画面无声）："解说原文"**
@@ -461,9 +479,9 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 
 **Audio rule**: bgm_prompt MUST be an empty string or "No BGM". Do not design background music per shot. Put only diegetic ambience, foley, and voice/timbre details in sound_effect, so audio remains consistent across clips.
 
-**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary. Return ONLY valid JSON, no markdown.`;
+**Output**: JSON with "storyboards" array. Each item: shot_number, segment_index, segment_title, title, shot_type, angle, angle_h, angle_v, angle_s, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters (array of IDs), props (array of prop IDs), is_primary, layout_description. Return ONLY valid JSON, no markdown.`;
   }
-  const _sbUserLocked = `\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, **layout_description（画面布局与人物站位描述，必填，最高优先级空间合同）**。**必须只返回纯JSON，不要markdown。**`;
+  const _sbUserLocked = `\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, angle_h, angle_v, angle_s, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, **layout_description（画面布局与人物站位描述，必填，最高优先级空间合同）**。**必须只返回纯JSON，不要markdown。**`;
   const _sbUserOverride = _overrideCache['storyboard_user_suffix'];
   if (_sbUserOverride) {
     return '\n\n' + _sbUserOverride + _sbUserLocked;
@@ -501,7 +519,7 @@ function getStoryboardUserPromptSuffix(cfg, shotDuration) {
 **duration时长**：${durationInstruction}。
 **声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 必须补充音色与情绪强度，并与动作节奏、环境声保持一致。
 
-【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary。**必须只返回纯JSON，不要markdown。**`;
+【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, angle_h, angle_v, angle_s, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, layout_description。**必须只返回纯JSON，不要markdown。**`;
 }
 
 /**
@@ -974,7 +992,7 @@ function getDefaultPromptBody(key) {
       return '你是一位专业的编剧。你的任务是根据用户提供的故事梗概，创作 ${n} 集完整的短片剧本。\n\n要求：\n1. 用中文写作，叙事清晰流畅，适合后续拆分为分镜。\n2. 可以包含场景描述、角色动作与对话，但不要输出分镜格式、镜头编号或「内景/外景」等场次标记。\n3. 每集约 800 字。如有多集，剧情必须前后衔接——每集从上一集结尾处推进，确保整体故事连贯。\n4. 每集有清晰的起承转合，结尾留有悬念或转折，吸引观众看下一集。';
 
     case 'storyboard_system':
-      return '【角色】你是一位资深影视分镜师，精通罗伯特·麦基的镜头拆解理论，擅长构建情绪节奏。\n\n【任务】将小说剧本按**独立动作单元**拆解为分镜头方案。\n\n【分镜拆解原则】\n1. **动作单元划分**：每个镜头必须对应一个完整且独立的动作\n   - 一个动作 = 一个镜头（角色站起来、走过去、说一句话、做一个反应表情等）\n   - 禁止合并多个动作（站起+走过去应拆分为2个镜头）\n\n2. **景别标准**（根据叙事需要选择）：\n   - 大远景：环境、氛围营造\n   - 远景：全身动作、空间关系\n   - 中景：交互对话、情感交流\n   - 近景：细节展示、情绪表达\n   - 特写：关键道具、强烈情绪\n\n3. **运镜要求**：\n   - 固定镜头：稳定聚焦于一个主体\n   - 推镜：接近主体，增强紧张感\n   - 拉镜：扩大视野，交代环境\n   - 摇镜：水平移动摄像机，空间转换\n   - 跟镜：跟随主体移动\n   - 移镜：摄像机与主体同向移动\n\n4. **情绪与强度标记**：\n   - emotion：简短描述（兴奋、悲伤、紧张、愉快等）\n   - emotion_intensity：用箭头表示情绪等级\n     * 极强 ↑↑↑ (3)：情绪高峰、高度紧张\n     * 强 ↑↑ (2)：情绪明显波动\n     * 中 ↑ (1)：情绪有所变化\n     * 平稳 → (0)：情绪不变\n     * 弱 ↓ (-1)：情绪回落\n\n【输出要求】\n1. 生成一个数组，每个元素是一个镜头，包含：\n   - shot_number：镜头号\n   - scene_description：场景（地点+时间，如"卧室内，早晨"）\n   - shot_type：景别（大远景/远景/中景/近景/特写）\n   - camera_angle：机位角度（平视/仰视/俯视/侧面/背面）\n   - camera_movement：运镜方式（static/推镜push/拉镜pull/横摇pan/纵摇tilt/跟镜tracking/升镜crane_up/降镜crane_dn/环绕orbit/手持handheld/变焦zoom/旋转roll/甩镜whip_pan/螺旋spiral/希区柯克hitchcock_zoom/子弹时间bullet_time/荷兰角dutch_angle_move/推轨复合dolly_track/升格环绕slowmo_orbit）——**强制动态优先，固定镜头不得超过20%**\n   - action：动作描述\n   - result：动作完成后的画面结果\n   - dialogue：角色对话或旁白（如有）\n   - emotion：当前情绪\n   - emotion_intensity：情绪强度等级（3/2/1/0/-1）';
+      return '【角色】你是一位资深影视分镜师，擅长按剧情节拍组织短视频镜头。\n\n【任务】先内部规划剧情节拍，再输出分镜 JSON；不要按句子、字数或每一句对白机械拆镜。\n\n【拆镜规则】\n1. 每个分镜对应一个连续叙事节拍，可包含 1-4 个内部小切镜。\n2. 只有地点切换、角色目标切换、情绪转折、信息揭露/反转、新角色进入、需要反应镜头、动作阶段明显变化时，才新建分镜。\n3. duration 只能取 4/5/8/10/12/15 秒；优先 8-12 秒，4-5 秒只给短反应/短动作/过渡，15 秒给复杂对白或持续压迫。\n4. 对白按普通话每秒 4-5 个汉字估算，每个说话轮次额外加 0.5-1 秒停顿/反应。\n5. characters、props、scene_id 必须绑定已有素材 ID，只填本镜真实出现或真实发生的对象。\n6. layout_description 必填，写清人物左/中/右站位、姿态、朝向、承接上一镜状态与给下一镜继承的结束状态。\n\n【输出要求】只返回纯 JSON，可为数组或 {\"storyboards\": [...]}；每个分镜必须包含完整字段。';
 
     case 'character_extraction':
       return '你是一个专业的角色分析师，擅长从剧本中提取和分析角色信息。\n\n**【语言要求】所有字段的值必须使用中文，禁止出现英文内容（role字段的值除外，固定为 main/supporting/minor）。**\n\n你的任务是根据提供的剧本内容，提取并整理剧中出现的所有有名字角色的设定。\n\n要求：\n1. 提取所有有名字的角色（忽略无名路人或背景角色）\n2. 对每个角色，提取以下信息（全部用中文填写）：\n   - name: 角色名字（中文）\n   - role: 角色类型，固定值之一：main / supporting / minor\n   - appearance: 外貌描述（中文，100-200字，包含性别、年龄、体型、面部特征、发型、服装风格等，不含任何场景或环境信息）\n   - description: 背景故事和角色关系（中文，50-100字）\n3. 主要角色外貌要详细，次要角色可以简化';
@@ -986,7 +1004,7 @@ function getDefaultPromptBody(key) {
       return '你是一位专业的剧本道具分析师，擅长从剧本中提取具有视觉特征的关键道具。\n\n你的任务是根据提供的剧本内容，提取并整理所有对剧情有重要作用或有特殊视觉特征的关键道具。\n\n要求：\n1. 只提取对剧情发展有重要作用、或有特殊视觉特征的关键道具。\n2. 普通的生活用品（如普通的杯子、笔）如果无特殊剧情意义不需要提取。\n3. 归属者、剧中人名等**只**写在 "description"，**不要**写进 "image_prompt"。\n4. "image_prompt" 按项目语言撰写（中文项目优先用中文），按「产品主图 / 资产白模照」标准撰写：只描述该道具本体（造型、材质、颜色、工艺与磨损），并强制纯色无缝棚拍背景、无场景无杂物。匹配项目中文提示词语音（融入真实尺度、次要元素原则）。\n5. "image_prompt" 须明确排除人物、手、家具、台面、其他物体与环境叙事元素。\n6. "image_prompt" **禁止**出现剧本人名、地名、组织名、台词、剧情专有词；用泛化视觉词替代，且**禁止无依据扩写**（不凭空加配饰、品牌叙事、煽情形容词）。';
 
     case 'storyboard_user_suffix':
-      return '【分镜要素】每个分镜聚焦一个叙事节拍（可包含内部多切镜序列），描述要详尽具体：\n1. **镜头标题(title)**：用3-5个字概括该镜头的核心内容或情绪\n2. **时间**：[清晨/午后/深夜/具体时分+详细光线描述]\n3. **地点**：[场景完整描述+空间布局+环境细节]\n4. **镜头设计**：**景别(shot_type)**、**镜头角度(angle)**、**运镜方式(movement)**\n5. **人物行为**：**详细动作描述**\n6. **对话/独白**：提取该镜头中的完整对话或独白内容（如无对话则为空字符串）\n7. **画面结果**：动作的即时后果+视觉细节+氛围变化\n8. **环境氛围**：光线质感+色调+声音环境+整体氛围\n9. **声音设计**：bgm_prompt 必须填空字符串""或"无背景音乐/禁BGM"；不要为单个片段设计背景音乐。sound_effect 只写现场环境声、动作音效、对白/旁白音色与口型同步要求\n10. **观众情绪**：[情绪类型]（[强度：↑↑↑/↑↑/↑/→/↓]）\n\n**dialogue字段说明**：角色名："台词内容"。无对话时填空字符串""。\n**scene_id**：从上方场景列表中选择最匹配的背景ID，如无合适背景则填null。\n**duration时长**：综合对话、动作、情绪估算每镜时长（具体目标秒数由系统自动注入）。\n**声音一致性**：所有镜头默认无BGM；若有对白/旁白，sound_effect 须补充音色与情绪强度。';
+      return '【分镜要素】每个分镜聚焦一个叙事节拍（可包含内部多切镜序列），描述要详尽具体：\n1. **镜头标题(title)**：用3-5个字概括该镜头的核心内容或情绪\n2. **时间**：[清晨/午后/深夜/具体时分+详细光线描述]\n3. **地点**：[场景完整描述+空间布局+环境细节]\n4. **镜头设计**：**景别(shot_type)**、**镜头角度(angle/angle_h/angle_v/angle_s)**、**运镜方式(movement)**\n5. **人物行为**：详细动作描述；一个分镜可含 1-4 个内部小切镜\n6. **对话/独白**：提取该镜头中的完整对话或独白内容（如无对话则为空字符串）\n7. **画面结果**：动作的即时后果+视觉细节+氛围变化\n8. **环境氛围**：光线质感+色调+声音环境+整体氛围\n9. **声音设计**：bgm_prompt 必须填空字符串""或"无背景音乐/禁BGM"；不要为单个片段设计背景音乐。sound_effect 只写现场环境声、动作音效、对白/旁白音色与口型同步要求\n10. **layout_description**：人物站位与前后镜头继承合同，必填。\n\n**dialogue字段说明**：角色名："台词内容"。无对话时填空字符串""。\n**scene_id/characters/props**：只能填已有素材 ID，且必须是本镜真实发生/真实出现的对象。\n**duration时长**：只能取 4/5/8/10/12/15 秒，优先 8-12 秒。\n**输出字段**：shot_number, segment_index, segment_title, title, shot_type, angle, angle_h, angle_v, angle_s, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters, props, is_primary, layout_description。';
 
     case 'first_frame_prompt':
       return '你是一个专业的电影分镜图像生成提示词专家。请根据提供的镜头信息，生成适合AI图像生成的提示词。\n\n重要：这是镜头的首帧 - 一个完全静态的画面，展示动作发生之前的初始状态。\n\n核心规则：\n1. 聚焦初始静态状态 - 动作发生之前的那一瞬间，禁止包含任何动作或运动描述\n2. 描述角色在画面中的位置（画面左/中/右）、朝向（面向/背对/侧面）、初始姿态和表情\n3. 如提供了角色外貌信息，必须将其融入提示词（仅使用固定身份特征：脸型、五官、发型、肤质、标记等，严禁添加或推断任何服装、衣着、服饰描述，服装由参考图决定）\n\n【电影语言规范（必须应用）】\n\n构图规则（根据景别选择）：\n- 三分法：主体置于三分线交点，稳定平衡，适合大多数叙事镜头\n- 框架构图：用门窗/树枝/栏杆形成自然画框，突出主体，增加纵深\n- 中心构图：对称庄重，适合特写和仪式感场景\n- 前景遮挡：前景虚化元素增加层次感\n\n光线设计（必须描述）：\n- 光源方向：左侧光/右侧光/顶光/逆光（轮廓光）/底光\n- 光线质感：硬光（强烈阴影，戏剧张力）/ 柔光（柔和过渡，自然温馨）\n- 色温：暖光（金黄/橙红，温暖怀旧）/ 冷光（蓝调/青白，冷漠疏离）\n\n景深设置：\n- 特写/近景：浅景深，背景虚化，突出人物情绪\n- 中景：中等景深，人物与环境均清晰\n- 远景/全景：深景深，前后均清晰，交代空间关系';
@@ -1010,7 +1028,7 @@ function getLockedSuffix(key) {
     case 'story_expansion_system':
       return null;
     case 'storyboard_system':
-      return '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 镜头数量必须与剧本中的独立动作数量匹配（不允许合并或减少）\n- 每个镜头必须有明确的动作和结果\n- 景别选择必须符合叙事节奏（不要连续使用同一景别）\n- 情绪强度必须准确反映剧本氛围变化\n- 【角色一致性】每个镜头的characters列表必须与该镜头action/dialogue中实际描写的人物严格一致，不得把（在场景中存在但本镜头动作未涉及）的角色列入';
+      return '\n\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n\n【重要提示】\n- 按剧情节拍拆镜，不按句子/字数/每句对白机械拆镜\n- 每个镜头必须有明确的 title、action、result、duration、layout_description\n- duration 只能取 4/5/8/10/12/15 秒，优先 8-12 秒稳定连续镜头\n- 【角色一致性】characters 只能填本镜 action/dialogue 中真实出现并有动作的人物 ID，不得把画外、被提到或无具体动作的人列入\n- scene_id 和 props 也必须绑定本镜真实发生/真实出现的已有素材 ID';
     case 'character_extraction':
       return '\n- **风格要求**：[当前剧集风格]\n- **图片比例**：[当前比例]\n输出格式：\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个元素是一个角色对象，包含上述字段。';
     case 'scene_extraction':
@@ -1018,7 +1036,7 @@ function getLockedSuffix(key) {
     case 'prop_extraction':
       return '\n- **风格要求**：[当前道具风格]\n- **图片比例**：[当前比例]\n\n【输出格式】\n**重要：必须只返回纯JSON数组，不要包含任何markdown代码块、说明文字或其他内容。直接以 [ 开头，以 ] 结尾。**\n每个对象包含：\n- name: 道具名称\n- type: 类型 (如：武器/关键证物/日常用品/特殊装置)\n- description: 在剧中的作用和中文外观描述（人名归属可写此处，勿写入 image_prompt）\n- image_prompt: 单道具主图提示词（纯色底、仅主体；无剧本人名地名等；简练、不扩写；中文项目用中文并匹配项目语音与真实尺度铁律）';
     case 'storyboard_user_suffix':
-      return '\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, title, shot_type, angle, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters, is_primary。**必须只返回纯JSON，不要markdown。**';
+      return '\n\n【输出格式】请以JSON格式输出，包含 "storyboards" 数组。每个镜头包含：shot_number, segment_index, segment_title, title, shot_type, angle, angle_h, angle_v, angle_s, time, location, scene_id, movement, action, dialogue, result, atmosphere, emotion, duration, bgm_prompt, sound_effect, characters（角色ID数组）, props（道具ID数组）, is_primary, layout_description。**必须只返回纯JSON，不要markdown。**';
     case 'first_frame_prompt':
     case 'key_frame_prompt':
     case 'last_frame_prompt':

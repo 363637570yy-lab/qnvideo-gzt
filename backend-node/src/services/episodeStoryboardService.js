@@ -124,6 +124,19 @@ function normalizeDuration(v) {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
 }
 
+const STORYBOARD_DURATION_BUCKETS = [4, 5, 8, 10, 12, 15];
+
+function snapStoryboardDuration(sec) {
+  const n = Math.max(4, Math.min(15, Math.round(Number(sec) || 8)));
+  let best = STORYBOARD_DURATION_BUCKETS[0];
+  for (const bucket of STORYBOARD_DURATION_BUCKETS) {
+    const bestDelta = Math.abs(best - n);
+    const delta = Math.abs(bucket - n);
+    if (delta < bestDelta || (delta === bestDelta && bucket > best)) best = bucket;
+  }
+  return best;
+}
+
 const _SB_PROMPT_LOG_CHUNK = 14000;
 
 /**
@@ -271,6 +284,7 @@ function getStoryboardsForEpisode(db, episodeId) {
       segment_title: r.segment_title ?? null,
       creation_mode: r.creation_mode === 'universal' ? 'universal' : 'classic',
       universal_segment_text: r.universal_segment_text ?? null,
+      layout_description: r.layout_description ?? null,
       characters: (() => {
         if (!r.characters) return [];
         if (typeof r.characters !== 'string') return Array.isArray(r.characters) ? r.characters : [];
@@ -403,12 +417,13 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
   const segmentTitle = sb.segment_title ?? null;
   const lightingStyle = sb.lighting_style ?? null;
   const depthOfField = sb.depth_of_field ?? null;
-  let durationSec = normalizeDuration(sb.duration) || 5;
+  const layoutDescription = sb.layout_description ?? sb.layoutDescription ?? null;
+  let durationSec = normalizeDuration(sb.duration) || 8;
   const targetClip = opts.targetClipDuration != null ? Number(opts.targetClipDuration) : 0;
   if (Number.isFinite(targetClip) && targetClip > 0) {
     durationSec = Math.max(durationSec, Math.round(targetClip));
   }
-  durationSec = Math.min(120, Math.max(1, Math.round(durationSec)));
+  durationSec = snapStoryboardDuration(durationSec);
   sb.duration = durationSec;
   if (!sb.location && sb.scene_description) {
     const sceneDesc = String(sb.scene_description).trim();
@@ -420,9 +435,12 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
       sb.location = sceneDesc;
     }
   }
-  const { h: angleH, v: angleV, s: angleS } = (angle || shotType)
+  const parsedAngle = (angle || shotType)
     ? angleService.parseFromLegacyText(angle || '', shotType || '')
     : { h: null, v: null, s: null };
+  const angleH = sb.angle_h ?? parsedAngle.h;
+  const angleV = sb.angle_v ?? parsedAngle.v;
+  const angleS = sb.angle_s ?? parsedAngle.s;
   const description = `【镜头类型】${shotType}\n【运镜】${movement}\n【动作】${action}\n【对话】${dialogue}\n【解说】${narration}\n【结果】${result}\n【情绪】${emotion}`;
   const sbWithAngles = { ...sb, angle_h: angleH, angle_v: angleV, angle_s: angleS };
   const imagePrompt = generateImagePrompt(sbWithAngles, style);
@@ -479,6 +497,7 @@ function deriveStoryboardFieldsFromAi(sb, style, videoRatio, opts = {}) {
     angleV,
     angleS,
     propIds,
+    layoutDescription,
     creationMode,
     universalSegmentText,
   };
@@ -493,7 +512,7 @@ function updateStoryboardRowFromDerived(db, existingId, episodeIdNum, d, sb, now
       image_prompt = ?, video_prompt = ?, characters = ?,
       shot_type = ?, angle = ?, angle_h = ?, angle_v = ?, angle_s = ?, movement = ?,
       lighting_style = ?, depth_of_field = ?, segment_index = ?, segment_title = ?,
-      creation_mode = ?, universal_segment_text = ?,
+      creation_mode = ?, universal_segment_text = ?, layout_description = ?,
       updated_at = ?
      WHERE id = ? AND episode_id = ? AND deleted_at IS NULL`
   ).run(
@@ -523,6 +542,7 @@ function updateStoryboardRowFromDerived(db, existingId, episodeIdNum, d, sb, now
     d.segmentTitle,
     d.creationMode || 'classic',
     d.universalSegmentText != null ? d.universalSegmentText : null,
+    d.layoutDescription || null,
     now,
     existingId,
     episodeIdNum
@@ -545,8 +565,8 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
   const shotNumber = d.shotNumber;
   try {
     db.prepare(
-      `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+      `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, layout_description, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
     ).run(
       episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
       sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
@@ -556,6 +576,7 @@ function insertOneStoryboard(db, episodeIdNum, sb, style, videoRatio, now, deriv
       d.movement || null, d.lightingStyle, d.depthOfField, d.segmentIndex, d.segmentTitle,
       d.creationMode || 'classic',
       d.universalSegmentText != null ? d.universalSegmentText : null,
+      d.layoutDescription || null,
       now, now
     );
     const newId = db.prepare('SELECT last_insert_rowid() as id').get().id;
@@ -699,6 +720,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
           segment_title: refreshed.segment_title ?? null,
           creation_mode: refreshed.creation_mode === 'universal' ? 'universal' : 'classic',
           universal_segment_text: refreshed.universal_segment_text ?? null,
+          layout_description: refreshed.layout_description ?? null,
           characters: (() => { try { return JSON.parse(refreshed.characters || '[]'); } catch (_) { return []; } })(),
           prop_ids: propIds,
           status: refreshed.status,
@@ -722,8 +744,8 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
 
     try {
       db.prepare(
-        `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+        `INSERT INTO storyboards (episode_id, scene_id, storyboard_number, title, description, location, time, duration, dialogue, narration, action, result, atmosphere, image_prompt, video_prompt, characters, shot_type, angle, angle_h, angle_v, angle_s, movement, lighting_style, depth_of_field, segment_index, segment_title, creation_mode, universal_segment_text, layout_description, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
       ).run(
         episodeIdNum, d.sceneId, shotNumber, d.title || null, d.description,
         sb.location ?? null, sb.time ?? null, sb.duration ?? 5,
@@ -733,6 +755,7 @@ function saveStoryboards(db, log, episodeId, storyboards, cfg, styleOverride, sk
         d.movement || null, d.lightingStyle, d.depthOfField, d.segmentIndex, d.segmentTitle,
         d.creationMode || 'classic',
         d.universalSegmentText != null ? d.universalSegmentText : null,
+        d.layoutDescription || null,
         now, now
       );
     } catch (e) {
@@ -1271,22 +1294,22 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   let systemPrompt = promptI18n.getStoryboardSystemPrompt(cfg);
 
   // 当用户指定了分镜数量时，在系统提示词后追加最高优先级覆盖指令，
-  // 使"目标数量"优先于默认的"一动作一镜头、禁止合并"原则
+  // 使"目标数量"优先于默认的剧情节拍数量判断
   if (storyboardCount && Number(storyboardCount) > 0) {
     const targetCount = Number(storyboardCount);
     const isEn = systemPrompt.includes('[Role]');
     if (isEn) {
       systemPrompt += `\n\n[HIGHEST PRIORITY — USER SPECIFIED COUNT]
 The user requires exactly ${targetCount} shots (±10% tolerance is acceptable).
-This requirement OVERRIDES the "one action = one shot, no merging" rule above.
-You MUST merge related consecutive actions into fewer shots OR split key moments into more shots to reach this target.
+This requirement OVERRIDES the default narrative-beat count.
+You MUST merge related consecutive beats into fewer shots OR split only key turning points / reveals / action phases to reach this target.
 Do NOT produce a shot count far from ${targetCount} under any circumstance.`;
     } else {
       systemPrompt += `\n\n【最高优先级——用户指定分镜数量】
 用户要求生成恰好 ${targetCount} 个分镜（允许 ±10% 的偏差，即 ${Math.floor(targetCount * 0.9)}~${Math.ceil(targetCount * 1.1)} 个均可接受）。
-此要求优先级高于上述所有原则，包括"一动作一镜头、禁止合并"的规则。
-- 若动作较多、自然拆分超过目标数量，请将相关联的连续小动作合并为一个镜头
-- 若动作较少、自然拆分不足目标数量，请将重要场景或情绪转折拆分为多个镜头
+此要求优先级高于默认的剧情节拍数量判断。
+- 若自然节拍超过目标数量，请将同一地点、同一目标、同一情绪方向下的连续小节拍合并为一个分镜
+- 若自然节拍不足目标数量，请只拆分重要场景、情绪转折、信息揭露或动作阶段变化
 - 严禁生成数量与 ${targetCount} 相差悬殊的分镜方案`;
     }
   }

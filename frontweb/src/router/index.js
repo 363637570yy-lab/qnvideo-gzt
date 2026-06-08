@@ -1,4 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { authAPI } from '@/api/auth'
+import { clearAuth, getCurrentUser, getToken, setCurrentUser } from '@/utils/auth'
+import { useGenerationTaskStore } from '@/stores/generationTaskStore'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -54,12 +57,43 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach((to) => {
-  const token = localStorage.getItem('qnvideo_auth_token')
-  let user = null
-  try { user = JSON.parse(localStorage.getItem('qnvideo_auth_user') || 'null') } catch (_) {}
+let userRefreshPromise = null
+
+async function refreshCurrentUser() {
+  if (!userRefreshPromise) {
+    userRefreshPromise = authAPI.me()
+      .then((res) => {
+        const user = res?.user || res
+        if (user) setCurrentUser(user)
+        return user
+      })
+      .finally(() => {
+        userRefreshPromise = null
+      })
+  }
+  return userRefreshPromise
+}
+
+router.beforeEach(async (to) => {
+  const token = getToken()
+  let user = getCurrentUser()
   if (!to.meta.public && !token) {
+    useGenerationTaskStore().clearSessionTasks('未登录')
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (!to.meta.public && token) {
+    const beforeUserId = user?.id || ''
+    try {
+      user = await refreshCurrentUser()
+      const nextUserId = user?.id || ''
+      if (beforeUserId && nextUserId && beforeUserId !== nextUserId) {
+        useGenerationTaskStore().clearSessionTasks('账号已切换')
+      }
+    } catch (_) {
+      useGenerationTaskStore().clearSessionTasks('登录状态失效')
+      clearAuth()
+      return { name: 'login', query: { redirect: to.fullPath } }
+    }
   }
   if (to.meta.admin && user?.role !== 'admin') {
     return { name: 'list' }

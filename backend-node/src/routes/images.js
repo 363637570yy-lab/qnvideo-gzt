@@ -35,6 +35,16 @@ function routes(db, cfg, log) {
         response.internalError(res, err.message);
       }
     },
+    update: (req, res) => {
+      try {
+        const item = imageService.updateById(db, log, req.params.id, req.body || {});
+        if (!item) return response.notFound(res, '记录不存在');
+        response.success(res, item);
+      } catch (err) {
+        log.error('images update', { error: err.message });
+        response.internalError(res, err.message);
+      }
+    },
     delete: (req, res) => {
       try {
         const ok = imageService.deleteById(db, log, req.params.id);

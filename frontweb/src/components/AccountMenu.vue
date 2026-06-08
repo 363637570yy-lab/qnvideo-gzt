@@ -41,6 +41,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowDown, User } from '@element-plus/icons-vue'
 import { authAPI } from '@/api/auth'
 import { clearAuth, getCurrentUser } from '@/utils/auth'
+import { useGenerationTaskStore } from '@/stores/generationTaskStore'
 
 const props = defineProps({
   user: {
@@ -50,6 +51,7 @@ const props = defineProps({
 })
 
 const router = useRouter()
+const genStore = useGenerationTaskStore()
 const passwordVisible = ref(false)
 const passwordSaving = ref(false)
 const passwordForm = reactive({
@@ -68,6 +70,7 @@ function resetPasswordForm() {
 }
 
 function logout() {
+  genStore.clearSessionTasks('退出登录')
   clearAuth()
   router.push('/login')
 }

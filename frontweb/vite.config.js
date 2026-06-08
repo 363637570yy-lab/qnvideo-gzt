@@ -26,6 +26,10 @@ export default defineConfig({
       '/static': {
         target: 'http://127.0.0.1:5679',
         changeOrigin: true
+      },
+      '/static-thumb': {
+        target: 'http://127.0.0.1:5679',
+        changeOrigin: true
       }
     }
   }

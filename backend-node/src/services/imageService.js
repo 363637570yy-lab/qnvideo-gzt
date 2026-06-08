@@ -64,6 +64,14 @@ function rowToItem(r) {
     task_id: r.task_id,
     error_msg: r.error_msg,
     frame_type: r.frame_type ?? undefined,
+    batch_id: r.batch_id ?? undefined,
+    slot_index: r.slot_index ?? undefined,
+    batch_count: r.batch_count ?? undefined,
+    locked: Number(r.locked || 0) === 1,
+    selected: Number(r.selected || 0) === 1,
+    aux_role: r.aux_role ?? undefined,
+    reference_images: r.reference_images ?? undefined,
+    params_json: r.params_json ?? undefined,
     created_at: r.created_at,
     updated_at: r.updated_at,
     completed_at: r.completed_at,
@@ -73,6 +81,48 @@ function rowToItem(r) {
 function getById(db, id) {
   const r = db.prepare('SELECT * FROM image_generations WHERE id = ? AND deleted_at IS NULL').get(Number(id));
   return r ? rowToItem(r) : null;
+}
+
+function updateById(db, log, id, body) {
+  const row = db.prepare('SELECT * FROM image_generations WHERE id = ? AND deleted_at IS NULL').get(Number(id));
+  if (!row) return null;
+  const updates = [];
+  const values = [];
+  const add = (column, value) => {
+    updates.push(`${column} = ?`);
+    values.push(value);
+  };
+  if (Object.prototype.hasOwnProperty.call(body, 'locked')) {
+    add('locked', body.locked === true || body.locked === 1 || body.locked === '1' ? 1 : 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'selected')) {
+    add('selected', body.selected === true || body.selected === 1 || body.selected === '1' ? 1 : 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'batch_id')) {
+    add('batch_id', body.batch_id != null && String(body.batch_id).trim() ? String(body.batch_id).trim() : null);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'slot_index')) {
+    add('slot_index', body.slot_index != null && Number.isFinite(Number(body.slot_index)) ? Number(body.slot_index) : null);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'batch_count')) {
+    add('batch_count', body.batch_count != null && Number.isFinite(Number(body.batch_count)) ? Number(body.batch_count) : null);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'aux_role')) {
+    add('aux_role', body.aux_role != null && String(body.aux_role).trim() ? String(body.aux_role).trim() : null);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'frame_type')) {
+    add('frame_type', body.frame_type != null && String(body.frame_type).trim() ? String(body.frame_type).trim() : null);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'params_json')) {
+    const params = typeof body.params_json === 'string' ? body.params_json : JSON.stringify(body.params_json || {});
+    add('params_json', params);
+  }
+  if (updates.length === 0) return rowToItem(row);
+  add('updated_at', new Date().toISOString());
+  values.push(Number(id));
+  db.prepare(`UPDATE image_generations SET ${updates.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values);
+  const updated = db.prepare('SELECT * FROM image_generations WHERE id = ? AND deleted_at IS NULL').get(Number(id));
+  return updated ? rowToItem(updated) : null;
 }
 
 const path = require('path');
@@ -88,6 +138,21 @@ const { safeDeleteFile } = require('./storageCleanupService');
 const { getNoAiConfigMessage, normalizeNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 
 const LAST_FRAME_TYPES = new Set(['last', 'storyboard_last', 'tail', 'last_frame']);
+const NON_BIND_STORYBOARD_FRAME_TYPES = new Set([
+  'storyboard_keyframe',
+  'storyboard_motion_sketch',
+  'storyboard_layout_sketch',
+  'storyboard_pose_ref',
+  'storyboard_camera_path',
+  'storyboard_aux_ref',
+]);
+
+function shouldBindStoryboardFrame(frameType) {
+  const ft = String(frameType || '').toLowerCase();
+  if (!ft) return true;
+  if (ft === 'quad_grid' || ft === 'nine_grid') return false;
+  return !NON_BIND_STORYBOARD_FRAME_TYPES.has(ft);
+}
 
 function isLastFrameType(frameType) {
   if (frameType == null || frameType === '') return false;
@@ -582,16 +647,31 @@ function create(db, log, req) {
   if (!reqSize && req.aspect_ratio) {
     reqSize = aspectRatioToSize(req.aspect_ratio) || null;
   }
+  let requestParams = {};
+  if (req.params_json) {
+    if (typeof req.params_json === 'string') {
+      try { requestParams = JSON.parse(req.params_json); } catch (_) { requestParams = { raw: req.params_json }; }
+    } else if (typeof req.params_json === 'object') {
+      requestParams = req.params_json;
+    }
+  }
   const paramsJson = JSON.stringify({
+    ...requestParams,
     product_image_spec: projectImageSpec,
     request_size: req.size || null,
     request_aspect_ratio: req.aspect_ratio || null,
   });
   const useFirstFrameLayoutLock = resolveUseFirstFrameLayoutLock(req, frameType);
   const aiConfigId = req.ai_config_id || req.image_config_id || null;
+  const batchId = req.batch_id != null && String(req.batch_id).trim() ? String(req.batch_id).trim() : null;
+  const slotIndex = req.slot_index != null && Number.isFinite(Number(req.slot_index)) ? Number(req.slot_index) : null;
+  const batchCount = req.batch_count != null && Number.isFinite(Number(req.batch_count)) ? Number(req.batch_count) : null;
+  const locked = req.locked === true || req.locked === 1 || req.locked === '1' ? 1 : 0;
+  const selected = req.selected === true || req.selected === 1 || req.selected === '1' ? 1 : 0;
+  const auxRole = req.aux_role != null && String(req.aux_role).trim() ? String(req.aux_role).trim() : null;
   const info = db.prepare(
-    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, frame_type, reference_images, use_first_frame_layout_lock, size, params_json, status, task_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+    `INSERT INTO image_generations (storyboard_id, drama_id, scene_id, provider, prompt, negative_prompt, model, ai_config_id, frame_type, batch_id, slot_index, batch_count, locked, selected, aux_role, reference_images, use_first_frame_layout_lock, size, params_json, status, task_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
   ).run(
     req.storyboard_id ?? null,
     Number(req.drama_id) || 0,
@@ -602,6 +682,12 @@ function create(db, log, req) {
     req.model ?? null,
     aiConfigId,
     frameType,
+    batchId,
+    slotIndex,
+    batchCount,
+    locked,
+    selected,
+    auxRole,
     refImagesJson,
     useFirstFrameLayoutLock,
     reqSize,
@@ -1373,7 +1459,7 @@ async function processImageGeneration(db, log, imageGenId) {
 
     const isFrameIdentityLock =
       row.frame_type &&
-      ['first', 'last', 'key', 'storyboard_first', 'storyboard_last'].includes(String(row.frame_type).toLowerCase());
+      ['first', 'last', 'key', 'storyboard_first', 'storyboard_last', 'storyboard_keyframe'].includes(String(row.frame_type).toLowerCase());
     if (isFrameIdentityLock && row.storyboard_id && finalPrompt) {
       try {
         const framePromptService = require('./framePromptService');
@@ -1561,7 +1647,7 @@ async function processImageGeneration(db, log, imageGenId) {
       } catch (_) {}
     }
 
-    if (row.storyboard_id && effectiveFrameTypeForBind !== 'quad_grid' && effectiveFrameTypeForBind !== 'nine_grid') {
+    if (row.storyboard_id && shouldBindStoryboardFrame(effectiveFrameTypeForBind)) {
       try {
         const { bindStoryboardFrameImage } = require('./storyboardFrameBinding');
         bindStoryboardFrameImage(
@@ -1644,9 +1730,15 @@ function getBackgroundsForEpisode(db, episodeId) {
 function upload(db, log, req) {
   const now = new Date().toISOString();
   const frameType = req.frame_type ?? null;
+  const batchId = req.batch_id != null && String(req.batch_id).trim() ? String(req.batch_id).trim() : null;
+  const slotIndex = req.slot_index != null && Number.isFinite(Number(req.slot_index)) ? Number(req.slot_index) : null;
+  const batchCount = req.batch_count != null && Number.isFinite(Number(req.batch_count)) ? Number(req.batch_count) : null;
+  const locked = req.locked === true || req.locked === 1 || req.locked === '1' ? 1 : 0;
+  const selected = req.selected === true || req.selected === 1 || req.selected === '1' ? 1 : 0;
+  const auxRole = req.aux_role != null && String(req.aux_role).trim() ? String(req.aux_role).trim() : null;
   const info = db.prepare(
-    `INSERT INTO image_generations (storyboard_id, drama_id, provider, prompt, image_url, local_path, frame_type, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)`
+    `INSERT INTO image_generations (storyboard_id, drama_id, provider, prompt, image_url, local_path, frame_type, batch_id, slot_index, batch_count, locked, selected, aux_role, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)`
   ).run(
     req.storyboard_id ?? null,
     Number(req.drama_id) || 0,
@@ -1655,11 +1747,17 @@ function upload(db, log, req) {
     req.image_url || '',
     req.local_path ?? null,
     frameType,
+    batchId,
+    slotIndex,
+    batchCount,
+    locked,
+    selected,
+    auxRole,
     now,
     now
   );
   const row = db.prepare('SELECT * FROM image_generations WHERE id = ?').get(info.lastInsertRowid);
-  if (row && row.storyboard_id) {
+  if (row && row.storyboard_id && shouldBindStoryboardFrame(row.frame_type)) {
     try {
       const { bindStoryboardFrameImage } = require('./storyboardFrameBinding');
       bindStoryboardFrameImage(
@@ -1735,6 +1833,7 @@ function syncStoryboardCharacters(db, log, storyboardId) {
 module.exports = {
   list,
   getById,
+  updateById,
   create,
   deleteById,
   getBackgroundsForEpisode,

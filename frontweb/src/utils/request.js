@@ -9,6 +9,15 @@ const request = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
+let lastErrorToast = { key: '', at: 0 }
+
+function shouldShowErrorToast(key) {
+  const now = Date.now()
+  if (lastErrorToast.key === key && now - lastErrorToast.at < 2500) return false
+  lastErrorToast = { key, at: now }
+  return true
+}
+
 request.interceptors.request.use((config) => {
   const token = getToken()
   if (token) {
@@ -39,8 +48,12 @@ request.interceptors.response.use(
     }
     // 提取后端实际错误信息（优先 API 返回的 message，而非 axios 通用 "status code 500"）
     const backendMsg = error.response?.data?.error?.message
-    const msg = normalizeAiFriendlyMessage(backendMsg || error.message || '网络错误')
-    ElMessage.error(msg)
+    let msg = normalizeAiFriendlyMessage(backendMsg || error.message || '网络错误')
+    if (error.response?.status === 403 && msg.includes('只能访问自己账号下的视频项目')) {
+      msg = '当前登录账号不是该项目所有人，也不是管理员；请切换账号或从项目列表重新进入'
+    }
+    const toastKey = `${error.response?.status || 'NET'}:${msg}`
+    if (shouldShowErrorToast(toastKey)) ElMessage.error(msg)
     // 将真实错误信息写回 message，使组件 catch 块可直接用 e.message 获取可读内容
     error.message = msg
     return Promise.reject(error)

@@ -24,9 +24,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { authAPI } from '@/api/auth'
 import { setAuth } from '@/utils/auth'
+import { useGenerationTaskStore } from '@/stores/generationTaskStore'
 
 const router = useRouter()
 const route = useRoute()
+const genStore = useGenerationTaskStore()
 const loading = ref(false)
 const form = reactive({ username: 'admin', password: '' })
 
@@ -38,6 +40,7 @@ async function submit() {
   loading.value = true
   try {
     const res = await authAPI.login({ username: form.username.trim(), password: form.password })
+    genStore.clearSessionTasks('登录账号已切换')
     setAuth(res.token, res.user)
     ElMessage.success('登录成功')
     router.replace(route.query.redirect || '/')

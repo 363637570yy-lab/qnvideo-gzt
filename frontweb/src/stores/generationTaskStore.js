@@ -192,6 +192,22 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     }
   }
 
+  /** 切换账号/退出登录时只清本地轮询，不向后端取消真实任务。 */
+  function clearSessionTasks(reason = '账号已切换') {
+    const taskIds = new Set()
+    for (const taskId of pollPromises.value.keys()) {
+      if (taskId) taskIds.add(taskId)
+    }
+    for (const t of tasks.value.values()) {
+      if (t.taskId) taskIds.add(t.taskId)
+    }
+    cancelledPollTaskIds.value = new Set([...cancelledPollTaskIds.value, ...taskIds])
+    tasks.value = new Map()
+    pollPromises.value = new Map()
+    recoveredTaskIds.value = new Set()
+    void reason
+  }
+
   /**
    * 校验 store 中 running 任务是否与后端一致；清理已完成/失败/超时的僵尸条目。
    */
@@ -507,7 +523,11 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         imagesAPI.list({ drama_id: dramaId, status: 'pending', page_size: 100 }).catch(() => ({ items: [] })),
         imagesAPI.list({ drama_id: dramaId, status: 'processing', page_size: 100 }).catch(() => ({ items: [] })),
         videosAPI.list({ drama_id: dramaId, status: 'processing', page_size: 100 }).catch(() => ({ items: [] })),
-        taskAPI.listByResource(String(episodeId)).catch(() => []),
+        taskAPI.listByResource(String(episodeId), {
+          drama_id: dramaId,
+          episode_id: episodeId,
+          types: 'video_merge,prop_extraction,background_extraction,storyboard_generation',
+        }).catch(() => []),
       ])
 
       const seenImg = new Set()
@@ -562,7 +582,10 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
       }
 
       // 角色提取 task 挂在 dramaId 上，同一 taskId 只恢复一次（避免多集重复显示）
-      const dramaTasks = await taskAPI.listByResource(String(dramaId)).catch(() => [])
+      const dramaTasks = await taskAPI.listByResource(String(dramaId), {
+        drama_id: dramaId,
+        type: 'character_generation',
+      }).catch(() => [])
       for (const t of dramaTasks || []) {
         if (!isActiveTaskStatus(t.status)) continue
         if (t.type !== 'character_generation') continue
@@ -583,9 +606,15 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         break
       }
 
-      const resourceIds = [...new Set([...charIdSet, ...propIdSet, ...sceneIdSet].map((id) => String(id)))]
-      const resourceTasks = resourceIds.length
-        ? await taskAPI.listByResources(resourceIds).catch(() => [])
+      // 只有道具图生成任务目前只落在 async_tasks(resource_id=prop.id) 上。
+      // 角色/场景/分镜图片都有 image_generations 行，已在 pending/processing images 中按 drama_id 精准恢复。
+      const propResourceIds = [...new Set([...propIdSet].map((id) => String(id)))]
+      const resourceTasks = propResourceIds.length
+        ? await taskAPI.listByResources(propResourceIds, {
+          drama_id: dramaId,
+          episode_id: episodeId,
+          type: 'prop_image_generation',
+        }).catch(() => [])
         : []
       const tasksByResource = new Map()
       for (const t of resourceTasks || []) {
@@ -610,20 +639,10 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
           _recoverAttachTask(t.id, meta, () => callbacks.onDramaRefresh?.(), pollOpts)
         }
       }
-      for (const id of charIdSet) {
-        if (!recoverAssetTasks || !shouldRecover(GEN_RESOURCE.CHAR_IMAGE)) continue
-        const c = characters.find((x) => Number(x.id) === Number(id))
-        attachResourceTasks(id, GEN_RESOURCE.CHAR_IMAGE, `${epLabel} 角色图: ${c?.name || id}`)
-      }
       for (const id of propIdSet) {
         if (!recoverAssetTasks || !shouldRecover(GEN_RESOURCE.PROP_IMAGE)) continue
         const p = props.find((x) => Number(x.id) === Number(id))
         attachResourceTasks(id, GEN_RESOURCE.PROP_IMAGE, `${epLabel} 道具图: ${p?.name || id}`)
-      }
-      for (const id of sceneIdSet) {
-        if (!recoverAssetTasks || !shouldRecover(GEN_RESOURCE.SCENE_IMAGE)) continue
-        const s = scenes.find((x) => Number(x.id) === Number(id))
-        attachResourceTasks(id, GEN_RESOURCE.SCENE_IMAGE, `${epLabel} 场景图: ${s?.location || id}`)
       }
 
       await reconcileRunningTasks(reconcileAssets)
@@ -650,6 +669,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     stopPollingTask,
     stopResourceTask,
     clearAllRunningTasks,
+    clearSessionTasks,
     taskKey,
   }
 })

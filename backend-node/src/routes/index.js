@@ -261,6 +261,7 @@ function setupRouter(cfg, db, log) {
   r.post('/images/scene/:scene_id', images.scene);
   r.post('/images/upload', images.upload);
   r.get('/images/:id', images.get);
+  r.put('/images/:id', images.update);
   r.delete('/images/:id', images.delete);
 
   // ---------- videos ----------
