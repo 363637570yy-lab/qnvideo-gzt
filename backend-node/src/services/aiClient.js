@@ -1,6 +1,7 @@
 // 与 Go pkg/ai + application/services/ai_service 对齐：读取 ai_service_configs，调用 OpenAI 兼容的 chat completions
 const aiConfigService = require('./aiConfigService');
 const { applyDeepSeekChatOptions } = require('./deepseekConfig');
+const { getNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 const https = require('https');
 const http = require('http');
 
@@ -350,7 +351,7 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
     });
   }
   if (entries.length === 0) {
-    throw new Error(`未配置文本模型，请在「AI 配置」中添加 ${serviceType} 类型 且已启用的配置`);
+    throw new Error(getNoAiConfigMessage('text'));
   }
   let lastErr = null;
   for (let i = 0; i < entries.length; i += 1) {
@@ -431,7 +432,7 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
     });
   }
   if (entries.length === 0) {
-    throw new Error(`未配置文本模型，请在「AI 配置」中添加 ${serviceType} 类型 且已启用的配置`);
+    throw new Error(getNoAiConfigMessage('text'));
   }
   const silenceMs = options.silence_timeout_ms != null ? Number(options.silence_timeout_ms) : 120000;
   let lastErr = null;
@@ -586,7 +587,7 @@ async function generateTextWithVision(db, log, serviceType, userPrompt, systemPr
     ? getConfigForModel(db, serviceType, preferredModel)
     : getDefaultConfig(db, serviceType);
   if (!config) config = getDefaultConfig(db, 'text');
-  if (!config) throw new Error(`未配置文本模型，请在「AI 配置」中添加 ${serviceType} 类型的配置`);
+  if (!config) throw new Error(getNoAiConfigMessage('text'));
   const model = getModelFromConfig(config, preferredModel);
   const url = buildChatUrl(config);
 

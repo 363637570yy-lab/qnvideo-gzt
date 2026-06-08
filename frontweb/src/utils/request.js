@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { clearAuth, getToken } from './auth'
+import { normalizeAiFriendlyMessage } from './aiFriendlyErrors'
 
 const request = axios.create({
   baseURL: '/api/v1',
@@ -38,10 +39,10 @@ request.interceptors.response.use(
     }
     // 提取后端实际错误信息（优先 API 返回的 message，而非 axios 通用 "status code 500"）
     const backendMsg = error.response?.data?.error?.message
-    const msg = backendMsg || error.message || '网络错误'
+    const msg = normalizeAiFriendlyMessage(backendMsg || error.message || '网络错误')
     ElMessage.error(msg)
     // 将真实错误信息写回 message，使组件 catch 块可直接用 e.message 获取可读内容
-    if (backendMsg) error.message = backendMsg
+    error.message = msg
     return Promise.reject(error)
   }
 )

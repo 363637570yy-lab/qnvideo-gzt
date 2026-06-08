@@ -836,7 +836,7 @@ async function submitEdit() {
 }
 
 function openProject(id) {
-  router.push('/drama/' + id)
+  router.push('/film/' + id)
 }
 
 async function onExport(d) {

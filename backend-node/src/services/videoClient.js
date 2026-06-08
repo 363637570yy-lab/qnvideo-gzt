@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const aiConfigService = require('./aiConfigService');
+const { getNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 const taskService = require('./taskService');
 let sharp; try { sharp = require('sharp'); } catch (_) { sharp = null; }
 const { uploadLocalImageToProxy, uploadToImageProxy } = require('./uploadService');
@@ -2951,7 +2952,7 @@ async function callVideoApi(db, log, opts) {
     opts.ai_config_id || opts.video_config_id || opts.config_id
   );
   if (candidates.length === 0) {
-    throw new Error('未配置视频模型，请在「AI 配置」中添加 video 类型且已启用的配置');
+    throw new Error(getNoAiConfigMessage('video'));
   }
   let lastError = null;
   for (let i = 0; i < candidates.length; i += 1) {
@@ -3024,7 +3025,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
     video_gen_id
   } = opts;
   if (!config) {
-    throw new Error('未配置视频模型，请在「AI 配置」中添加 video 类型且已启用的配置');
+    throw new Error(getNoAiConfigMessage('video'));
   }
   const model = getModelFromConfig(config, preferredModel);
   const provider = (config.provider || '').toLowerCase();

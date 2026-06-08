@@ -127,6 +127,7 @@ const storageLayout = require('./storageLayout');
 const { getFfmpegPath, hasLocalFfmpeg } = require('../utils/ffmpegPath');
 const { resolveProjectVideoSpec } = require('./projectMediaSpec');
 const { safeDeleteFile } = require('./storageCleanupService');
+const { getNoAiConfigMessage, normalizeNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 
 /** @returns {{ dir: string, relPrefix: string }} 与图片 uploads 一致的工程子目录规则 */
 function resolveVideosDir(storagePath, projectSubdir) {
@@ -271,8 +272,9 @@ async function processVideoGeneration(db, log, videoGenId) {
       : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
     const config = videoClient.getVideoConfigCandidates(db, row.model, row.ai_config_id)[0] || null;
     if (!config) {
-      setVideoGenFailed(db, videoGenId, '未配置视频模型', now);
-      if (row.task_id) taskService.updateTaskError(db, row.task_id, '未配置视频模型');
+      const noConfigMessage = getNoAiConfigMessage('video');
+      setVideoGenFailed(db, videoGenId, noConfigMessage, now);
+      if (row.task_id) taskService.updateTaskError(db, row.task_id, noConfigMessage);
       return;
     }
     let reference_urls = null;
@@ -327,9 +329,10 @@ async function processVideoGeneration(db, log, videoGenId) {
     const now2 = new Date().toISOString();
     if (isVideoTaskCancelled(db, row, videoGenId, now2, log)) return;
     if (result.error) {
-      setVideoGenFailed(db, videoGenId, result.error, now2);
-      if (row.task_id) taskService.updateTaskError(db, row.task_id, result.error);
-      log.error('Video generation failed', { id: videoGenId, error: result.error });
+      const resultError = normalizeNoAiConfigMessage(result.error, 'video');
+      setVideoGenFailed(db, videoGenId, resultError, now2);
+      if (row.task_id) taskService.updateTaskError(db, row.task_id, resultError);
+      log.error('Video generation failed', { id: videoGenId, error: resultError });
       return;
     }
     const directVideo = resolveRemoteVideoUrl(result.video_url, result.error);
@@ -461,9 +464,10 @@ async function processVideoGeneration(db, log, videoGenId) {
   } catch (err) {
     const now2 = new Date().toISOString();
     if (row && isVideoTaskCancelled(db, row, videoGenId, now2, log)) return;
-    setVideoGenFailed(db, videoGenId, err.message, now2);
-    if (row && row.task_id) taskService.updateTaskError(db, row.task_id, err.message);
-    log.error('Video generation error', { id: videoGenId, error: err.message });
+    const errMsg = normalizeNoAiConfigMessage(err.message || '', 'video');
+    setVideoGenFailed(db, videoGenId, errMsg, now2);
+    if (row && row.task_id) taskService.updateTaskError(db, row.task_id, errMsg);
+    log.error('Video generation error', { id: videoGenId, error: errMsg });
   }
 }
 

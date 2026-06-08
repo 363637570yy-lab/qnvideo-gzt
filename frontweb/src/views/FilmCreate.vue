@@ -26,9 +26,9 @@
             :value="ep.id"
           />
         </el-select>
-        <el-button v-if="dramaId" class="btn-back-drama" @click="router.push('/drama/' + dramaId)">
-          <el-icon><ArrowLeft /></el-icon>
-          返回剧集
+        <el-button v-if="dramaId" class="btn-back-drama" title="打开项目详情与剧集管理" @click="router.push('/drama/' + dramaId)">
+          <el-icon><Document /></el-icon>
+          剧集管理
         </el-button>
         <div class="header-actions">
           <el-button class="btn-theme" :title="isDark ? '切换到浅色模式' : '切换到暗色模式'" @click="toggleTheme">

@@ -85,6 +85,7 @@ const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const { resolveProjectImageSpec } = require('./projectMediaSpec');
 const { safeDeleteFile } = require('./storageCleanupService');
+const { getNoAiConfigMessage, normalizeNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 
 const LAST_FRAME_TYPES = new Set(['last', 'storyboard_last', 'tail', 'last_frame']);
 
@@ -740,11 +741,12 @@ async function processImageGeneration(db, log, imageGenId) {
     // ── Step 1: 获取 AI 配置 ──────────────────────────────────────────
     const config = imageClient.getDefaultImageConfig(db, row.model, null, imageServiceType);
     if (!config) {
+      const noConfigMessage = getNoAiConfigMessage('image');
       log.error('[图生] ✗ 未找到图片 AI 配置', { id: imageGenId, imageServiceType, elapsed: elapsed() });
       db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
-        'failed', '未配置图片模型', new Date().toISOString(), imageGenId
+        'failed', noConfigMessage, new Date().toISOString(), imageGenId
       );
-      if (row.task_id) taskService.updateTaskError(db, row.task_id, '未配置图片模型');
+      if (row.task_id) taskService.updateTaskError(db, row.task_id, noConfigMessage);
       return;
     }
     log.info('[图生] Step1 AI配置', {
@@ -1429,16 +1431,17 @@ async function processImageGeneration(db, log, imageGenId) {
       return;
     }
     if (result.error) {
+      const resultError = normalizeNoAiConfigMessage(result.error, 'image');
       db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
-        'failed', (result.error || '').slice(0, 500), now2, imageGenId
+        'failed', (resultError || '').slice(0, 500), now2, imageGenId
       );
-      if (row.task_id) taskService.updateTaskError(db, row.task_id, result.error);
-      log.error('[图生] ✗ API返回错误', { id: imageGenId, error: result.error, total_elapsed: elapsed() });
+      if (row.task_id) taskService.updateTaskError(db, row.task_id, resultError);
+      log.error('[图生] ✗ API返回错误', { id: imageGenId, error: resultError, total_elapsed: elapsed() });
       if (row.scene_id != null) {
-        try { db.prepare('UPDATE scenes SET error_msg = ?, updated_at = ? WHERE id = ?').run(result.error, now2, row.scene_id); } catch (_) {}
+        try { db.prepare('UPDATE scenes SET error_msg = ?, updated_at = ? WHERE id = ?').run(resultError, now2, row.scene_id); } catch (_) {}
       }
       if (row.storyboard_id != null) {
-        try { db.prepare('UPDATE storyboards SET error_msg = ?, updated_at = ? WHERE id = ?').run(result.error, now2, row.storyboard_id); } catch (_) {}
+        try { db.prepare('UPDATE storyboards SET error_msg = ?, updated_at = ? WHERE id = ?').run(resultError, now2, row.storyboard_id); } catch (_) {}
       }
       return;
     }
@@ -1607,16 +1610,17 @@ async function processImageGeneration(db, log, imageGenId) {
       log.info('[图生] 已停止，忽略异常状态', { id: imageGenId, task_id: row.task_id, error: err.message, total_elapsed: elapsed() });
       return;
     }
+    const errMsg = normalizeNoAiConfigMessage(err.message || '', 'image');
     db.prepare('UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ?').run(
-      'failed', (err.message || '').slice(0, 500), now2, imageGenId
+      'failed', (errMsg || '').slice(0, 500), now2, imageGenId
     );
-    if (row.task_id) taskService.updateTaskError(db, row.task_id, err.message);
-    log.error('[图生] ✗ 异常', { id: imageGenId, error: err.message, stack: (err.stack || '').slice(0, 400), total_elapsed: elapsed() });
+    if (row.task_id) taskService.updateTaskError(db, row.task_id, errMsg);
+    log.error('[图生] ✗ 异常', { id: imageGenId, error: errMsg, stack: (err.stack || '').slice(0, 400), total_elapsed: elapsed() });
     if (row.scene_id != null) {
-      try { db.prepare('UPDATE scenes SET error_msg = ?, updated_at = ? WHERE id = ?').run(err.message, now2, row.scene_id); } catch (_) {}
+      try { db.prepare('UPDATE scenes SET error_msg = ?, updated_at = ? WHERE id = ?').run(errMsg, now2, row.scene_id); } catch (_) {}
     }
     if (row.storyboard_id != null) {
-      try { db.prepare('UPDATE storyboards SET error_msg = ?, updated_at = ? WHERE id = ?').run(err.message, now2, row.storyboard_id); } catch (_) {}
+      try { db.prepare('UPDATE storyboards SET error_msg = ?, updated_at = ? WHERE id = ?').run(errMsg, now2, row.storyboard_id); } catch (_) {}
     }
   }
 }

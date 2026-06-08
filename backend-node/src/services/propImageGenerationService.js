@@ -7,6 +7,7 @@ const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
 const { resolveProjectImageSpec } = require('./projectMediaSpec');
 const { safeDeleteFile } = require('./storageCleanupService');
+const { normalizeNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 
 function appendPrompt(base, extra) {
   const add = (extra || '').toString().trim();
@@ -70,7 +71,9 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
       user_negative_prompt: userNeg || undefined,
     });
   } catch (err) {
-    const errMsg = '图片生成请求失败: ' + (err.message || '未知错误');
+    const originalMessage = err.message || '未知错误';
+    const normalized = normalizeNoAiConfigMessage(originalMessage, 'image');
+    const errMsg = normalized === originalMessage ? '图片生成请求失败: ' + originalMessage : normalized;
     if (taskService.isTaskCancelled(db, taskId)) {
       log.info('Prop image generation cancelled after API error', { prop_id: propId, task_id: taskId });
       return;

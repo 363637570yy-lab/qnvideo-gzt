@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { taskAPI } from '@/api/task'
 import { imagesAPI } from '@/api/images'
 import { videosAPI } from '@/api/videos'
+import { normalizeAiFriendlyMessage } from '@/utils/aiFriendlyErrors'
 
 /** 资源类型常量 */
 export const GEN_RESOURCE = {
@@ -56,7 +57,7 @@ function isCancelledTaskStatus(status) {
 
 function taskFailMessage(t) {
   if (!t) return '任务失败'
-  return (t.error || t.message || '任务失败').trim()
+  return normalizeAiFriendlyMessage((t.error || t.message || '任务失败').trim())
 }
 
 export const useGenerationTaskStore = defineStore('generationTask', () => {
@@ -134,7 +135,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     const taskId = existing?.taskId || (typeof meta === 'object' ? meta?.taskId : null)
     const keys = taskId ? _findKeysByTaskId(taskId) : [key]
     if (keys.length === 0 && key) keys.push(key)
-    _finishKeys(keys, 'failed', error)
+    _finishKeys(keys, 'failed', normalizeAiFriendlyMessage(error || '任务失败'))
   }
 
   function isRunning(meta) {

@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const aiConfigService = require('./aiConfigService');
+const { getNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
 const taskService = require('./taskService');
@@ -1576,7 +1577,7 @@ async function callImageApi(db, log, opts) {
     opts.ai_config_id || opts.image_config_id || opts.config_id
   );
   if (candidates.length === 0) {
-    throw new Error('未配置图片模型，请在「AI 配置」中添加 image 类型且已启用的配置');
+    throw new Error(getNoAiConfigMessage('image'));
   }
   let lastError = null;
   for (let i = 0; i < candidates.length; i += 1) {
@@ -1648,7 +1649,7 @@ async function callImageApiWithConfig(db, log, opts, config) {
     user_negative_prompt,
   } = opts;
   if (!config) {
-    throw new Error('未配置图片模型，请在「AI 配置」中添加 image 类型且已启用的配置');
+    throw new Error(getNoAiConfigMessage('image'));
   }
   const model = getModelFromConfig(config, preferredModel);
   const provider = (config.provider || '').toLowerCase();
