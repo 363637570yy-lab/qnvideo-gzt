@@ -1,5 +1,6 @@
 // 与 Go StoryboardService.GenerateStoryboard + processStoryboardGeneration 对齐
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const { syncStoryboardCharacters } = require('./imageService');
@@ -1354,14 +1355,20 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
     universal_omni_storyboard: wantUniversalOmni,
   });
 
-  setImmediate(() => {
+  generationQueueService.enqueue(db, log, {
+    generationType: 'text',
+    taskId: task.id,
+    label: `storyboard_generation:${episodeId}`,
+    queuedMessage: '分镜文本任务排队中，等待可用生成名额',
+    processingMessage: '正在生成分镜文本...',
+    runner: () => {
     // 传入 imageRatio 同时覆盖 default_video_ratio 和 default_image_ratio，
     // 确保分镜图/视频提示词、场景提取提示词都使用项目设定的比例
     const runCfg = { ...cfg, style: { ...(cfg?.style || {}), default_video_ratio: imageRatio, default_image_ratio: imageRatio } };
     // 如果 model 为 null，则传 undefined，让 generateText 内部去兜底找默认配置
     const clipSec =
       videoClipDuration && Number(videoClipDuration) > 0 ? Number(videoClipDuration) : null;
-    processStoryboardGeneration(
+    return processStoryboardGeneration(
       db,
       log,
       runCfg,
@@ -1376,6 +1383,7 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
       clipSec,
       aiConfigId
     );
+    },
   });
 
   return { task_id: task.id, status: 'pending', message: '分镜生成任务已创建，正在后台处理...' };

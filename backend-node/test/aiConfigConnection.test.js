@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const Database = require('better-sqlite3');
 
-const { testConnection } = require('../src/services/aiConfigService');
+const { reorderConfigs, testConnection } = require('../src/services/aiConfigService');
 
 const cases = [
   { service_type: 'text', expectedPath: '/chat/completions' },
@@ -41,3 +42,49 @@ for (const item of cases) {
     }
   });
 }
+
+function createAiConfigDb() {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE ai_service_configs (
+      id INTEGER PRIMARY KEY,
+      service_type TEXT,
+      route_order INTEGER,
+      created_at TEXT,
+      updated_at TEXT,
+      deleted_at TEXT
+    );
+  `);
+  const insert = db.prepare(
+    'INSERT INTO ai_service_configs (id, service_type, route_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+  );
+  insert.run(1, 'image', 0, '2026-06-08T00:00:01Z', '2026-06-08T00:00:01Z');
+  insert.run(2, 'image', 1, '2026-06-08T00:00:02Z', '2026-06-08T00:00:02Z');
+  insert.run(3, 'jimeng2_character_auth', 0, '2026-06-08T00:00:03Z', '2026-06-08T00:00:03Z');
+  insert.run(4, 'jimeng2_character_auth', 1, '2026-06-08T00:00:04Z', '2026-06-08T00:00:04Z');
+  return db;
+}
+
+test('reorderConfigs applies order independently per service type', () => {
+  const db = createAiConfigDb();
+
+  const count = reorderConfigs(db, { info() {} }, [2, 4, 1, 3]);
+
+  assert.equal(count, 4);
+  const rows = db.prepare('SELECT id, service_type, route_order FROM ai_service_configs ORDER BY id').all();
+  assert.deepEqual(rows, [
+    { id: 1, service_type: 'image', route_order: 1 },
+    { id: 2, service_type: 'image', route_order: 0 },
+    { id: 3, service_type: 'jimeng2_character_auth', route_order: 1 },
+    { id: 4, service_type: 'jimeng2_character_auth', route_order: 0 },
+  ]);
+});
+
+test('reorderConfigs rejects partial order lists for a touched service type', () => {
+  const db = createAiConfigDb();
+
+  assert.throws(
+    () => reorderConfigs(db, { info() {} }, [2]),
+    /未覆盖全部 image 配置/
+  );
+});

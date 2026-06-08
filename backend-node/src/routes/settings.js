@@ -2,6 +2,7 @@ const settingsService = require('../services/settingsService');
 const response = require('../response');
 const { loadConfig } = require('../config');
 const { resolveVideoGenerationTimeoutMinutes } = require('../config/videoGeneration');
+const aiConfigService = require('../services/aiConfigService');
 
 function getLanguage(cfg) {
   return (req, res) => {
@@ -26,17 +27,37 @@ function updateLanguage(cfg, log) {
 /** GET /settings/generation — 获取生成相关全局设置 */
 function getGenerationSettings(db) {
   return (req, res) => {
-    const concurrency = settingsService.getGlobalSetting(db, 'pipeline_concurrency', 3);
-    const video_concurrency = settingsService.getGlobalSetting(db, 'pipeline_video_concurrency', 3);
-    const video_generation_timeout_minutes = resolveVideoGenerationTimeoutMinutes(loadConfig());
-    response.success(res, { concurrency, video_concurrency, video_generation_timeout_minutes });
+    const policies = aiConfigService.getRoutingPolicies(db);
+    const video_generation_timeout_minutes =
+      policies.video?.video_poll_timeout_minutes || resolveVideoGenerationTimeoutMinutes(loadConfig());
+    response.success(res, {
+      policies,
+      // 兼容旧前端字段：这些字段不再作为管理员主设置展示。
+      concurrency: settingsService.getGlobalSetting(db, 'pipeline_concurrency', 8),
+      video_concurrency: settingsService.getGlobalSetting(db, 'pipeline_video_concurrency', 3),
+      video_generation_timeout_minutes,
+    });
   };
 }
 
 /** PUT /settings/generation — 更新生成相关全局设置 */
 function updateGenerationSettings(db) {
   return (req, res) => {
-    const { concurrency, video_concurrency } = req.body || {};
+    const { concurrency, video_concurrency, policies } = req.body || {};
+    if (policies !== undefined) {
+      let savedPolicies = aiConfigService.getRoutingPolicies(db);
+      for (const [serviceType, patch] of Object.entries(policies || {})) {
+        savedPolicies = aiConfigService.updateRoutingPolicy(db, serviceType, patch);
+      }
+      return response.success(res, {
+        policies: savedPolicies,
+        concurrency: settingsService.getGlobalSetting(db, 'pipeline_concurrency', 8),
+        video_concurrency: settingsService.getGlobalSetting(db, 'pipeline_video_concurrency', 3),
+        video_generation_timeout_minutes:
+          savedPolicies.video?.video_poll_timeout_minutes || resolveVideoGenerationTimeoutMinutes(loadConfig()),
+      });
+    }
+
     if (concurrency !== undefined) {
       const n = Number(concurrency);
       if (!Number.isInteger(n) || n < 1 || n > 20) {
@@ -51,10 +72,13 @@ function updateGenerationSettings(db) {
       }
       settingsService.setGlobalSetting(db, 'pipeline_video_concurrency', n);
     }
-    const saved = settingsService.getGlobalSetting(db, 'pipeline_concurrency', 3);
+    const saved = settingsService.getGlobalSetting(db, 'pipeline_concurrency', 8);
     const saved_video = settingsService.getGlobalSetting(db, 'pipeline_video_concurrency', 3);
-    const video_generation_timeout_minutes = resolveVideoGenerationTimeoutMinutes(loadConfig());
+    const policiesOut = aiConfigService.getRoutingPolicies(db);
+    const video_generation_timeout_minutes =
+      policiesOut.video?.video_poll_timeout_minutes || resolveVideoGenerationTimeoutMinutes(loadConfig());
     response.success(res, {
+      policies: policiesOut,
       concurrency: saved,
       video_concurrency: saved_video,
       video_generation_timeout_minutes,

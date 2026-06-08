@@ -123,6 +123,7 @@ const { spawnSync } = require('child_process');
 const { randomUUID } = require('crypto');
 const videoClient = require('./videoClient');
 const taskService = require('./taskService');
+const aiConfigService = require('./aiConfigService');
 const storageLayout = require('./storageLayout');
 const { getFfmpegPath, hasLocalFfmpeg } = require('../utils/ffmpegPath');
 const { resolveProjectVideoSpec } = require('./projectMediaSpec');
@@ -392,8 +393,8 @@ async function processVideoGeneration(db, log, videoGenId) {
         videoGenId
       );
       const POLL_INTERVAL_MS = 10000;
-      const { resolveVideoGenerationTimeoutMinutes } = require('../config/videoGeneration');
-      const generationTimeoutMinutes = resolveVideoGenerationTimeoutMinutes(cfg);
+      const generationTimeoutMinutes =
+        aiConfigService.getRoutingPolicy(db, 'video')?.video_poll_timeout_minutes || 30;
       const pollMaxAttempts = Math.max(
         1,
         Math.ceil((generationTimeoutMinutes * 60 * 1000) / POLL_INTERVAL_MS)

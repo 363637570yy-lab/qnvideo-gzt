@@ -7,14 +7,15 @@ const { getNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const { loadConfig } = require('../config');
 const { postJSONWithTimeout } = require('./aiClient');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
 const { openAiGptImageSize, resolveProjectImageSpec } = require('./projectMediaSpec');
 const { safeDeleteFile } = require('./storageCleanupService');
 
-/** 图生 POST 使用 Node http(s)，默认 10 分钟，避免 undici fetch 大包体/慢链路下模糊失败 */
-const IMAGE_HTTP_TIMEOUT_MS = 600000;
+/** 图生 POST 使用 Node http(s)，默认 15 分钟；实际优先读取图像类型全局策略 */
+const IMAGE_HTTP_TIMEOUT_MS = 900000;
 
 // 多参考图时注入到所有支持 negative_prompt 的模型，防止生成分割/拼贴布局；同时加入安全词以减少敏感拦截
 const ANTI_SPLIT_NEGATIVE_PROMPT = 'nsfw, nudity, naked, violence, blood, gore, sensitive content, split panels, side-by-side layout, collage, diptych, triptych, grid layout, multiple panels, comparison view, composite image, two images in one frame';
@@ -1908,7 +1909,18 @@ function createAndGenerateImage(db, log, opts) {
   );
   const imageGenId = info.lastInsertRowid;
 
-  setImmediate(async () => {
+  generationQueueService.enqueue(db, log, {
+    generationType: 'image',
+    taskId,
+    label: `image_generation:${imageGenId}`,
+    queuedMessage: '图片任务排队中，等待可用生成名额',
+    processingMessage: '正在生成图片...',
+    onCancel: () => {
+      db.prepare(
+        'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ? AND status = ?'
+      ).run('cancelled', '任务已停止', new Date().toISOString(), imageGenId, 'pending');
+    },
+    runner: async () => {
     try {
       db.prepare('UPDATE image_generations SET status = ? WHERE id = ?').run('processing', imageGenId);
       if (taskService.isTaskCancelled(db, taskId)) {
@@ -2084,6 +2096,7 @@ function createAndGenerateImage(db, log, opts) {
       }
       log.error('Image generation error', { image_gen_id: imageGenId, task_id: taskId, error: err.message });
     }
+    },
   });
 
   const row = db.prepare('SELECT * FROM image_generations WHERE id = ?').get(imageGenId);

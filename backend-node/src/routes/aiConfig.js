@@ -96,20 +96,36 @@ function update(db, log, cfg) {
     if (isNaN(id)) return response.badRequest(res, '无效的配置ID');
 
     let body = req.body || {};
-    // 锁定模式下只允许修改 api_key、default_model 与单配置故障策略
+    // 锁定模式下只允许修改 api_key 与 default_model。
     if (aiConfigService.getVendorLockStatus(cfg).enabled) {
       const allowed = {};
       if (body.api_key !== undefined) allowed.api_key = body.api_key;
       if (body.default_model !== undefined) allowed.default_model = body.default_model;
-      if (body.retry_count !== undefined) allowed.retry_count = body.retry_count;
-      if (body.cooldown_seconds !== undefined) allowed.cooldown_seconds = body.cooldown_seconds;
-      if (body.request_timeout_ms !== undefined) allowed.request_timeout_ms = body.request_timeout_ms;
       body = allowed;
     }
 
     const config = aiConfigService.updateConfig(db, log, id, body);
     if (!config) return response.notFound(res, '配置不存在');
     response.success(res, config);
+  };
+}
+
+function reorder(db, log, cfg) {
+  return (req, res) => {
+    if (aiConfigService.getVendorLockStatus(cfg).enabled) {
+      return response.badRequest(res, '当前为厂商锁定模式，不允许调整配置顺序');
+    }
+    const ids = req.body?.ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return response.badRequest(res, '缺少 ids');
+    }
+    try {
+      const updated = aiConfigService.reorderConfigs(db, log, ids);
+      response.success(res, { updated });
+    } catch (err) {
+      log.error('Reorder AI configs failed', { error: err.message });
+      response.badRequest(res, err.message || '排序保存失败');
+    }
   };
 }
 
@@ -237,6 +253,7 @@ module.exports = function aiConfigRoutes(db, log, cfg) {
     vendorLock: vendorLock(cfg),
     create: create(db, log, cfg),
     update: update(db, log, cfg),
+    reorder: reorder(db, log, cfg),
     delete: remove(db, log, cfg),
     testConnection: testConnection(log),
     listJimeng2MaterialAssets: listJimeng2MaterialAssets(log),

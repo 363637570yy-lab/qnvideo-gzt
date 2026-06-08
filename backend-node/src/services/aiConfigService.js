@@ -42,42 +42,52 @@ const DEFAULT_ROUTING_POLICIES = {
   text: {
     strategy: 'sequential',
     max_attempt_configs: 0,
+    concurrency_limit: 20,
     retry_count: 1,
     cooldown_seconds: 30,
     cooldown_max_seconds: 1800,
     request_timeout_ms: 120000,
+    video_poll_timeout_minutes: null,
   },
   image: {
     strategy: 'sequential',
     max_attempt_configs: 0,
-    retry_count: 0,
+    concurrency_limit: 100,
+    retry_count: 1,
     cooldown_seconds: 120,
     cooldown_max_seconds: 1800,
-    request_timeout_ms: 600000,
+    request_timeout_ms: 900000,
+    video_poll_timeout_minutes: null,
   },
   video: {
     strategy: 'sequential',
     max_attempt_configs: 0,
+    concurrency_limit: 10,
     retry_count: 0,
     cooldown_seconds: 300,
     cooldown_max_seconds: 3600,
-    request_timeout_ms: 600000,
+    request_timeout_ms: 180000,
+    video_poll_timeout_minutes: 60,
   },
   tts: {
     strategy: 'sequential',
     max_attempt_configs: 0,
+    concurrency_limit: 10,
     retry_count: 1,
     cooldown_seconds: 60,
     cooldown_max_seconds: 1800,
     request_timeout_ms: 180000,
+    video_poll_timeout_minutes: null,
   },
   jimeng2_character_auth: {
     strategy: 'sequential',
     max_attempt_configs: 0,
+    concurrency_limit: 5,
     retry_count: 0,
     cooldown_seconds: 300,
     cooldown_max_seconds: 3600,
     request_timeout_ms: 120000,
+    video_poll_timeout_minutes: null,
   },
 };
 
@@ -98,10 +108,14 @@ function normalizeRoutingPolicy(serviceType, raw = {}) {
   return {
     strategy,
     max_attempt_configs: clampInt(raw.max_attempt_configs, defaults.max_attempt_configs, 0, 50),
+    concurrency_limit: clampInt(raw.concurrency_limit, defaults.concurrency_limit, 1, 500),
     retry_count: clampInt(raw.retry_count, defaults.retry_count, 0, 5),
     cooldown_seconds: clampInt(raw.cooldown_seconds, defaults.cooldown_seconds, 0, 24 * 3600),
     cooldown_max_seconds: clampInt(raw.cooldown_max_seconds, defaults.cooldown_max_seconds, 1, 24 * 3600),
     request_timeout_ms: clampInt(raw.request_timeout_ms, defaults.request_timeout_ms, 1000, 30 * 60 * 1000),
+    video_poll_timeout_minutes: key === 'video'
+      ? clampInt(raw.video_poll_timeout_minutes, defaults.video_poll_timeout_minutes, 1, 24 * 60)
+      : null,
   };
 }
 
@@ -361,6 +375,55 @@ function updateConfig(db, log, id, req) {
   db.prepare('UPDATE ai_service_configs SET ' + updates.join(', ') + ', updated_at = ? WHERE id = ?').run(...params);
   log.info('AI config updated', { config_id: id });
   return getConfig(db, id);
+}
+
+function reorderConfigs(db, log, ids) {
+  const cleanIds = [...new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0))];
+  if (cleanIds.length === 0) throw new Error('缺少有效配置ID');
+
+  const placeholders = cleanIds.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT id, service_type FROM ai_service_configs
+     WHERE deleted_at IS NULL AND id IN (${placeholders})`
+  ).all(...cleanIds);
+  if (rows.length !== cleanIds.length) {
+    throw new Error('排序列表包含不存在或已删除的配置');
+  }
+
+  const rowById = new Map(rows.map((row) => [Number(row.id), normalizeServiceType(row.service_type)]));
+  const grouped = new Map();
+  for (const id of cleanIds) {
+    const serviceType = rowById.get(Number(id));
+    if (!grouped.has(serviceType)) grouped.set(serviceType, []);
+    grouped.get(serviceType).push(Number(id));
+  }
+
+  for (const [serviceType, orderedIds] of grouped.entries()) {
+    const existingIds = db.prepare(
+      `SELECT id FROM ai_service_configs
+       WHERE deleted_at IS NULL AND service_type = ?
+       ORDER BY route_order ASC, created_at DESC, id ASC`
+    ).all(serviceType).map((row) => Number(row.id));
+    const orderedSet = new Set(orderedIds);
+    if (existingIds.length !== orderedIds.length || existingIds.some((id) => !orderedSet.has(id))) {
+      throw new Error(`排序列表未覆盖全部 ${serviceType} 配置`);
+    }
+  }
+
+  const now = new Date().toISOString();
+  const update = db.prepare(
+    'UPDATE ai_service_configs SET route_order = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL'
+  );
+  const applyOrder = db.transaction(() => {
+    for (const orderedIds of grouped.values()) {
+      orderedIds.forEach((id, index) => update.run(index, now, id));
+    }
+  });
+  applyOrder();
+  log?.info?.('AI config order updated', { count: cleanIds.length, service_types: [...grouped.keys()] });
+  return cleanIds.length;
 }
 
 function deleteConfig(db, log, id) {
@@ -984,9 +1047,11 @@ module.exports = {
   getRetryCountForConfig,
   getRequestTimeoutMsForConfig,
   resolveConfigRoutingPolicy,
+  normalizeServiceType,
   getConfig,
   createConfig,
   updateConfig,
+  reorderConfigs,
   deleteConfig,
   testConnection,
   getVendorLockStatus,

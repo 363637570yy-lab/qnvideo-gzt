@@ -55,7 +55,7 @@
               class="vendor-lock-tip"
             >
               <template #title>
-                <span>🔒 当前为厂商锁定模式，AI 服务由管理员统一配置。你可以修改 <b>API Key</b>、<b>默认模型</b> 和故障策略。</span>
+                <span>🔒 当前为厂商锁定模式，AI 服务由管理员统一配置。你可以修改 <b>API Key</b> 和 <b>默认模型</b>。</span>
               </template>
             </el-alert>
             <el-button type="primary" size="small" class="vendor-bulk-key-btn" @click="openBulkKey">
@@ -73,17 +73,28 @@
             />
           </el-tabs>
           <div v-if="activeRoutingPolicy" class="routing-policy-card">
-            <div class="routing-policy-title">路由/故障策略</div>
+            <div class="routing-policy-title">{{ activeConfigCategoryLabel }}全局策略</div>
+            <span class="routing-policy-label">路由</span>
             <el-select v-model="activeRoutingPolicy.strategy" size="small" style="width: 132px" @change="saveActiveRoutingPolicy">
               <el-option label="顺序优先" value="sequential" />
               <el-option label="轮询" value="round_robin" />
             </el-select>
-            <el-input-number v-model="activeRoutingPolicy.retry_count" size="small" :min="0" :max="5" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">单配置重试</span>
-            <el-input-number v-model="activeRoutingPolicy.cooldown_seconds" size="small" :min="0" :max="86400" :step="30" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">冷却秒</span>
+            <span class="routing-policy-label">同时生成上限</span>
+            <el-input-number v-model="activeRoutingPolicy.concurrency_limit" size="small" :min="1" :max="500" controls-position="right" @change="saveActiveRoutingPolicy" />
+            <span class="routing-policy-label">提交请求超时</span>
             <el-input-number v-model="activeRoutingPolicy.request_timeout_ms" size="small" :min="1000" :max="1800000" :step="10000" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">路由池超时毫秒</span>
+            <span class="routing-policy-label">毫秒</span>
+            <template v-if="activeRoutingPolicyKey === 'video'">
+              <span class="routing-policy-label">视频生成最长等待</span>
+              <el-input-number v-model="activeRoutingPolicy.video_poll_timeout_minutes" size="small" :min="1" :max="1440" controls-position="right" @change="saveActiveRoutingPolicy" />
+              <span class="routing-policy-label">分钟</span>
+            </template>
+            <span class="routing-policy-label">失败重试</span>
+            <el-input-number v-model="activeRoutingPolicy.retry_count" size="small" :min="0" :max="5" controls-position="right" @change="saveActiveRoutingPolicy" />
+            <span class="routing-policy-label">次</span>
+            <span class="routing-policy-label">异常暂停</span>
+            <el-input-number v-model="activeRoutingPolicy.cooldown_seconds" size="small" :min="0" :max="86400" :step="30" controls-position="right" @change="saveActiveRoutingPolicy" />
+            <span class="routing-policy-label">秒</span>
           </div>
           <el-table
             v-loading="loading"
@@ -93,7 +104,15 @@
             @selection-change="onSelectionChange"
           >
             <el-table-column v-if="!vendorLock.enabled" type="selection" width="46" />
-            <el-table-column prop="route_order" label="顺序" width="76" sortable />
+            <el-table-column v-if="!vendorLock.enabled" label="优先级" width="152">
+              <template #default="{ row, $index }">
+                <div class="order-actions">
+                  <el-button link size="small" :disabled="!canMoveConfig(row, 'top')" @click="moveConfig(row, 'top')">置顶</el-button>
+                  <el-button link size="small" :disabled="!canMoveConfig(row, 'up')" @click="moveConfig(row, 'up')">上移</el-button>
+                  <el-button link size="small" :disabled="!canMoveConfig(row, 'down')" @click="moveConfig(row, 'down')">下移</el-button>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column prop="name" label="名称" min-width="130" />
             <el-table-column prop="provider" label="提供商" width="96" />
             <el-table-column prop="api_protocol" label="接口规范" min-width="128" show-overflow-tooltip>
@@ -164,78 +183,6 @@
           <SceneModelMap />
         </div>
       </el-tab-pane>
-      <el-tab-pane label="生成设置" name="generation">
-        <div class="tab-content generation-settings">
-          <div class="gs-section-title">⚡ 一键生成并发设置</div>
-          <p class="gs-desc">控制「一键生成视频」和「补全并生成」流水线中，各类任务同时并行生成的数量。并发数越高速度越快，但过高可能触发 API 限流（429 错误）。建议根据你的 API 额度选择。</p>
-
-          <div class="gs-row">
-            <span class="gs-label">图片并发数</span>
-            <el-select
-              v-model="genConcurrencyInput"
-              filterable
-              allow-create
-              default-first-option
-              placeholder="选择或输入并发数"
-              style="width: 180px"
-              @change="onConcurrencyChange"
-            >
-              <el-option label="1（串行，最稳定）" :value="1" />
-              <el-option label="2" :value="2" />
-              <el-option label="3（默认）" :value="3" />
-              <el-option label="5" :value="5" />
-              <el-option label="8" :value="8" />
-              <el-option label="10" :value="10" />
-            </el-select>
-            <span class="gs-unit">个任务同时生成</span>
-          </div>
-
-          <div class="gs-row" style="margin-top: 10px">
-            <span class="gs-label">视频并发数</span>
-            <el-select
-              v-model="genVideoConcurrencyInput"
-              filterable
-              allow-create
-              default-first-option
-              placeholder="选择或输入并发数"
-              style="width: 180px"
-              @change="onVideoConcurrencyChange"
-            >
-              <el-option label="1（串行，最稳定）" :value="1" />
-              <el-option label="2" :value="2" />
-              <el-option label="3（默认）" :value="3" />
-              <el-option label="5" :value="5" />
-              <el-option label="8" :value="8" />
-              <el-option label="10" :value="10" />
-            </el-select>
-            <span class="gs-unit">个任务同时生成</span>
-          </div>
-
-          <div style="margin-top: 14px">
-            <el-button
-              type="primary"
-              size="small"
-              :loading="genSettingSaving"
-              @click="saveGenerationSettings"
-            >保存</el-button>
-          </div>
-          <el-alert
-            v-if="genSettingSaved"
-            type="success"
-            title="已保存"
-            :closable="false"
-            show-icon
-            style="margin-top: 12px; width: fit-content"
-          />
-          <div class="gs-tip-box">
-            <div class="gs-tip-title">📌 适用范围</div>
-            <ul class="gs-tip-list">
-              <li>图片并发：步骤 2 角色图、步骤 4 场景图、步骤 6 分镜图</li>
-              <li>视频并发：步骤 7 分镜视频</li>
-            </ul>
-          </div>
-        </div>
-      </el-tab-pane>
       <el-tab-pane label="SD2 资产管理" name="sd2_assets">
         <div class="tab-content">
           <Sd2AssetManagement :configs="list" />
@@ -274,24 +221,6 @@
               <el-option v-for="m in formModelList" :key="m" :label="m" :value="m" />
             </el-select>
             <p class="field-tip">实际调用时使用的模型，可从预设列表中选择。</p>
-          </el-form-item>
-          <el-form-item>
-            <template #label><span class="form-label-tip">故障策略</span></template>
-            <div class="failure-policy-grid">
-              <label>
-                <span>重试次数</span>
-                <el-input-number v-model="form.retry_count" :min="0" :max="5" />
-              </label>
-              <label>
-                <span>冷却秒</span>
-                <el-input-number v-model="form.cooldown_seconds" :min="0" :max="86400" :step="30" />
-              </label>
-              <label>
-                <span>超时毫秒（0=继承）</span>
-                <el-input-number v-model="form.request_timeout_ms" :min="0" :max="1800000" :step="10000" />
-              </label>
-            </div>
-            <p class="field-tip">填 0 表示继承当前服务类型的路由池超时；不是无限制。</p>
           </el-form-item>
         </el-form>
       </template>
@@ -865,34 +794,6 @@ input_reference = (图片文件，可选)</pre>
           <p class="field-tip">官方旧模型名将在 2026-07-24 废弃；新配置建议使用 deepseek-v4-flash 或 deepseek-v4-pro。</p>
         </el-form-item>
         </template>
-        <el-form-item>
-          <template #label>
-            <span class="form-label-tip">路由顺序
-              <el-tooltip content="顺序优先模式下数字越小越先使用；轮询模式也按该顺序轮转。" placement="top" popper-class="cfg-tip-popper">
-                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
-              </el-tooltip>
-            </span>
-          </template>
-          <el-input-number v-model="form.route_order" :min="0" :max="9999" />
-        </el-form-item>
-        <el-form-item>
-          <template #label><span class="form-label-tip">故障策略</span></template>
-          <div class="failure-policy-grid">
-            <label>
-              <span>重试次数</span>
-              <el-input-number v-model="form.retry_count" :min="0" :max="5" />
-            </label>
-            <label>
-              <span>冷却秒</span>
-              <el-input-number v-model="form.cooldown_seconds" :min="0" :max="86400" :step="30" />
-            </label>
-          <label>
-            <span>超时毫秒（0=继承）</span>
-            <el-input-number v-model="form.request_timeout_ms" :min="0" :max="1800000" :step="10000" />
-          </label>
-          </div>
-          <p class="field-tip">填 0 表示继承当前服务类型的路由池超时；不是无限制。图片和视频默认失败后快速切换下一个配置。</p>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -1095,7 +996,6 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, VideoCamera, Key, Microphone } from '@element-plus/icons-vue'
 import { aiAPI } from '@/api/ai'
-import { generationSettingsAPI } from '@/api/prompts'
 import PromptEditor from '@/components/PromptEditor.vue'
 import SceneModelMap from '@/components/SceneModelMap.vue'
 import Sd2AssetManagement from '@/components/Sd2AssetManagement.vue'
@@ -1121,54 +1021,6 @@ const categoryDefaultServiceType = {
   audio: 'tts',
 }
 const importFileRef = ref(null)
-
-// ---- 生成设置 ----
-const genConcurrencyInput = ref(3)
-const genVideoConcurrencyInput = ref(3)
-const genSettingSaving = ref(false)
-const genSettingSaved = ref(false)
-
-async function loadGenerationSettings() {
-  try {
-    const res = await generationSettingsAPI.get()
-    genConcurrencyInput.value = res?.concurrency ?? 3
-    genVideoConcurrencyInput.value = res?.video_concurrency ?? 3
-  } catch (_) {}
-}
-
-function onConcurrencyChange(val) {
-  const n = Number(val)
-  if (!isNaN(n) && n >= 1) genConcurrencyInput.value = Math.min(20, Math.max(1, Math.round(n)))
-}
-
-function onVideoConcurrencyChange(val) {
-  const n = Number(val)
-  if (!isNaN(n) && n >= 1) genVideoConcurrencyInput.value = Math.min(20, Math.max(1, Math.round(n)))
-}
-
-async function saveGenerationSettings() {
-  const n = Number(genConcurrencyInput.value)
-  const nv = Number(genVideoConcurrencyInput.value)
-  if (isNaN(n) || n < 1 || n > 20) {
-    ElMessage.warning('图片并发数请填写 1-20 之间的整数')
-    return
-  }
-  if (isNaN(nv) || nv < 1 || nv > 20) {
-    ElMessage.warning('视频并发数请填写 1-20 之间的整数')
-    return
-  }
-  genSettingSaving.value = true
-  genSettingSaved.value = false
-  try {
-    await generationSettingsAPI.update({ concurrency: Math.round(n), video_concurrency: Math.round(nv) })
-    genSettingSaved.value = true
-    setTimeout(() => { genSettingSaved.value = false }, 2000)
-  } catch (e) {
-    ElMessage.error('保存失败：' + (e?.message || ''))
-  } finally {
-    genSettingSaving.value = false
-  }
-}
 const loading = ref(false)
 const list = ref([])
 const filteredConfigs = computed(() => {
@@ -1178,12 +1030,63 @@ const filteredConfigs = computed(() => {
 const routingPolicies = ref({})
 const activeRoutingPolicyKey = computed(() => activeConfigCategory.value === 'audio' ? 'tts' : activeConfigCategory.value)
 const activeRoutingPolicy = computed(() => routingPolicies.value?.[activeRoutingPolicyKey.value] || null)
+const activeConfigCategoryLabel = computed(() => {
+  return configCategories.find((item) => item.key === activeConfigCategory.value)?.label || ''
+})
 const selectedRows = ref([])
 watch(activeConfigCategory, () => {
   selectedRows.value = []
 })
 const batchDeleting = ref(false)
 const vendorLock = ref({ enabled: false, config_file: '' })
+
+function nextRouteOrderForServiceType(serviceType) {
+  const sameType = (list.value || []).filter((row) => row.service_type === serviceType)
+  const maxOrder = sameType.reduce((max, row) => Math.max(max, Number(row.route_order || 0)), -1)
+  return maxOrder + 1
+}
+
+function siblingConfigsForOrder(row) {
+  return (list.value || []).filter((item) => item.service_type === row?.service_type)
+}
+
+function canMoveConfig(row, direction) {
+  const siblings = siblingConfigsForOrder(row)
+  const index = siblings.findIndex((item) => Number(item.id) === Number(row?.id))
+  if (index < 0) return false
+  if (direction === 'top' || direction === 'up') return index > 0
+  if (direction === 'down') return index < siblings.length - 1
+  return false
+}
+
+async function moveConfig(row, direction) {
+  const visible = siblingConfigsForOrder(row).slice()
+  const index = visible.findIndex((item) => Number(item.id) === Number(row.id))
+  if (index < 0) return
+  const [item] = visible.splice(index, 1)
+  if (direction === 'top') {
+    visible.unshift(item)
+  } else if (direction === 'up') {
+    visible.splice(Math.max(0, index - 1), 0, item)
+  } else if (direction === 'down') {
+    visible.splice(Math.min(visible.length, index + 1), 0, item)
+  } else {
+    return
+  }
+
+  try {
+    await aiAPI.reorder(visible.map((cfg) => cfg.id))
+    const orderMap = new Map(visible.map((cfg, idx) => [Number(cfg.id), idx]))
+    list.value = (list.value || []).map((cfg) => (
+      orderMap.has(Number(cfg.id))
+        ? { ...cfg, route_order: orderMap.get(Number(cfg.id)) }
+        : cfg
+    ))
+    await loadList()
+  } catch (e) {
+    ElMessage.error('排序保存失败：' + (e?.message || ''))
+  }
+}
 const dialogVisible = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
@@ -1210,10 +1113,6 @@ const form = ref({
   default_model: '',
   deepseek_thinking: 'disabled',
   deepseek_reasoning_effort: 'high',
-  route_order: 0,
-  retry_count: 0,
-  cooldown_seconds: 0,
-  request_timeout_ms: 0,
   // 可灵 Omni 官方 AK/SK（存 settings，后端生成 JWT）
   kling_access_key: '',
   kling_secret_key: '',
@@ -1800,10 +1699,6 @@ function resetForm() {
     default_model: '',
     deepseek_thinking: 'disabled',
     deepseek_reasoning_effort: 'high',
-    route_order: 0,
-    retry_count: 0,
-    cooldown_seconds: 0,
-    request_timeout_ms: 0,
     voice_id: '',
     group_id: '',
     kling_access_key: '',
@@ -1859,10 +1754,6 @@ function openEdit(row) {
     default_model: defaultInList ? row.default_model : (modelList[0] || ''),
     deepseek_thinking: deepseekSettings.thinking,
     deepseek_reasoning_effort: deepseekSettings.effort,
-    route_order: row.route_order ?? 0,
-    retry_count: row.retry_count ?? 0,
-    cooldown_seconds: row.cooldown_seconds ?? 0,
-    request_timeout_ms: row.request_timeout_ms ?? 0,
     voice_id,
     group_id,
     kling_access_key,
@@ -1929,11 +1820,10 @@ async function submit() {
       query_endpoint: form.value.query_endpoint || '',
       model: modelList,
       default_model: defaultModel,
-      route_order: form.value.route_order,
-      retry_count: form.value.retry_count,
-      cooldown_seconds: form.value.cooldown_seconds,
-      request_timeout_ms: form.value.request_timeout_ms,
       ...(settings !== undefined ? { settings } : {}),
+    }
+    if (!editingId.value) {
+      payload.route_order = nextRouteOrderForServiceType(form.value.service_type)
     }
     if (editingId.value) {
       await aiAPI.update(editingId.value, payload)
@@ -2228,7 +2118,6 @@ onMounted(() => {
   loadVendorLock()
   loadList()
   loadRoutingPolicies()
-  loadGenerationSettings()
 })
 </script>
 
@@ -2449,7 +2338,7 @@ code {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 10px;
   margin: -4px 0 12px;
   padding: 10px 12px;
   border: 1px solid #e5e7eb;
@@ -2465,7 +2354,15 @@ code {
 .routing-policy-label {
   font-size: 12px;
   color: #606266;
-  margin-right: 6px;
+}
+.routing-policy-card :deep(.el-input-number) {
+  width: 132px;
+}
+.order-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
 }
 .vendor-lock-bar {
   display: flex;
@@ -2491,23 +2388,6 @@ code {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-.failure-policy-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  width: 100%;
-}
-.failure-policy-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  font-size: 12px;
-  color: #606266;
-}
-.failure-policy-grid :deep(.el-input-number) {
-  width: 100%;
 }
 .field-tip {
   margin: 6px 0 0;
@@ -2652,59 +2532,5 @@ code {
   background: #fef6e0;
   color: #b8860b;
   border-color: #f0d080;
-}
-.generation-settings {
-  max-width: 600px;
-}
-.gs-section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 8px;
-}
-.gs-desc {
-  font-size: 13px;
-  color: #606266;
-  line-height: 1.6;
-  margin-bottom: 20px;
-}
-.gs-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.gs-label {
-  font-size: 13px;
-  color: #303133;
-  font-weight: 500;
-  white-space: nowrap;
-}
-.gs-unit {
-  font-size: 13px;
-  color: #606266;
-  white-space: nowrap;
-}
-.gs-tip-box {
-  margin-top: 20px;
-  background: #f5f7fa;
-  border-radius: 8px;
-  padding: 14px 16px;
-  font-size: 13px;
-}
-.gs-tip-title {
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 8px;
-}
-.gs-tip-list {
-  margin: 0 0 8px 16px;
-  padding: 0;
-  color: #606266;
-  line-height: 1.8;
-}
-.gs-tip-note {
-  color: #909399;
-  font-size: 12px;
 }
 </style>

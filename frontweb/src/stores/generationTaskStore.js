@@ -48,7 +48,7 @@ function sbImageResourceType(frameType) {
 }
 
 function isActiveTaskStatus(status) {
-  return status === 'pending' || status === 'processing' || status === 'running'
+  return status === 'queued' || status === 'pending' || status === 'processing' || status === 'running'
 }
 
 function isCancelledTaskStatus(status) {
@@ -313,6 +313,9 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
             markFailed(key, errMsg)
             return resolve({ status: 'cancelled', error: errMsg })
           }
+          if (t.status === 'queued' || t.status === 'pending') {
+            attempts = 0
+          }
         } catch (pollErr) {
           console.warn('[generationTaskStore] poll attempt failed:', pollErr?.message)
         }
@@ -500,7 +503,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
 
     const attachVideo = (vid) => {
       if (!vid?.storyboard_id || !sbIdSet.has(Number(vid.storyboard_id))) return
-      if (!['pending', 'processing'].includes(vid.status)) return
+      if (!['queued', 'pending', 'processing'].includes(vid.status)) return
       if (!vid.task_id) return
       if (!shouldRecover(GEN_RESOURCE.SB_VIDEO)) return
       const resourceId = Number(vid.storyboard_id)
@@ -519,9 +522,10 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
     }
 
     try {
-      const [pendingImg, processingImg, processingVid, episodeTasks] = await Promise.all([
+      const [pendingImg, processingImg, pendingVid, processingVid, episodeTasks] = await Promise.all([
         imagesAPI.list({ drama_id: dramaId, status: 'pending', page_size: 100 }).catch(() => ({ items: [] })),
         imagesAPI.list({ drama_id: dramaId, status: 'processing', page_size: 100 }).catch(() => ({ items: [] })),
+        videosAPI.list({ drama_id: dramaId, status: 'pending', page_size: 100 }).catch(() => ({ items: [] })),
         videosAPI.list({ drama_id: dramaId, status: 'processing', page_size: 100 }).catch(() => ({ items: [] })),
         taskAPI.listByResource(String(episodeId), {
           drama_id: dramaId,
@@ -538,7 +542,7 @@ export const useGenerationTaskStore = defineStore('generationTask', () => {
         attachImage(img)
       }
 
-      for (const vid of processingVid.items || []) {
+      for (const vid of [...(pendingVid.items || []), ...(processingVid.items || [])]) {
         attachVideo(vid)
       }
 

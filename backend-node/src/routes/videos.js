@@ -1,6 +1,7 @@
 const response = require('../response');
 const videoService = require('../services/videoService');
 const taskService = require('../services/taskService');
+const generationQueueService = require('../services/generationQueueService');
 const { normalizeAspectRatioForApi } = require('../services/videoClient');
 const { resolveProjectVideoSpec } = require('../services/projectMediaSpec');
 
@@ -77,14 +78,24 @@ function routes(db, log) {
             : null;
         db.prepare(
           `INSERT INTO video_generations (drama_id, storyboard_id, provider, prompt, model, ai_config_id, duration, aspect_ratio, resolution, seed, camera_fixed, watermark, image_url, first_frame_url, last_frame_url, reference_image_urls, params_json, status, task_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
         ).run(dramaId, storyboardId, provider, prompt, model, aiConfigId, duration, aspectRatio, resolution, seed, cameraFixed, watermark, imageUrl, firstFrameUrl, lastFrameUrl, refImagesJson, paramsJson, task.id, now, now);
         const videoGenId = db.prepare('SELECT last_insert_rowid() as id').get().id;
-        setImmediate(() => {
-          videoService.processVideoGeneration(db, log, videoGenId);
+        generationQueueService.enqueue(db, log, {
+          generationType: 'video',
+          taskId: task.id,
+          label: `video_generation:${videoGenId}`,
+          queuedMessage: '视频任务排队中，等待可用生成名额',
+          processingMessage: '正在生成视频...',
+          onCancel: () => {
+            db.prepare(
+              'UPDATE video_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ? AND status = ?'
+            ).run('cancelled', '任务已停止', new Date().toISOString(), videoGenId, 'pending');
+          },
+          runner: () => videoService.processVideoGeneration(db, log, videoGenId),
         });
         const item = videoService.getById(db, videoGenId);
-        response.created(res, item || { id: videoGenId, task_id: task.id, status: 'processing' });
+        response.created(res, item || { id: videoGenId, task_id: task.id, status: 'pending' });
       } catch (err) {
         log.error('videos create', { error: err.message });
         response.internalError(res, err.message);

@@ -1,5 +1,6 @@
 // 与 Go ImageGenerationService.ExtractBackgroundsForEpisode + processBackgroundExtraction 对齐
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const sceneService = require('./sceneService');
@@ -198,10 +199,16 @@ function extractBackgroundsForEpisode(db, cfg, log, episodeId, model, style, lan
     episode_id: episodeId,
     user,
   });
-  setImmediate(() => {
-    processBackgroundExtraction(db, runCfg, log, task.id, episodeId, model, style, language, aiConfigId).catch((err) => {
+  generationQueueService.enqueue(db, log, {
+    generationType: 'text',
+    taskId: task.id,
+    label: `background_extraction:${episodeId}`,
+    queuedMessage: '场景提取任务排队中，等待可用生成名额',
+    processingMessage: '正在提取场景信息...',
+    runner: () => processBackgroundExtraction(db, runCfg, log, task.id, episodeId, model, style, language, aiConfigId).catch((err) => {
       log.error('processBackgroundExtraction fatal', { error: err.message, task_id: task.id });
-    });
+      throw err;
+    }),
   });
   return task.id;
 }

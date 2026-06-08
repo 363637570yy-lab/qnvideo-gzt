@@ -129,6 +129,7 @@ const path = require('path');
 const fs = require('fs');
 const imageClient = require('./imageClient');
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const uploadService = require('./uploadService');
 const storageLayout = require('./storageLayout');
 const aiClient = require('./aiClient');
@@ -704,8 +705,18 @@ function create(db, log, req) {
   );
   const imageGenId = info.lastInsertRowid;
   if (!imageGenId) throw new Error('insert failed');
-  setImmediate(() => {
-    processImageGeneration(db, log, imageGenId);
+  generationQueueService.enqueue(db, log, {
+    generationType: 'image',
+    taskId,
+    label: `image_generation:${imageGenId}`,
+    queuedMessage: '图片任务排队中，等待可用生成名额',
+    processingMessage: '正在生成图片...',
+    onCancel: () => {
+      db.prepare(
+        'UPDATE image_generations SET status = ?, error_msg = ?, updated_at = ? WHERE id = ? AND status = ?'
+      ).run('cancelled', '任务已停止', new Date().toISOString(), imageGenId, 'pending');
+    },
+    runner: () => processImageGeneration(db, log, imageGenId),
   });
   return { id: imageGenId, task_id: taskId, status: 'pending', ...getById(db, imageGenId) };
 }

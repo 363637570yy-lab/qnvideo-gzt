@@ -3,6 +3,7 @@ const loadConfig = require('../config').loadConfig;
 const promptI18n = require('./promptI18n');
 const aiClient = require('./aiClient');
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const { safeParseAIJSON } = require('../utils/safeJson');
 const storyboardService = require('./storyboardService');
 const angleService = require('./angleService');
@@ -604,8 +605,13 @@ function generateFramePrompt(db, log, storyboardId, frameType, panelCount, model
     storyboard_id: storyboardId,
     user,
   });
-  setImmediate(() => {
-    processFramePromptGeneration(db, log, task.id, storyboardId, frameType, panelCount || 0, model);
+  generationQueueService.enqueue(db, log, {
+    generationType: 'text',
+    taskId: task.id,
+    label: `frame_prompt_generation:${storyboardId}`,
+    queuedMessage: '帧提示词任务排队中，等待可用生成名额',
+    processingMessage: '正在生成帧提示词...',
+    runner: () => processFramePromptGeneration(db, log, task.id, storyboardId, frameType, panelCount || 0, model),
   });
   log.info('Frame prompt task created', { task_id: task.id, storyboard_id: storyboardId, frame_type: frameType });
   return task.id;

@@ -117,7 +117,7 @@
                 class="result-image"
                 @click="previewUrl = item.url"
               />
-              <div v-else-if="item.status === 'pending' || item.status === 'processing'" class="media-loading">
+              <div v-else-if="item.status === 'queued' || item.status === 'pending' || item.status === 'processing'" class="media-loading">
                 <el-icon class="is-loading"><Loading /></el-icon>
                 <span>{{ item.status === 'processing' ? '生成中...' : '排队中...' }}</span>
               </div>
@@ -151,7 +151,8 @@ import { ArrowLeft, Picture, MagicStick, Loading, CircleClose } from '@element-p
 import { imagesAPI } from '@/api/images'
 import { videosAPI } from '@/api/videos'
 import { uploadAPI } from '@/api/upload'
-import { generationSettingsAPI } from '@/api/prompts'
+import { taskAPI } from '@/api/task'
+import { aiAPI } from '@/api/ai'
 
 const mode = ref('image')
 const prompt = ref('')
@@ -164,14 +165,16 @@ const previewUrl = ref(null)
 const refImageDataUrl = ref(null)
 const refImageLocalPath = ref(null)
 const refImageInput = ref(null)
-/** 与后端视频异步超时一致（分钟 → 毫秒） */
-const videoPollMaxMs = ref(30 * 60 * 1000)
+const imagePollMaxMs = ref(15 * 60 * 1000)
+const videoPollMaxMs = ref(60 * 60 * 1000)
 
 onMounted(async () => {
   try {
-    const res = await generationSettingsAPI.get()
-    const m = Math.max(1, Number(res?.video_generation_timeout_minutes) || 30)
-    videoPollMaxMs.value = m * 60 * 1000
+    const routes = await aiAPI.runtimeRoutes()
+    const imageTimeoutMs = Number(routes?.routing_policies?.image?.request_timeout_ms)
+    const videoMinutes = Number(routes?.routing_policies?.video?.video_poll_timeout_minutes)
+    if (Number.isFinite(imageTimeoutMs) && imageTimeoutMs > 0) imagePollMaxMs.value = imageTimeoutMs
+    if (Number.isFinite(videoMinutes) && videoMinutes > 0) videoPollMaxMs.value = videoMinutes * 60 * 1000
   } catch (_) {}
 })
 
@@ -273,22 +276,34 @@ async function generate() {
   }
 }
 
-async function pollImageTask(taskId, item, maxMs = 180000) {
-  const start = Date.now()
-  while (Date.now() - start < maxMs) {
+async function pollImageTask(taskId, item, maxMs = imagePollMaxMs.value) {
+  let activeStart = Date.now()
+  while (Date.now() - activeStart < maxMs) {
     await new Promise((r) => setTimeout(r, 3000))
     try {
-      const res = await imagesAPI.getTask ? imagesAPI.getTask(taskId) : null
-      if (!res) break
-      if (res.status === 'completed' && res.result) {
+      const res = await taskAPI.get(taskId)
+      if (res?.status === 'queued' || res?.status === 'pending') {
+        item.status = 'queued'
+        activeStart = Date.now()
+        continue
+      }
+      if (res?.status === 'processing') {
+        item.status = 'processing'
+      }
+      if (res?.status === 'completed' && res.result) {
         const r = res.result
         item.url = r.image_url ? r.image_url : (r.local_path ? '/static/' + r.local_path : null)
         item.status = 'completed'
         return
       }
-      if (res.status === 'failed') {
+      if (res?.status === 'failed') {
         item.status = 'failed'
         item.error = res.error || '生成失败'
+        return
+      }
+      if (res?.status === 'cancelled') {
+        item.status = 'failed'
+        item.error = res.error || '任务已停止'
         return
       }
     } catch (_) {}
@@ -299,12 +314,19 @@ async function pollImageTask(taskId, item, maxMs = 180000) {
 
 async function pollVideoTask(taskId, item) {
   const maxMs = videoPollMaxMs.value
-  const start = Date.now()
-  const { taskAPI } = await import('@/api/task')
-  while (Date.now() - start < maxMs) {
+  let activeStart = Date.now()
+  while (Date.now() - activeStart < maxMs) {
     await new Promise((r) => setTimeout(r, 4000))
     try {
       const res = await taskAPI.get(taskId)
+      if (res?.status === 'queued' || res?.status === 'pending') {
+        item.status = 'queued'
+        activeStart = Date.now()
+        continue
+      }
+      if (res?.status === 'processing') {
+        item.status = 'processing'
+      }
       if (res?.status === 'completed' && res?.result) {
         const r = res.result
         const vgId = r.video_generation_id
@@ -318,6 +340,11 @@ async function pollVideoTask(taskId, item) {
       if (res?.status === 'failed') {
         item.status = 'failed'
         item.error = res.error || '生成失败'
+        return
+      }
+      if (res?.status === 'cancelled') {
+        item.status = 'failed'
+        item.error = res.error || '任务已停止'
         return
       }
     } catch (_) {}

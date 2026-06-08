@@ -1,5 +1,6 @@
 
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const { safeParseAIJSON, extractFirstArray } = require('../utils/safeJson');
@@ -202,8 +203,13 @@ function generateCharacters(db, cfg, log, req) {
     episode_id: req.episode_id,
     user: req.user,
   });
-  setImmediate(() => {
-    processCharacterGeneration(db, cfg, log, task.id, {
+  generationQueueService.enqueue(db, log, {
+    generationType: 'text',
+    taskId: task.id,
+    label: `character_generation:${dramaId}`,
+    queuedMessage: '角色生成任务排队中，等待可用生成名额',
+    processingMessage: '正在生成角色...',
+    runner: () => processCharacterGeneration(db, cfg, log, task.id, {
       drama_id: req.drama_id,
       episode_id: req.episode_id,
       outline: req.outline,
@@ -213,7 +219,8 @@ function generateCharacters(db, cfg, log, req) {
       text_config_id: req.text_config_id,
     }).catch((err) => {
       log.error('processCharacterGeneration fatal', { error: err.message, task_id: task.id });
-    });
+      throw err;
+    }),
   });
   return task.id;
 }

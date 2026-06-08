@@ -1,6 +1,7 @@
 // 与 Go PropService.GeneratePropImage + processPropImageGeneration 对齐：道具图片生成
 const path = require('path');
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const imageClient = require('./imageClient');
 const propService = require('./propService');
 const uploadService = require('./uploadService');
@@ -176,10 +177,16 @@ function generatePropImage(db, log, propId, opts) {
     resource_type: 'prop',
     user: opts?.user,
   });
-  setImmediate(() => {
-    processPropImageGeneration(db, log, task.id, propId, opts || {}).catch((err) => {
+  generationQueueService.enqueue(db, log, {
+    generationType: 'image',
+    taskId: task.id,
+    label: `prop_image_generation:${propId}`,
+    queuedMessage: '道具图片任务排队中，等待可用生成名额',
+    processingMessage: '正在生成道具图片...',
+    runner: () => processPropImageGeneration(db, log, task.id, propId, opts || {}).catch((err) => {
       log.error('processPropImageGeneration fatal', { error: err.message, task_id: task.id });
-    });
+      throw err;
+    }),
   });
   return task.id;
 }

@@ -11,7 +11,7 @@ const { randomUUID } = require('crypto');
 /**
  * 使用 MiniMax T2A v2 合成语音
  */
-async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model) {
+async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model, timeoutMs = 180000) {
   const body = JSON.stringify({
     model: model || 'speech-02-hd',
     text,
@@ -59,7 +59,9 @@ async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model) {
         resolve(Buffer.from(audioHex, 'hex'));
       });
     });
-    req.on('error', reject);
+    const timer = setTimeout(() => { req.destroy(); reject(new Error(`MiniMax TTS 请求超时（${timeoutMs}ms）`)); }, timeoutMs);
+    req.on('error', (e) => { clearTimeout(timer); reject(e); });
+    req.on('close', () => clearTimeout(timer));
     req.write(body);
     req.end();
   });
@@ -69,7 +71,7 @@ async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model) {
  * 使用 OpenAI TTS API 合成语音（兼容所有 OpenAI 格式的代理）
  * POST {base_url}/audio/speech  body: { model, input, voice, response_format, speed }
  */
-async function synthesizeWithOpenai(text, voice, apiKey, baseUrl, model, speed) {
+async function synthesizeWithOpenai(text, voice, apiKey, baseUrl, model, speed, timeoutMs = 180000) {
   const url = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '') + '/audio/speech';
   const body = JSON.stringify({
     model: model || 'tts-1',
@@ -104,7 +106,7 @@ async function synthesizeWithOpenai(text, voice, apiKey, baseUrl, model, speed) 
         resolve(buf);
       });
     });
-    const timer = setTimeout(() => { req.destroy(); reject(new Error('OpenAI TTS 请求超时')); }, 120000);
+    const timer = setTimeout(() => { req.destroy(); reject(new Error(`OpenAI TTS 请求超时（${timeoutMs}ms）`)); }, timeoutMs);
     req.on('error', (e) => { clearTimeout(timer); reject(e); });
     req.on('close', () => clearTimeout(timer));
     req.write(body);
@@ -139,6 +141,7 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
     const groupId = ttsConfig.group_id || ttsSettings.group_id || '';
     ttsModel = ttsConfig.default_model || (Array.isArray(ttsConfig.model) ? ttsConfig.model[0] : ttsConfig.model) || '';
     const finalSpeed = speed || ttsSettings.speed || 1.0;
+    const requestTimeoutMs = aiConfigService.getRequestTimeoutMsForConfig(db, ttsConfig, 'tts', ttsModel, 180000);
 
     try {
       if (provider === 'minimax') {
@@ -147,7 +150,8 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
           voiceId || 'female-shaonv',
           ttsConfig.api_key,
           groupId,
-          ttsModel || 'speech-02-hd'
+          ttsModel || 'speech-02-hd',
+          requestTimeoutMs
         );
       } else if (provider === 'openai' || ttsConfig.base_url) {
         log?.info?.('TTS synthesize with OpenAI-compatible provider', {
@@ -164,7 +168,8 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
           ttsConfig.api_key,
           ttsConfig.base_url,
           ttsModel || 'tts-1',
-          finalSpeed
+          finalSpeed,
+          requestTimeoutMs
         );
       } else {
         throw new Error(`不支持的 TTS provider: ${provider}，目前支持 openai、minimax`);

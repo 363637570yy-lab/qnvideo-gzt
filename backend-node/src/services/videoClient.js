@@ -19,6 +19,18 @@ const {
   jwtPartLengths,
 } = require('./klingJwt');
 
+function fetchWithRequestTimeout(url, options = {}, timeoutMs = 0) {
+  const ms = Number(timeoutMs || 0);
+  if (!Number.isFinite(ms) || ms <= 0 || options.signal) return fetch(url, options);
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return fetch(url, { ...options, signal: AbortSignal.timeout(ms) });
+  }
+  if (typeof AbortController === 'undefined') return fetch(url, options);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { ...options, signal: ac.signal }).finally(() => clearTimeout(timer));
+}
+
 /**
  * ?? provider ??????????api_protocol ??????????
  */
@@ -573,14 +585,14 @@ async function callVolcengineOmniVideoApi(config, log, opts) {
     prompt_head: ((prompt || '').trim()).slice(0, 120),
   });
 
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (config.api_key || ''),
     },
     body: JSON.stringify(body),
-  });
+  }, opts.request_timeout_ms);
   const raw = await res.text();
   log.info('[VolcOmni] 创建响应', { video_gen_id, status: res.status, raw: raw.slice(0, 1000) });
 
@@ -717,7 +729,7 @@ async function callKlingOmniVideoApi(config, log, opts) {
     prompt_head: textPrompt.slice(0, 120),
   });
 
-  const res = await fetch(createUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+  const res = await fetchWithRequestTimeout(createUrl, { method: 'POST', headers, body: JSON.stringify(body) }, opts.request_timeout_ms);
   const raw = await res.text();
   log.info('[KlingOmni] 创建响应', { video_gen_id, status: res.status, raw: raw.slice(0, 800) });
 
@@ -1234,7 +1246,7 @@ async function callKlingVideoApi(config, log, opts) {
     video_gen_id, body_preview: JSON.stringify(bodyForLog).slice(0, 400),
   });
 
-  const res = await fetch(createUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+  const res = await fetchWithRequestTimeout(createUrl, { method: 'POST', headers, body: JSON.stringify(body) }, opts.request_timeout_ms);
   const raw = await res.text();
   log.info('[Kling视频] 原始响应', { video_gen_id, status: res.status, raw: raw.slice(0, 500) });
 
@@ -1416,7 +1428,7 @@ async function callDashScopeVideoApi(config, log, opts) {
     image_urls: imageUrlsInBody,
   });
   log.info('Video API request (DashScope)', { url: url.slice(0, 70), model, video_gen_id });
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1424,7 +1436,7 @@ async function callDashScopeVideoApi(config, log, opts) {
       'X-DashScope-Async': 'enable',
     },
     body: JSON.stringify(body),
-  });
+  }, opts.request_timeout_ms);
   const raw = await res.text();
   if (!res.ok) {
     let errMsg = '????????: ' + res.status;
@@ -1533,14 +1545,14 @@ async function callGeminiVideoApi(config, log, opts) {
     has_image: !!instance.image,
   });
 
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-goog-api-key': apiKey,
     },
     body: JSON.stringify(body),
-  });
+  }, opts.request_timeout_ms);
   const raw = await res.text();
   if (!res.ok) {
     let errMsg = 'Gemini ????????: ' + res.status;
@@ -1917,11 +1929,11 @@ async function callViduVideoApi(config, log, opts) {
   });
   log.info('[Vidu] request body', { body: JSON.stringify({ ...body, images: body.images ? ['(url)'] : undefined }), video_gen_id });
 
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader },
     body: JSON.stringify(body),
-  });
+  }, opts.request_timeout_ms);
   const raw = await res.text();
   log.info('[Vidu] raw response', {
     status: res.status,
@@ -2096,14 +2108,14 @@ async function callVeo3VideoApi(config, log, opts) {
     video_gen_id,
   });
 
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (config.api_key || ''),
     },
     body: JSON.stringify(body),
-  });
+  }, opts.request_timeout_ms);
   const raw = await res.text();
   log.info('[Veo3] raw response', { status: res.status, raw: raw.slice(0, 1000), video_gen_id });
 
@@ -2293,14 +2305,14 @@ async function callSoraVideoApi(config, log, opts) {
     video_gen_id,
   });
 
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': `multipart/form-data; boundary=${boundary}`,
       Authorization: 'Bearer ' + (config.api_key || ''),
     },
     body: bodyBuffer,
-  });
+  }, opts.request_timeout_ms);
   const raw = await res.text();
   log.info('[Sora] raw response', { status: res.status, raw: raw.slice(0, 1000), video_gen_id });
 
@@ -2476,7 +2488,7 @@ async function callJimengAiApiVideo(config, log, opts) {
   const headers = { Authorization: 'Bearer ' + apiKey };
   let fetchOpts = { method: 'POST', headers };
 
-  const longWaitMs = 10 * 60 * 1000;
+  const longWaitMs = Number(opts.request_timeout_ms || opts.timeout_ms || 10 * 60 * 1000);
   if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
     fetchOpts.signal = AbortSignal.timeout(longWaitMs);
   }
@@ -2705,14 +2717,14 @@ async function callXaiVideoApi(config, log, opts) {
       : undefined,
   });
 
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (config.api_key || ''),
     },
     body: JSON.stringify(body),
-  });
+  }, opts.request_timeout_ms);
   const raw = await res.text();
   log.info('[xAI视频] 响应', { video_gen_id, status: res.status, head: raw.slice(0, 500) });
 
@@ -3028,6 +3040,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
     throw new Error(getNoAiConfigMessage('video'));
   }
   const model = getModelFromConfig(config, preferredModel);
+  const requestTimeoutMs = aiConfigService.getRequestTimeoutMsForConfig(db, config, 'video', model, 180000);
   const provider = (config.provider || '').toLowerCase();
   const protocol = resolveVideoProtocol(config, preferredModel);
   if (db && opts.drama_id && VIDEO_PROTOCOLS_SUPPORT_SD2_ASSET_SCHEME.has(protocol)) {
@@ -3098,6 +3111,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3113,6 +3127,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3128,6 +3143,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3140,6 +3156,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       video_gen_id: opts.video_gen_id,
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3153,6 +3170,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       video_gen_id: opts.video_gen_id,
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3165,6 +3183,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3179,6 +3198,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
       // 为将来可灵 Omni 也支持音色参考做准备（当前 Seedance 2.0 不走此分支）
       voice_reference_url: opts.voice_reference_url,
     });
@@ -3199,6 +3219,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
       // 关键：把 callVideoApi 里自动注入的 Seedance 2.0 音色参考音频透传下去
       voice_reference_url: opts.voice_reference_url,
     });
@@ -3211,6 +3232,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       image_url: opts.image_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3225,6 +3247,7 @@ async function callVideoApiWithConfig(db, log, opts, config) {
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
       video_gen_id: opts.video_gen_id,
+      request_timeout_ms: requestTimeoutMs,
     });
   }
 
@@ -3331,14 +3354,14 @@ async function callVideoApiWithConfig(db, log, opts, config) {
     frame_count: (firstForApi ? 1 : 0) + (lastForApi ? 1 : 0),
     request_body: JSON.stringify({ ...body, content: body.content?.map(c => c.type === 'image_url' ? { ...c, image_url: { url: '(omitted)' } } : c) }),
   });
-  const res = await fetch(url, {
+  const res = await fetchWithRequestTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (config.api_key || ''),
     },
     body: JSON.stringify(body),
-  });
+  }, requestTimeoutMs);
   const raw = await res.text();
   log.info('Video API raw response', { video_gen_id, status: res.status, raw: raw.slice(0, 1000) });
   if (!res.ok) {

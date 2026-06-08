@@ -28,6 +28,9 @@ export const aiAPI = {
   update(id, body) {
     return request.put(`/ai-configs/${id}`, body)
   },
+  reorder(ids) {
+    return request.put('/ai-configs/reorder', { ids })
+  },
   delete(id) {
     return request.delete(`/ai-configs/${id}`)
   },

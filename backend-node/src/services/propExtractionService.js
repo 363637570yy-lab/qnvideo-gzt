@@ -1,5 +1,6 @@
 // 与 Go PropService.ExtractPropsFromScript + processPropExtraction 对齐：从剧本提取道具
 const taskService = require('./taskService');
+const generationQueueService = require('./generationQueueService');
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const propService = require('./propService');
@@ -149,10 +150,16 @@ function extractPropsForEpisode(db, log, episodeId, cfg, aiConfigId, user) {
     episode_id: episodeId,
     user,
   });
-  setImmediate(() => {
-    processPropExtraction(db, log, task.id, episodeId, aiConfigId).catch((err) => {
+  generationQueueService.enqueue(db, log, {
+    generationType: 'text',
+    taskId: task.id,
+    label: `prop_extraction:${episodeId}`,
+    queuedMessage: '道具提取任务排队中，等待可用生成名额',
+    processingMessage: '正在提取道具信息...',
+    runner: () => processPropExtraction(db, log, task.id, episodeId, aiConfigId).catch((err) => {
       log.error('processPropExtraction fatal', { error: err.message, task_id: task.id });
-    });
+      throw err;
+    }),
   });
   return task.id;
 }

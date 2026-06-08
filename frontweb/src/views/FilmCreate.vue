@@ -2976,7 +2976,6 @@ import { uploadAPI } from '@/api/upload'
 import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
-import { generationSettingsAPI } from '@/api/prompts'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
@@ -3498,17 +3497,14 @@ let pipelineResolveResume = null
 // 倒计时（两个生成阶段之间的确认窗口）
 const pipelineCountdown = ref(0)      // 剩余秒数，0 表示不在倒计时
 const pipelineCountdownMsg = ref('')  // 倒计时说明文字
-const pipelineConcurrency = ref(3)
+const pipelineConcurrency = ref(8)
 const pipelineVideoConcurrency = ref(3)
 const pipelineActiveTasks = reactive(new Set())
 
 async function loadPipelineConcurrency() {
-  if (!isAdminUser.value) return
-  try {
-    const res = await generationSettingsAPI.get()
-    pipelineConcurrency.value = Math.max(1, Number(res?.concurrency) || 3)
-    pipelineVideoConcurrency.value = Math.max(1, Number(res?.video_concurrency) || 3)
-  } catch (_) {}
+  // 单页面提交速度只是浏览器到服务器的保护值，不再暴露给管理员配置。
+  pipelineConcurrency.value = 8
+  pipelineVideoConcurrency.value = 3
 }
 
 /**
@@ -8704,12 +8700,21 @@ function pollTask(taskId, onDone, meta = {}) {
     label: meta.label,
     ...meta,
   }
-  return genStore.pollTask(taskId, resolvedMeta, onDone, { ElMessage })
+  const longVideoTask =
+    resolvedMeta.resourceType === GEN_RESOURCE.SB_VIDEO ||
+    resolvedMeta.resourceType === GEN_RESOURCE.EPISODE_MERGE
+  return genStore.pollTask(taskId, resolvedMeta, onDone, {
+    ElMessage,
+    maxAttempts: longVideoTask ? 1800 : 450,
+    timeoutMessage: longVideoTask
+      ? '视频任务仍在排队或生成中，请稍后刷新查看'
+      : undefined,
+  })
 }
 
 /** 一键生成视频：暂停时等待，返回 { paused: true } 表示被暂停中断 */
 function pollTaskWithPause(taskId, onDone) {
-  const maxAttempts = 450  // 450 × 2s = 15 分钟
+  const maxAttempts = 1800  // 1800 × 2s = 60 分钟；排队/待开始不计入次数
   const interval = 2000
   let attempts = 0
   return new Promise((resolve) => {
@@ -8730,12 +8735,15 @@ function pollTaskWithPause(taskId, onDone) {
           resolve({ error: t.error || '任务失败' })
           return
         }
+        if (t.status === 'queued' || t.status === 'pending') {
+          attempts = 0
+        }
       } catch (pollErr) {
         console.warn('[pollTaskWithPause] poll attempt failed:', pollErr?.message)
       }
       if (attempts < maxAttempts) setTimeout(tick, interval)
       else {
-        resolve({ error: '任务查询超时（超过15分钟）' })
+        resolve({ error: '任务查询超时（超过60分钟）' })
       }
     }
     setTimeout(tick, interval)
