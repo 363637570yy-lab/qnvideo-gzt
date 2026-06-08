@@ -8,6 +8,7 @@ const safeJson = require('../utils/safeJson');
 const { safeParseAIJSON, extractJsonCandidate, repairTruncatedJsonArray, extractFirstArray } = safeJson;
 const loadConfig = require('../config').loadConfig;
 const angleService = require('./angleService');
+const workflowPresetService = require('./workflowPresetService');
 
 /**
  * 分镜专用 generateText 包装：
@@ -1153,7 +1154,7 @@ function outputLanguageInstruction(language) {
     : '\n生成文本语言：结构化说明字段请使用简体中文，如标题、描述、动作、旁白、图片提示词和视频提示词。对白、引用语、专有名词、论文/书名/咒语/外语原文必须保持剧本原语言，不要强行翻译。';
 }
 
-function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, language, includeNarration, universalOmni, aiConfigId, user, videoClipDurationOverride) {
+function generateStoryboard(db, log, episodeId, model, style, storyboardCount, videoDuration, aspectRatio, language, includeNarration, universalOmni, aiConfigId, user, videoClipDurationOverride, workflowPresetId) {
   const cfg = loadConfig();
   const episode = db.prepare(
     'SELECT id, script_content, description, drama_id FROM episodes WHERE id = ? AND deleted_at IS NULL'
@@ -1297,6 +1298,13 @@ function generateStoryboard(db, log, episodeId, model, style, storyboardCount, v
   }
 
   let systemPrompt = promptI18n.getStoryboardSystemPrompt(cfg);
+  const workflowPreset = workflowPresetService.resolvePreset(db, 'storyboard', workflowPresetId);
+  if (workflowPreset?.prompt_template) {
+    const isEn = systemPrompt.includes('[Role]');
+    systemPrompt += isEn
+      ? `\n\n[WORKFLOW PRESET — ${workflowPreset.name}]\n${workflowPreset.prompt_template}`
+      : `\n\n【工作流规范——${workflowPreset.name}】\n${workflowPreset.prompt_template}`;
+  }
 
   // 当用户指定了分镜数量时，在系统提示词后追加最高优先级覆盖指令，
   // 使"目标数量"优先于默认的剧情节拍数量判断
@@ -1353,6 +1361,8 @@ The user enabled narrator voice-over for the whole episode. Every shot object MU
     storyboard_count: storyboardCount,
     video_duration: videoDuration,
     universal_omni_storyboard: wantUniversalOmni,
+    workflow_preset_id: workflowPreset?.id || null,
+    workflow_preset_name: workflowPreset?.name || null,
   });
 
   generationQueueService.enqueue(db, log, {

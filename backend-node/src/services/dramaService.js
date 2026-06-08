@@ -329,7 +329,7 @@ function updateDrama(db, log, dramaId, req) {
 
 function generateStoryboard(db, log, episodeId, options) {
   const episodeStoryboardService = require('./episodeStoryboardService');
-  const { model, style, storyboard_count, video_duration, video_clip_duration, aspect_ratio, language, include_narration, universal_omni_storyboard, ai_config_id, text_config_id, user } = options || {};
+  const { model, style, storyboard_count, video_duration, video_clip_duration, aspect_ratio, language, include_narration, universal_omni_storyboard, workflow_preset_id, ai_config_id, text_config_id, user } = options || {};
   // 转换可能为字符串的数字
   const count = storyboard_count ? Number(storyboard_count) : undefined;
   const duration = video_duration ? Number(video_duration) : undefined;
@@ -347,7 +347,8 @@ function generateStoryboard(db, log, episodeId, options) {
     universal_omni_storyboard,
     ai_config_id || text_config_id || null,
     user,
-    video_clip_duration
+    video_clip_duration,
+    workflow_preset_id
   );
 }
 

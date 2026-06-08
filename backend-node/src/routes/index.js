@@ -21,6 +21,7 @@ const assetRoutes = require('./assets');
 const audioRoutes = require('./audio');
 const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
+const workflowPresetRoutes = require('./workflowPresets');
 const authRoutes = require('./auth');
 const { requireAuth, requireAdmin, authorizeProjectAccess } = require('../middleware/auth');
 
@@ -49,6 +50,7 @@ function setupRouter(cfg, db, log) {
   const assets = assetRoutes(db, log);
   const audio = audioRoutes(db, log, cfg);
   const promptOverrides = promptOverridesRoutes.routes(db, log);
+  const workflowPresets = workflowPresetRoutes(db, log);
 
   // ---------- auth ----------
   r.use('/auth', authRoutes(log, db));
@@ -56,6 +58,12 @@ function setupRouter(cfg, db, log) {
   r.get('/runtime/model-routes', aiConfig.runtimeRoutesPublic);
   r.get('/runtime/ai-configs', aiConfig.runtimeListPublic);
   r.get('/runtime/ai-configs/active', aiConfig.activePublic);
+  r.get('/workflow-presets', workflowPresets.list);
+  r.get('/workflow-presets/:id', workflowPresets.get);
+  r.post('/workflow-presets', requireAdmin(), workflowPresets.create);
+  r.put('/workflow-presets/:id', requireAdmin(), workflowPresets.update);
+  r.put('/workflow-presets/:id/default', requireAdmin(), workflowPresets.setDefault);
+  r.delete('/workflow-presets/:id', requireAdmin(), workflowPresets.delete);
   r.use('/ai-configs', requireAdmin());
   r.use('/settings/generation', requireAdmin());
   r.use('/settings/prompts', requireAdmin());

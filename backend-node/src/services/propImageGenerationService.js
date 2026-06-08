@@ -9,6 +9,7 @@ const storageLayout = require('./storageLayout');
 const { resolveProjectImageSpec } = require('./projectMediaSpec');
 const { safeDeleteFile } = require('./storageCleanupService');
 const { normalizeNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
+const workflowPresetService = require('./workflowPresetService');
 
 function appendPrompt(base, extra) {
   const add = (extra || '').toString().trim();
@@ -55,15 +56,18 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
     ? (resolveProjectImageSpec(db, prop.drama_id)?.size || null)
     : (cfg?.style?.default_image_size || '1920x1920');
   const fullPrompt = appendPrompt(String(prop.prompt).trim(), style);
+  const workflowPreset = workflowPresetService.resolvePreset(db, 'prop', opts?.workflow_preset_id);
+  const workflowPrompt = workflowPresetService.mergePrompt(fullPrompt, workflowPreset);
   // 与角色/场景一致：使用前端「图片生成模型」选择的 model；未传时用 YAML default_image_provider 兜底
   const model = (opts && opts.model) ? String(opts.model).trim() || null : null;
   const preferredProvider = !model && cfg?.ai?.default_image_provider ? cfg.ai.default_image_provider : null;
-  const userNeg = imageClient.resolveAssetUserNegativeForApi(model, prop.negative_prompt);
+  const mergedNegative = workflowPresetService.mergeNegative(prop.negative_prompt, workflowPreset);
+  const userNeg = imageClient.resolveAssetUserNegativeForApi(model, mergedNegative);
 
   let result;
   try {
     result = await imageClient.callImageApi(db, log, {
-      prompt: fullPrompt,
+      prompt: workflowPrompt,
       size: imageSize,
       drama_id: prop.drama_id,
       model: model || undefined,
@@ -160,6 +164,7 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
     image_url: result.image_url,
     local_path: localPath,
     prop_id: propId,
+    workflow_preset_id: workflowPreset?.id || null,
   });
   log.info('Prop image generation completed', { prop_id: propId, image_url: result.image_url, local_path: localPath });
 }

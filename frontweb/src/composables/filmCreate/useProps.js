@@ -294,14 +294,14 @@ export function useProps(deps) {
     }
   }
 
-  async function onGeneratePropImage(prop, useQuadGrid = false, options = {}) {
+  async function onGeneratePropImage(prop, options = {}) {
     prop.errorMsg = ''
     prop.error_msg = ''
     const meta = buildPropImageMeta(prop)
     generatingPropIds.add(prop.id)
     genStore.markRunning(meta)
     try {
-      const res = await propAPI.generateImage(prop.id, undefined, getSelectedStyle(), { use_quad_grid: !!useQuadGrid, ...options })
+      const res = await propAPI.generateImage(prop.id, undefined, getSelectedStyle(), { ...options })
       const taskId = res?.task_id
       if (taskId) {
         const pollRes = await pollTask(taskId, () => loadDrama(), meta)

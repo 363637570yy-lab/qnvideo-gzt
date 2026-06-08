@@ -449,6 +449,29 @@ const tableDefs = [
     },
   },
   {
+    name: 'workflow_presets',
+    pk: 'id',
+    unique: ['preset_key'],
+    columns: {
+      preset_type: 'TEXT NOT NULL DEFAULT \'\'',
+      preset_key: 'TEXT NOT NULL DEFAULT \'\'',
+      name: 'TEXT NOT NULL DEFAULT \'\'',
+      description: 'TEXT',
+      mode: 'TEXT NOT NULL DEFAULT \'default\'',
+      prompt_template: 'TEXT',
+      negative_prompt_template: 'TEXT',
+      options_json: 'TEXT',
+      is_active: 'INTEGER DEFAULT 1',
+      is_default: 'INTEGER DEFAULT 0',
+      sort_order: 'INTEGER DEFAULT 0',
+      created_by_user_id: 'TEXT',
+      updated_by_user_id: 'TEXT',
+      created_at: 'TEXT',
+      updated_at: 'TEXT',
+      deleted_at: 'TEXT',
+    },
+  },
+  {
     name: 'image_proxy_cache',
     pk: 'id',
     columns: {
@@ -544,6 +567,7 @@ const performanceIndexes = [
   ['idx_character_libraries_owner_created', 'character_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
   ['idx_scene_libraries_owner_created', 'scene_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
   ['idx_prop_libraries_owner_created', 'prop_libraries', ['created_by_user_id', 'deleted_at', 'created_at']],
+  ['idx_workflow_presets_type_active_order', 'workflow_presets', ['preset_type', 'deleted_at', 'is_active', 'sort_order']],
 ];
 
 function createIndexSql([name, table, columns]) {

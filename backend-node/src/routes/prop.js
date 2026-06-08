@@ -51,8 +51,15 @@ function generateImage(db, log) {
     const model = req.body?.model != null ? String(req.body.model).trim() || null : null;
     const style = req.body?.style != null ? String(req.body.style).trim() || null : null;
     const aiConfigId = req.body?.ai_config_id || req.body?.image_config_id || null;
+    const workflowPresetId = req.body?.workflow_preset_id || null;
     try {
-      const taskId = propImageGenerationService.generatePropImage(db, log, id, { model, style, ai_config_id: aiConfigId, user: req.user });
+      const taskId = propImageGenerationService.generatePropImage(db, log, id, {
+        model,
+        style,
+        ai_config_id: aiConfigId,
+        workflow_preset_id: workflowPresetId,
+        user: req.user,
+      });
       response.success(res, { task_id: taskId });
     } catch (err) {
       if (err.message === '道具不存在') return response.notFound(res, err.message);

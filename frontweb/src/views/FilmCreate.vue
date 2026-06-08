@@ -39,6 +39,10 @@
             <el-icon><Setting /></el-icon>
             AI配置
           </el-button>
+          <el-button v-if="isAdminUser" class="btn-ai-config" @click="showWorkflowConfigDialog = true">
+            <el-icon><Setting /></el-icon>
+            工作流配置
+          </el-button>
           <AccountMenu :user="currentUser" />
         </div>
       </div>
@@ -536,6 +540,24 @@
                 <el-button size="small" :disabled="!dramaId" @click="openAddCharacter">添加角色</el-button>
                 <el-button size="small" @click="showCharLibrary = true">本剧角色库</el-button>
               </div>
+              <div class="workflow-preset-row">
+                <span class="workflow-preset-label">生成规范</span>
+                <el-select
+                  v-model="selectedWorkflowPresetIds.character"
+                  size="small"
+                  filterable
+                  class="workflow-preset-select"
+                  :loading="workflowPresetLoading"
+                >
+                  <el-option
+                    v-for="preset in workflowPresetOptions.character"
+                    :key="preset.id"
+                    :label="workflowPresetLabel(preset)"
+                    :value="String(preset.id)"
+                  />
+                </el-select>
+                <el-button v-if="isAdminUser" size="small" @click="showWorkflowConfigDialog = true">配置</el-button>
+              </div>
               <div class="asset-list asset-list-two">
                 <div v-for="char in characters" :key="char.id" class="asset-item asset-item-left-right">
                   <div class="asset-info">
@@ -702,8 +724,23 @@
                 <el-button size="small" :disabled="!dramaId" @click="showAddProp = true">添加道具</el-button>
                 <el-button size="small" @click="showPropLibrary = true">本剧道具库</el-button>
               </div>
-              <div class="prop-gen-mode" style="margin: 8px 0; font-size: 13px;">
-                <el-checkbox v-model="propUseQuadGrid">生成四视图道具（默认单图，纯色无缝背景）</el-checkbox>
+              <div class="workflow-preset-row">
+                <span class="workflow-preset-label">生成规范</span>
+                <el-select
+                  v-model="selectedWorkflowPresetIds.prop"
+                  size="small"
+                  filterable
+                  class="workflow-preset-select"
+                  :loading="workflowPresetLoading"
+                >
+                  <el-option
+                    v-for="preset in workflowPresetOptions.prop"
+                    :key="preset.id"
+                    :label="workflowPresetLabel(preset)"
+                    :value="String(preset.id)"
+                  />
+                </el-select>
+                <el-button v-if="isAdminUser" size="small" @click="showWorkflowConfigDialog = true">配置</el-button>
               </div>
               <div class="asset-list asset-list-two">
                 <div v-for="prop in props" :key="prop.id" class="asset-item asset-item-left-right">
@@ -777,11 +814,11 @@
                       </div>
                     </div>
                     <div class="asset-cover-actions">
-                      <el-tooltip :content="propUseQuadGrid ? '四视图道具（前/侧/后/顶，纯色无缝背景）' : '单图道具（纯色无缝背景）'" placement="top">
+                      <el-tooltip :content="selectedWorkflowPresetName('prop')" placement="top">
                         <el-button
                           :type="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? 'warning' : 'primary'"
                           size="small"
-                          @click="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? stopResourceGeneration(GEN_RESOURCE.PROP_IMAGE, prop.id) : onGeneratePropImage(prop, propUseQuadGrid)"
+                          @click="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? stopResourceGeneration(GEN_RESOURCE.PROP_IMAGE, prop.id) : onGeneratePropImage(prop)"
                         >
                           <el-icon v-if="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id)" class="is-loading"><Loading /></el-icon>
                           <el-icon v-else><MagicStick /></el-icon>
@@ -820,8 +857,23 @@
                 <el-button size="small" :disabled="!dramaId" @click="openAddScene">添加场景</el-button>
                 <el-button size="small" @click="showSceneLibrary = true">本剧场景库</el-button>
               </div>
-              <div class="scene-gen-mode" style="margin: 8px 0; font-size: 13px;">
-                <el-checkbox v-model="sceneUseQuadGrid">生成四宫格场景（默认单图）</el-checkbox>
+              <div class="workflow-preset-row">
+                <span class="workflow-preset-label">生成规范</span>
+                <el-select
+                  v-model="selectedWorkflowPresetIds.scene"
+                  size="small"
+                  filterable
+                  class="workflow-preset-select"
+                  :loading="workflowPresetLoading"
+                >
+                  <el-option
+                    v-for="preset in workflowPresetOptions.scene"
+                    :key="preset.id"
+                    :label="workflowPresetLabel(preset)"
+                    :value="String(preset.id)"
+                  />
+                </el-select>
+                <el-button v-if="isAdminUser" size="small" @click="showWorkflowConfigDialog = true">配置</el-button>
               </div>
               <div class="asset-list asset-list-two">
                 <div v-for="scene in scenes" :key="scene.id" class="asset-item asset-item-left-right">
@@ -895,11 +947,11 @@
                       </div>
                     </div>
                     <div class="asset-cover-actions">
-                      <el-tooltip :content="sceneUseQuadGrid ? '四宫格场景（正/侧/俯/仰）' : '单图场景'" placement="top">
+                      <el-tooltip :content="selectedWorkflowPresetName('scene')" placement="top">
                         <el-button
                           :type="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? 'warning' : 'primary'"
                           size="small"
-                          @click="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? stopResourceGeneration(GEN_RESOURCE.SCENE_IMAGE, scene.id) : onGenerateSceneImage(scene, sceneUseQuadGrid)"
+                          @click="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? stopResourceGeneration(GEN_RESOURCE.SCENE_IMAGE, scene.id) : onGenerateSceneImage(scene)"
                         >
                           <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id)" class="is-loading"><Loading /></el-icon>
                           <el-icon v-else><MagicStick /></el-icon>
@@ -930,6 +982,23 @@
           <div class="sb-setting-group">
             <div class="sb-setting-group-title">分镜脚本设置</div>
             <div class="sb-config-row">
+              <label class="sb-config-item">
+                <span class="sb-config-label">分镜规范</span>
+                <el-select
+                  v-model="selectedWorkflowPresetIds.storyboard"
+                  size="small"
+                  filterable
+                  class="sb-config-input"
+                  :loading="workflowPresetLoading"
+                >
+                  <el-option
+                    v-for="preset in workflowPresetOptions.storyboard"
+                    :key="preset.id"
+                    :label="workflowPresetLabel(preset)"
+                    :value="String(preset.id)"
+                  />
+                </el-select>
+              </label>
               <label class="sb-config-item">
                 <span class="sb-config-label">本次镜数</span>
                 <el-input-number v-model="storyboardCount" :min="1" :max="200" :step="5" placeholder="自动" class="sb-config-input" />
@@ -2917,6 +2986,11 @@
     <el-dialog v-if="isAdminUser" v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close class="ai-config-dialog">
       <AIConfigContent v-if="showAiConfigDialog && isAdminUser" />
     </el-dialog>
+    <WorkflowPresetConfigDialog
+      v-if="isAdminUser"
+      v-model="showWorkflowConfigDialog"
+      @changed="loadWorkflowPresets"
+    />
 
     <!-- 图片放大预览：点击遮罩关闭，左右可切换当前页面图集 -->
     <Teleport to="body">
@@ -2976,10 +3050,12 @@ import { uploadAPI } from '@/api/upload'
 import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
+import { workflowPresetAPI } from '@/api/workflowPresets'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
+import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
 import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEditor.vue'
 import {
@@ -3066,6 +3142,64 @@ function goList() {
 
 
 const showAiConfigDialog = ref(false)
+const showWorkflowConfigDialog = ref(false)
+const workflowPresetLoading = ref(false)
+const workflowPresetOptions = reactive({
+  character: [],
+  scene: [],
+  prop: [],
+  storyboard: [],
+})
+const selectedWorkflowPresetIds = reactive({
+  character: '',
+  scene: '',
+  prop: '',
+  storyboard: '',
+})
+
+function workflowPresetLabel(preset) {
+  return preset?.is_default ? `${preset.name}（默认）` : preset?.name || '未命名规范'
+}
+
+function selectedWorkflowPreset(type) {
+  const id = String(selectedWorkflowPresetIds[type] || '')
+  return (workflowPresetOptions[type] || []).find((item) => String(item.id) === id) || null
+}
+
+function selectedWorkflowPresetName(type) {
+  return selectedWorkflowPreset(type)?.name || '默认生成规范'
+}
+
+function workflowPresetPayload(type) {
+  const id = Number(selectedWorkflowPresetIds[type])
+  return Number.isFinite(id) && id > 0 ? { workflow_preset_id: id } : {}
+}
+
+function applyDefaultWorkflowSelections() {
+  for (const type of Object.keys(workflowPresetOptions)) {
+    const list = workflowPresetOptions[type] || []
+    const selected = String(selectedWorkflowPresetIds[type] || '')
+    if (selected && list.some((item) => String(item.id) === selected)) continue
+    const next = list.find((item) => item.is_default) || list[0]
+    selectedWorkflowPresetIds[type] = next ? String(next.id) : ''
+  }
+}
+
+async function loadWorkflowPresets() {
+  workflowPresetLoading.value = true
+  try {
+    const res = await workflowPresetAPI.list({ active: 1 })
+    const items = res?.items || []
+    for (const type of Object.keys(workflowPresetOptions)) {
+      workflowPresetOptions[type] = items.filter((item) => item.preset_type === type)
+    }
+    applyDefaultWorkflowSelections()
+  } catch (err) {
+    ElMessage.error(err.message || '加载工作流规范失败')
+  } finally {
+    workflowPresetLoading.value = false
+  }
+}
 watch(showAiConfigDialog, (open) => {
   if (!open) {
     invalidateActiveVideoAiConfigCache()
@@ -3073,6 +3207,9 @@ watch(showAiConfigDialog, (open) => {
       loadRuntimeAiConfigs(true)
     }
   }
+})
+watch(showWorkflowConfigDialog, (open) => {
+  if (!open) loadWorkflowPresets()
 })
 const MAX_STORY_EPISODE_COUNT = 100
 const aiRouteLoading = ref(false)
@@ -3664,17 +3801,17 @@ async function onExtractScenes() {
 
 async function onGenerateCharacterImage(char) {
   if (!(await confirmAdminProjectOperation(`生成角色「${char?.name || char?.id || ''}」图片`))) return
-  return onGenerateCharacterImageRaw(char, imageAiPayload())
+  return onGenerateCharacterImageRaw(char, { ...imageAiPayload(), ...workflowPresetPayload('character') })
 }
 
-async function onGeneratePropImage(prop, useQuadGrid = false) {
+async function onGeneratePropImage(prop) {
   if (!(await confirmAdminProjectOperation(`生成道具「${prop?.name || prop?.id || ''}」图片`))) return
-  return onGeneratePropImageRaw(prop, useQuadGrid, imageAiPayload())
+  return onGeneratePropImageRaw(prop, { ...imageAiPayload(), ...workflowPresetPayload('prop') })
 }
 
-async function onGenerateSceneImage(scene, useQuadGrid = false) {
+async function onGenerateSceneImage(scene) {
   if (!(await confirmAdminProjectOperation(`生成场景「${scene?.location || scene?.id || ''}」图片`))) return
-  return onGenerateSceneImageRaw(scene, useQuadGrid, imageAiPayload())
+  return onGenerateSceneImageRaw(scene, { ...imageAiPayload(), ...workflowPresetPayload('scene') })
 }
 
 async function onDeleteCharacter(char) {
@@ -3699,8 +3836,6 @@ const resourcePanelCollapsed = ref(false)
 const charactersBlockCollapsed = ref(false)
 const propsBlockCollapsed = ref(false)
 const scenesBlockCollapsed = ref(false)
-const sceneUseQuadGrid = ref(false)
-const propUseQuadGrid = ref(false)  // 道具四视图（与场景四宫格同级选项）
 
 // 分镜行内编辑状态（按 storyboard id 存储）
 // navCollapsed/storyboardMenuExpanded/toggleNav → 已移至 useNavigation composable
@@ -8302,6 +8437,7 @@ async function onGenerateStoryboard() {
       language: scriptLanguage.value || 'zh',
       include_narration: !!storyboardIncludeNarration.value,
       universal_omni_storyboard: !!storyboardUniversalOmni.value,
+      ...workflowPresetPayload('storyboard'),
       ...textAiPayload(),
     })
     const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
@@ -9040,7 +9176,7 @@ async function runOneClickPipeline(textOnly = false) {
         try {
           const stepName = '角色图 ' + (char.name || char.id)
           const ok = await pipelineWithRetry(stepName, async () => {
-            const res = await characterAPI.generateImage(char.id, undefined, style, imageAiPayload())
+            const res = await characterAPI.generateImage(char.id, undefined, style, { ...imageAiPayload(), ...workflowPresetPayload('character') })
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -9075,8 +9211,7 @@ async function runOneClickPipeline(textOnly = false) {
         try {
           const stepName = '场景图 ' + (scene.location || scene.id)
           const ok = await pipelineWithRetry(stepName, async () => {
-            const useQuad = !!sceneUseQuadGrid.value
-            const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, use_quad_grid: useQuad, ...imageAiPayload() })
+            const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, ...imageAiPayload(), ...workflowPresetPayload('scene') })
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -9111,7 +9246,7 @@ async function runOneClickPipeline(textOnly = false) {
         try {
           const stepName = '道具图 ' + (prop.name || prop.id)
           const ok = await pipelineWithRetry(stepName, async () => {
-            const res = await propAPI.generateImage(prop.id, undefined, style, imageAiPayload())
+            const res = await propAPI.generateImage(prop.id, undefined, style, { ...imageAiPayload(), ...workflowPresetPayload('prop') })
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -9339,7 +9474,7 @@ async function runRepairPipeline() {
         await checkPause()
         const stepName = '角色图 ' + (char.name || char.id)
         const ok = await pipelineWithRetry(stepName, async () => {
-          const res = await characterAPI.generateImage(char.id, undefined, style, imageAiPayload())
+          const res = await characterAPI.generateImage(char.id, undefined, style, { ...imageAiPayload(), ...workflowPresetPayload('character') })
           const taskId = res?.image_generation?.task_id ?? res?.task_id
           if (taskId) {
             const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -9387,8 +9522,7 @@ async function runRepairPipeline() {
         await checkPause()
         const stepName = '场景图 ' + (scene.location || scene.id)
         const ok = await pipelineWithRetry(stepName, async () => {
-          const useQuad = !!sceneUseQuadGrid.value
-          const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, use_quad_grid: useQuad, ...imageAiPayload() })
+          const res = await sceneAPI.generateImage({ scene_id: scene.id, model: undefined, style, ...imageAiPayload(), ...workflowPresetPayload('scene') })
           const taskId = res?.image_generation?.task_id ?? res?.task_id
           if (taskId) {
             const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -9438,7 +9572,7 @@ async function runRepairPipeline() {
         try {
           const stepName = '道具图 ' + (prop.name || prop.id)
           const ok = await pipelineWithRetry(stepName, async () => {
-            const res = await propAPI.generateImage(prop.id, undefined, style, imageAiPayload())
+            const res = await propAPI.generateImage(prop.id, undefined, style, { ...imageAiPayload(), ...workflowPresetPayload('prop') })
             const taskId = res?.image_generation?.task_id ?? res?.task_id
             if (taskId) {
               const result = await pollTaskWithPause(taskId, () => loadDrama())
@@ -9659,6 +9793,7 @@ onMounted(async () => {
     taskClockNow.value = Date.now()
   }, 1000)
   loadPipelineConcurrency()
+  loadWorkflowPresets()
   applyRouteToStore()
 })
 
@@ -11004,6 +11139,24 @@ html.light .resource-block-title {
 }
 .resource-block-body .asset-actions {
   margin-bottom: 12px;
+}
+.workflow-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  flex-wrap: wrap;
+}
+.workflow-preset-label {
+  font-size: 13px;
+  color: #a1a1aa;
+  white-space: nowrap;
+}
+.workflow-preset-select {
+  width: min(360px, 100%);
+}
+html.light .workflow-preset-label {
+  color: #64748b;
 }
 .resource-block-body .asset-list-two {
   gap: 16px;

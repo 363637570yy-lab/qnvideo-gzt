@@ -4,6 +4,7 @@ const response = require('../response');
 const characterLibraryService = require('../services/characterLibraryService');
 const storageLayout = require('../services/storageLayout');
 const seedance2AssetGuards = require('../utils/seedance2AssetGuards');
+const workflowPresetService = require('../services/workflowPresetService');
 
 function routes(db, cfg, log, uploadService) {
   return {
@@ -82,7 +83,8 @@ function routes(db, cfg, log, uploadService) {
           body.model,
           body.style,
           body.ai_config_id || body.image_config_id || null,
-          req.user
+          req.user,
+          workflowPresetService.resolvePreset(db, 'character', body.workflow_preset_id || null)
         );
         if (!out.ok) {
           return response.badRequest(res, out.error);
@@ -107,7 +109,8 @@ function routes(db, cfg, log, uploadService) {
           body.model,
           body.style,
           body.ai_config_id || body.image_config_id || null,
-          req.user
+          req.user,
+          workflowPresetService.resolvePreset(db, 'character', body.workflow_preset_id || null)
         );
         if (!out.ok) {
           if (out.error === 'character not found') return response.notFound(res, '角色不存在');
@@ -266,7 +269,8 @@ function routes(db, cfg, log, uploadService) {
           modelName,
           style,
           body.ai_config_id || body.image_config_id || null,
-          req.user
+          req.user,
+          workflowPresetService.resolvePreset(db, 'character', body.workflow_preset_id || null)
         );
         if (!out.ok) {
           if (out.error === 'character not found') return response.notFound(res, '角色不存在');

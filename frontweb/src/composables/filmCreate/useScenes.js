@@ -310,7 +310,7 @@ export function useScenes(deps) {
     }
   }
 
-  async function onGenerateSceneImage(scene, useQuadGrid = false, options = {}) {
+  async function onGenerateSceneImage(scene, options = {}) {
     scene.errorMsg = ''
     scene.error_msg = ''
     const meta = buildSceneImageMeta(scene)
@@ -321,7 +321,6 @@ export function useScenes(deps) {
         scene_id: scene.id,
         model: undefined,
         style: getSelectedStyle(),
-        use_quad_grid: !!useQuadGrid,
         ...options,
       })
       const taskId = res?.image_generation?.task_id ?? res?.task_id

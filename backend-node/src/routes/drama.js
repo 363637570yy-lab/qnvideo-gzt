@@ -289,6 +289,7 @@ function generateStoryboard(db, log) {
         language: body.language,
         include_narration: body.include_narration,
         universal_omni_storyboard: body.universal_omni_storyboard,
+        workflow_preset_id: body.workflow_preset_id || null,
         ai_config_id: body.ai_config_id || body.text_config_id || null,
         user: req.user,
       });

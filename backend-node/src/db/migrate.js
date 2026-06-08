@@ -254,6 +254,49 @@ function ensureAllColumns(database) {
     { name: 'deleted_at',   type: 'TEXT' },
   ]);
 
+  // --- workflow_presets（人物/场景/道具/分镜生成工作流规范） ---
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS workflow_presets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      preset_type TEXT NOT NULL,
+      preset_key TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
+      description TEXT,
+      mode TEXT NOT NULL DEFAULT 'default',
+      prompt_template TEXT,
+      negative_prompt_template TEXT,
+      options_json TEXT,
+      is_active INTEGER DEFAULT 1,
+      is_default INTEGER DEFAULT 0,
+      sort_order INTEGER DEFAULT 0,
+      created_by_user_id TEXT,
+      updated_by_user_id TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      deleted_at TEXT
+    )`);
+    database.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_presets_type_active_order
+      ON workflow_presets (preset_type, deleted_at, is_active, sort_order)`);
+  } catch (_) {}
+  ensureColumns(database, 'workflow_presets', [
+    { name: 'preset_type', type: 'TEXT NOT NULL DEFAULT \'\'' },
+    { name: 'preset_key', type: 'TEXT NOT NULL DEFAULT \'\'' },
+    { name: 'name', type: 'TEXT NOT NULL DEFAULT \'\'' },
+    { name: 'description', type: 'TEXT' },
+    { name: 'mode', type: 'TEXT NOT NULL DEFAULT \'default\'' },
+    { name: 'prompt_template', type: 'TEXT' },
+    { name: 'negative_prompt_template', type: 'TEXT' },
+    { name: 'options_json', type: 'TEXT' },
+    { name: 'is_active', type: 'INTEGER DEFAULT 1' },
+    { name: 'is_default', type: 'INTEGER DEFAULT 0' },
+    { name: 'sort_order', type: 'INTEGER DEFAULT 0' },
+    { name: 'created_by_user_id', type: 'TEXT' },
+    { name: 'updated_by_user_id', type: 'TEXT' },
+    { name: 'created_at', type: 'TEXT' },
+    { name: 'updated_at', type: 'TEXT' },
+    { name: 'deleted_at', type: 'TEXT' },
+  ]);
+
   // --- ai_service_configs ---（兜底建表：旧版 01_init.sql 可能未包含此表）
   try {
     database.exec(`CREATE TABLE IF NOT EXISTS ai_service_configs (

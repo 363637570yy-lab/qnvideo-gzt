@@ -2,6 +2,19 @@ const response = require('../response');
 const sceneService = require('../services/sceneService');
 const sceneLibraryService = require('../services/sceneLibraryService');
 const imageService = require('../services/imageService');
+const workflowPresetService = require('../services/workflowPresetService');
+
+async function generateSceneImageWithWorkflow(db, log, cfg, sceneId, body, user) {
+  const preset = workflowPresetService.resolvePreset(db, 'scene', body.workflow_preset_id || null);
+  const modelName = body.model_name || body.model || undefined;
+  const style = body.style || undefined;
+  const aiConfigId = body.ai_config_id || body.image_config_id || null;
+  const mode = String(preset?.mode || '').toLowerCase();
+  const useSingle = mode === 'scene_single';
+  return useSingle
+    ? sceneService.generateSceneSingleImage(db, log, cfg, sceneId, modelName, style, aiConfigId, user, preset)
+    : sceneService.generateSceneFourViewImage(db, log, cfg, sceneId, modelName, style, aiConfigId, user, preset);
+}
 
 function routes(db, log, cfg) {
   return {
@@ -91,23 +104,14 @@ function routes(db, log, cfg) {
         const body = req.body || {};
         const sceneId = body.scene_id != null ? Number(body.scene_id) : null;
         if (sceneId == null) return response.badRequest(res, '缺少 scene_id');
-        const out = await sceneService.generateSceneFourViewImage(
-          db,
-          log,
-          cfg,
-          sceneId,
-          body.model || undefined,
-          body.style || undefined,
-          body.ai_config_id || body.image_config_id || null,
-          req.user
-        );
+        const out = await generateSceneImageWithWorkflow(db, log, cfg, sceneId, body, req.user);
         if (!out.ok) {
           if (out.error === 'scene not found') return response.notFound(res, '场景不存在');
           if (out.error === 'unauthorized') return response.notFound(res, '剧集不存在或无权限');
           return response.badRequest(res, out.error);
         }
         response.success(res, {
-          message: '场景四视图生成任务已提交',
+          message: '场景图片生成任务已提交',
           image_generation: out.image_generation,
         });
       } catch (err) {
@@ -145,24 +149,13 @@ function routes(db, log, cfg) {
     generateFourViewImage: async (req, res) => {
       try {
         const body = req.body || {};
-        const modelName = body.model_name || body.model || undefined;
-        const style = body.style || undefined;
-        const out = await sceneService.generateSceneFourViewImage(
-          db,
-          log,
-          cfg,
-          req.params.scene_id,
-          modelName,
-          style,
-          body.ai_config_id || body.image_config_id || null,
-          req.user
-        );
+        const out = await generateSceneImageWithWorkflow(db, log, cfg, req.params.scene_id, body, req.user);
         if (!out.ok) {
           if (out.error === 'scene not found') return response.notFound(res, '场景不存在');
           if (out.error === 'unauthorized') return response.notFound(res, '剧集不存在或无权限');
           return response.badRequest(res, out.error);
         }
-        response.success(res, { message: '场景四视图生成任务已提交', image_generation: out.image_generation });
+        response.success(res, { message: '场景图片生成任务已提交', image_generation: out.image_generation });
       } catch (err) {
         log.error('scenes generate-four-view-image', { error: err.message });
         response.internalError(res, err.message);

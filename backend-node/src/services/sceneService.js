@@ -3,6 +3,7 @@ const imageClient = require('./imageClient');
 const aiClient = require('./aiClient');
 const promptI18n = require('./promptI18n');
 const { mergeCfgStyleWithDrama } = require('../utils/dramaStyleMerge');
+const workflowPresetService = require('./workflowPresetService');
 
 function applySceneStyleOverride(cfg, styleOverride) {
   const o = (styleOverride || '').toString().trim();
@@ -298,9 +299,9 @@ async function generateSceneSinglePromptOnly(db, log, cfg, sceneId, modelName, s
  * Step 2: 图片AI根据描述生成 16:9 四格场景参考图
  * 如果已有 polished_prompt（预生成的完整提示词），直接使用，跳过 Step 1
  */
-async function generateSceneFourViewImage(db, log, cfg, sceneId, modelName, style, aiConfigId, user) {
+async function generateSceneFourViewImage(db, log, cfg, sceneId, modelName, style, aiConfigId, user, workflowPreset = null) {
   const sceneRow = db.prepare(
-    'SELECT id, drama_id, location, time, prompt, polished_prompt FROM scenes WHERE id = ? AND deleted_at IS NULL'
+    'SELECT id, drama_id, location, time, prompt, polished_prompt, negative_prompt FROM scenes WHERE id = ? AND deleted_at IS NULL'
   ).get(Number(sceneId));
   if (!sceneRow) return { ok: false, error: 'scene not found' };
   const dramaFull = db.prepare('SELECT id, style, metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(sceneRow.drama_id);
@@ -354,14 +355,21 @@ async function generateSceneFourViewImage(db, log, cfg, sceneId, modelName, styl
     log.info('[场景四视图] Step1 完成，开始Step2生图', { scene_id: sceneId });
   }
 
+  const finalPrompt = workflowPresetService.mergePrompt(imagePrompt, workflowPreset);
+  const userNeg = imageClient.resolveAssetUserNegativeForApi(
+    modelName,
+    workflowPresetService.mergeNegative(sceneRow.negative_prompt, workflowPreset)
+  );
+
   const imageGen = imageClient.createAndGenerateImage(db, log, {
     drama_id: sceneRow.drama_id,
     scene_id: sceneId,
-    prompt: imagePrompt,
+    prompt: finalPrompt,
     model: modelName || undefined,
     size: undefined,
     provider: 'openai',
     ai_config_id: aiConfigId || undefined,
+    user_negative_prompt: userNeg || undefined,
     user,
   });
 
@@ -375,9 +383,9 @@ async function generateSceneFourViewImage(db, log, cfg, sceneId, modelName, styl
  * Step 1: 文本AI将 location/time/prompt 转换为单图场景描述
  * Step 2: 图片AI根据描述生成单张场景参考图
  */
-async function generateSceneSingleImage(db, log, cfg, sceneId, modelName, style, aiConfigId, user) {
+async function generateSceneSingleImage(db, log, cfg, sceneId, modelName, style, aiConfigId, user, workflowPreset = null) {
   const sceneRow = db.prepare(
-    'SELECT id, drama_id, location, time, prompt, polished_prompt, polished_prompt_single FROM scenes WHERE id = ? AND deleted_at IS NULL'
+    'SELECT id, drama_id, location, time, prompt, polished_prompt, polished_prompt_single, negative_prompt FROM scenes WHERE id = ? AND deleted_at IS NULL'
   ).get(Number(sceneId));
   if (!sceneRow) return { ok: false, error: 'scene not found' };
   const dramaFull = db.prepare('SELECT id, style, metadata FROM dramas WHERE id = ? AND deleted_at IS NULL').get(sceneRow.drama_id);
@@ -432,14 +440,21 @@ async function generateSceneSingleImage(db, log, cfg, sceneId, modelName, style,
     log.info('[场景单图] Step1 完成，开始Step2生图', { scene_id: sceneId });
   }
 
+  const finalPrompt = workflowPresetService.mergePrompt(imagePrompt, workflowPreset);
+  const userNeg = imageClient.resolveAssetUserNegativeForApi(
+    modelName,
+    workflowPresetService.mergeNegative(sceneRow.negative_prompt, workflowPreset)
+  );
+
   const imageGen = imageClient.createAndGenerateImage(db, log, {
     drama_id: sceneRow.drama_id,
     scene_id: sceneId,
-    prompt: imagePrompt,
+    prompt: finalPrompt,
     model: modelName || undefined,
     size: undefined,
     provider: 'openai',
     ai_config_id: aiConfigId || undefined,
+    user_negative_prompt: userNeg || undefined,
     user,
   });
 
