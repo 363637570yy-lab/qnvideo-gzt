@@ -46,8 +46,8 @@ const DEFAULT_ROUTING_POLICIES = {
     retry_count: 1,
     cooldown_seconds: 30,
     cooldown_max_seconds: 1800,
-    request_timeout_ms: 120000,
-    video_poll_timeout_minutes: null,
+    request_timeout_seconds: 120,
+    video_poll_timeout_seconds: null,
   },
   image: {
     strategy: 'sequential',
@@ -56,8 +56,8 @@ const DEFAULT_ROUTING_POLICIES = {
     retry_count: 1,
     cooldown_seconds: 120,
     cooldown_max_seconds: 1800,
-    request_timeout_ms: 900000,
-    video_poll_timeout_minutes: null,
+    request_timeout_seconds: 900,
+    video_poll_timeout_seconds: null,
   },
   video: {
     strategy: 'sequential',
@@ -66,8 +66,8 @@ const DEFAULT_ROUTING_POLICIES = {
     retry_count: 0,
     cooldown_seconds: 300,
     cooldown_max_seconds: 3600,
-    request_timeout_ms: 180000,
-    video_poll_timeout_minutes: 60,
+    request_timeout_seconds: 180,
+    video_poll_timeout_seconds: 3600,
   },
   tts: {
     strategy: 'sequential',
@@ -76,8 +76,8 @@ const DEFAULT_ROUTING_POLICIES = {
     retry_count: 1,
     cooldown_seconds: 60,
     cooldown_max_seconds: 1800,
-    request_timeout_ms: 180000,
-    video_poll_timeout_minutes: null,
+    request_timeout_seconds: 180,
+    video_poll_timeout_seconds: null,
   },
   jimeng2_character_auth: {
     strategy: 'sequential',
@@ -86,8 +86,8 @@ const DEFAULT_ROUTING_POLICIES = {
     retry_count: 0,
     cooldown_seconds: 300,
     cooldown_max_seconds: 3600,
-    request_timeout_ms: 120000,
-    video_poll_timeout_minutes: null,
+    request_timeout_seconds: 120,
+    video_poll_timeout_seconds: null,
   },
 };
 
@@ -101,10 +101,36 @@ function clampInt(value, fallback, min, max) {
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
+function timeoutSecondsToMs(value, fallbackMs = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallbackMs;
+  return clampInt(n, Math.ceil(fallbackMs / 1000), 0, 30 * 60) * 1000;
+}
+
+function timeoutMsToSeconds(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.ceil(n / 1000);
+}
+
 function normalizeRoutingPolicy(serviceType, raw = {}) {
   const key = normalizeServiceType(serviceType);
   const defaults = DEFAULT_ROUTING_POLICIES[key] || DEFAULT_ROUTING_POLICIES.text;
   const strategy = raw.strategy === 'round_robin' ? 'round_robin' : 'sequential';
+  const requestTimeoutSeconds = clampInt(
+    raw.request_timeout_seconds,
+    defaults.request_timeout_seconds,
+    1,
+    30 * 60
+  );
+  const videoPollTimeoutSeconds = key === 'video'
+    ? clampInt(
+        raw.video_poll_timeout_seconds,
+        defaults.video_poll_timeout_seconds,
+        1,
+        24 * 3600
+      )
+    : null;
   return {
     strategy,
     max_attempt_configs: clampInt(raw.max_attempt_configs, defaults.max_attempt_configs, 0, 50),
@@ -112,10 +138,8 @@ function normalizeRoutingPolicy(serviceType, raw = {}) {
     retry_count: clampInt(raw.retry_count, defaults.retry_count, 0, 5),
     cooldown_seconds: clampInt(raw.cooldown_seconds, defaults.cooldown_seconds, 0, 24 * 3600),
     cooldown_max_seconds: clampInt(raw.cooldown_max_seconds, defaults.cooldown_max_seconds, 1, 24 * 3600),
-    request_timeout_ms: clampInt(raw.request_timeout_ms, defaults.request_timeout_ms, 1000, 30 * 60 * 1000),
-    video_poll_timeout_minutes: key === 'video'
-      ? clampInt(raw.video_poll_timeout_minutes, defaults.video_poll_timeout_minutes, 1, 24 * 60)
-      : null,
+    request_timeout_seconds: requestTimeoutSeconds,
+    video_poll_timeout_seconds: videoPollTimeoutSeconds,
   };
 }
 
@@ -176,7 +200,7 @@ function toPublicRuntimeConfig(cfg) {
     route_order: cfg.route_order || 0,
     retry_count: cfg.retry_count || 0,
     cooldown_seconds: cfg.cooldown_seconds || 0,
-    request_timeout_ms: cfg.request_timeout_ms || 0,
+    request_timeout_seconds: cfg.request_timeout_seconds || 0,
     health_status: cfg.health_status || 'ok',
     disabled_until: cfg.disabled_until || null,
     last_error: cfg.last_error || null,
@@ -281,7 +305,7 @@ function createConfig(db, log, req) {
     req.route_order ?? 0,
     req.retry_count ?? 0,
     req.cooldown_seconds ?? 0,
-    req.request_timeout_ms ?? 0,
+    timeoutSecondsToMs(req.request_timeout_seconds, 0),
     req.settings || null,
     now,
     now
@@ -341,9 +365,9 @@ function updateConfig(db, log, id, req) {
     updates.push('cooldown_seconds = ?');
     params.push(clampInt(req.cooldown_seconds, 0, 0, 24 * 3600));
   }
-  if (req.request_timeout_ms != null) {
+  if (req.request_timeout_seconds != null) {
     updates.push('request_timeout_ms = ?');
-    params.push(clampInt(req.request_timeout_ms, 0, 0, 30 * 60 * 1000));
+    params.push(timeoutSecondsToMs(req.request_timeout_seconds, 0));
   }
   if (req.endpoint !== undefined) {
     updates.push('endpoint = ?');
@@ -450,7 +474,7 @@ function rowToConfig(r) {
     route_order: Number(r.route_order || 0),
     retry_count: Number(r.retry_count || 0),
     cooldown_seconds: Number(r.cooldown_seconds || 0),
-    request_timeout_ms: Number(r.request_timeout_ms || 0),
+    request_timeout_seconds: timeoutMsToSeconds(r.request_timeout_ms),
     is_active: r.is_active == null ? true : !!r.is_active,
     health_status: r.health_status || 'ok',
     disabled_until: r.disabled_until || null,
@@ -582,25 +606,28 @@ function parseSettings(raw) {
 function resolveConfigRoutingPolicy(db, config, serviceType, modelName) {
   const key = normalizeServiceType(serviceType || config?.service_type || 'text');
   const base = { ...getRoutingPolicy(db, key) };
+  let requestTimeoutMs = clampInt(base.request_timeout_seconds, 120, 1, 30 * 60) * 1000;
   if (config) {
     if (Number(config.retry_count) > 0) base.retry_count = clampInt(config.retry_count, base.retry_count, 0, 5);
     if (Number(config.cooldown_seconds) > 0) base.cooldown_seconds = clampInt(config.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
-    if (Number(config.request_timeout_ms) > 0) base.request_timeout_ms = clampInt(config.request_timeout_ms, base.request_timeout_ms, 1000, 30 * 60 * 1000);
+    if (Number(config.request_timeout_seconds) > 0) requestTimeoutMs = timeoutSecondsToMs(config.request_timeout_seconds, requestTimeoutMs);
     const settings = parseSettings(config.settings);
     const routing = settings.routing && typeof settings.routing === 'object' ? settings.routing : {};
     if (routing.retry_count != null) base.retry_count = clampInt(routing.retry_count, base.retry_count, 0, 5);
     if (routing.cooldown_seconds != null) base.cooldown_seconds = clampInt(routing.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
     if (routing.cooldown_max_seconds != null) base.cooldown_max_seconds = clampInt(routing.cooldown_max_seconds, base.cooldown_max_seconds, 1, 24 * 3600);
-    if (routing.request_timeout_ms != null) base.request_timeout_ms = clampInt(routing.request_timeout_ms, base.request_timeout_ms, 1000, 30 * 60 * 1000);
+    if (routing.request_timeout_seconds != null) requestTimeoutMs = clampInt(routing.request_timeout_seconds, Math.ceil(requestTimeoutMs / 1000), 1, 30 * 60) * 1000;
     const modelKey = modelName ? String(modelName).trim() : '';
     const modelOverrides = routing.model_overrides && typeof routing.model_overrides === 'object' ? routing.model_overrides : {};
     const modelPatch = modelKey ? modelOverrides[modelKey] : null;
     if (modelPatch && typeof modelPatch === 'object') {
       if (modelPatch.retry_count != null) base.retry_count = clampInt(modelPatch.retry_count, base.retry_count, 0, 5);
       if (modelPatch.cooldown_seconds != null) base.cooldown_seconds = clampInt(modelPatch.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
-      if (modelPatch.request_timeout_ms != null) base.request_timeout_ms = clampInt(modelPatch.request_timeout_ms, base.request_timeout_ms, 1000, 30 * 60 * 1000);
+      if (modelPatch.request_timeout_seconds != null) requestTimeoutMs = clampInt(modelPatch.request_timeout_seconds, Math.ceil(requestTimeoutMs / 1000), 1, 30 * 60) * 1000;
     }
   }
+  base.request_timeout_seconds = Math.ceil(Number(requestTimeoutMs || 0) / 1000);
+  base.request_timeout_ms = requestTimeoutMs;
   return base;
 }
 
@@ -1008,7 +1035,7 @@ function applyVendorLock(db, log, cfg) {
       item.route_order ?? 0,
       item.retry_count ?? 0,
       item.cooldown_seconds ?? 0,
-      item.request_timeout_ms ?? 0,
+      timeoutSecondsToMs(item.request_timeout_seconds, 0),
       item.settings || null,
       now,
       now

@@ -2,7 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Database = require('better-sqlite3');
 
-const { reorderConfigs, testConnection } = require('../src/services/aiConfigService');
+const {
+  getRoutingPolicies,
+  reorderConfigs,
+  testConnection,
+  updateRoutingPolicy,
+} = require('../src/services/aiConfigService');
 
 const cases = [
   { service_type: 'text', expectedPath: '/chat/completions' },
@@ -87,4 +92,31 @@ test('reorderConfigs rejects partial order lists for a touched service type', ()
     () => reorderConfigs(db, { info() {} }, [2]),
     /未覆盖全部 image 配置/
   );
+});
+
+test('routing policy accepts seconds without exposing legacy time units', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE global_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT
+    );
+  `);
+
+  const saved = updateRoutingPolicy(db, 'video', {
+    request_timeout_seconds: 125,
+    video_poll_timeout_seconds: 650,
+  });
+
+  assert.equal(saved.video.request_timeout_seconds, 125);
+  assert.equal(saved.video.video_poll_timeout_seconds, 650);
+  assert.equal(Object.hasOwn(saved.video, 'request_timeout_ms'), false);
+  assert.equal(Object.hasOwn(saved.video, 'video_poll_timeout_minutes'), false);
+
+  const reread = getRoutingPolicies(db);
+  assert.equal(reread.video.request_timeout_seconds, 125);
+  assert.equal(reread.video.video_poll_timeout_seconds, 650);
+  assert.equal(Object.hasOwn(reread.video, 'request_timeout_ms'), false);
+  assert.equal(Object.hasOwn(reread.video, 'video_poll_timeout_minutes'), false);
 });

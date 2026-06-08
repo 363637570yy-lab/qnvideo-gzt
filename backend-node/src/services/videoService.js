@@ -393,11 +393,13 @@ async function processVideoGeneration(db, log, videoGenId) {
         videoGenId
       );
       const POLL_INTERVAL_MS = 10000;
-      const generationTimeoutMinutes =
-        aiConfigService.getRoutingPolicy(db, 'video')?.video_poll_timeout_minutes || 30;
+      const videoRoutingPolicy = aiConfigService.getRoutingPolicy(db, 'video') || {};
+      const generationTimeoutSeconds =
+        Number(videoRoutingPolicy.video_poll_timeout_seconds)
+        || 30 * 60;
       const pollMaxAttempts = Math.max(
         1,
-        Math.ceil((generationTimeoutMinutes * 60 * 1000) / POLL_INTERVAL_MS)
+        Math.ceil((generationTimeoutSeconds * 1000) / POLL_INTERVAL_MS)
       );
       const pollResult = await videoClient.pollVideoTask(
         db,

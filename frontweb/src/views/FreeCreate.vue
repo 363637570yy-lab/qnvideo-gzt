@@ -171,10 +171,10 @@ const videoPollMaxMs = ref(60 * 60 * 1000)
 onMounted(async () => {
   try {
     const routes = await aiAPI.runtimeRoutes()
-    const imageTimeoutMs = Number(routes?.routing_policies?.image?.request_timeout_ms)
-    const videoMinutes = Number(routes?.routing_policies?.video?.video_poll_timeout_minutes)
-    if (Number.isFinite(imageTimeoutMs) && imageTimeoutMs > 0) imagePollMaxMs.value = imageTimeoutMs
-    if (Number.isFinite(videoMinutes) && videoMinutes > 0) videoPollMaxMs.value = videoMinutes * 60 * 1000
+    const imageSeconds = Number(routes?.routing_policies?.image?.request_timeout_seconds)
+    const videoSeconds = Number(routes?.routing_policies?.video?.video_poll_timeout_seconds)
+    if (Number.isFinite(imageSeconds) && imageSeconds > 0) imagePollMaxMs.value = imageSeconds * 1000
+    if (Number.isFinite(videoSeconds) && videoSeconds > 0) videoPollMaxMs.value = videoSeconds * 1000
   } catch (_) {}
 })
 

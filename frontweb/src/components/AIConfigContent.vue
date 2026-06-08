@@ -82,12 +82,12 @@
             <span class="routing-policy-label">同时生成上限</span>
             <el-input-number v-model="activeRoutingPolicy.concurrency_limit" size="small" :min="1" :max="500" controls-position="right" @change="saveActiveRoutingPolicy" />
             <span class="routing-policy-label">提交请求超时</span>
-            <el-input-number v-model="activeRoutingPolicy.request_timeout_ms" size="small" :min="1000" :max="1800000" :step="10000" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">毫秒</span>
+            <el-input-number v-model="activeRequestTimeoutSeconds" size="small" :min="1" :max="1800" :step="10" controls-position="right" @change="saveActiveRoutingPolicy" />
+            <span class="routing-policy-label">秒</span>
             <template v-if="activeRoutingPolicyKey === 'video'">
               <span class="routing-policy-label">视频生成最长等待</span>
-              <el-input-number v-model="activeRoutingPolicy.video_poll_timeout_minutes" size="small" :min="1" :max="1440" controls-position="right" @change="saveActiveRoutingPolicy" />
-              <span class="routing-policy-label">分钟</span>
+              <el-input-number v-model="activeVideoPollTimeoutSeconds" size="small" :min="1" :max="86400" :step="60" controls-position="right" @change="saveActiveRoutingPolicy" />
+              <span class="routing-policy-label">秒</span>
             </template>
             <span class="routing-policy-label">失败重试</span>
             <el-input-number v-model="activeRoutingPolicy.retry_count" size="small" :min="0" :max="5" controls-position="right" @change="saveActiveRoutingPolicy" />
@@ -1030,6 +1030,22 @@ const filteredConfigs = computed(() => {
 const routingPolicies = ref({})
 const activeRoutingPolicyKey = computed(() => activeConfigCategory.value === 'audio' ? 'tts' : activeConfigCategory.value)
 const activeRoutingPolicy = computed(() => routingPolicies.value?.[activeRoutingPolicyKey.value] || null)
+const activeRequestTimeoutSeconds = computed({
+  get() {
+    return normalizeTimeoutSeconds(activeRoutingPolicy.value)
+  },
+  set(value) {
+    setPolicyRequestTimeoutSeconds(activeRoutingPolicy.value, value)
+  },
+})
+const activeVideoPollTimeoutSeconds = computed({
+  get() {
+    return normalizeVideoPollTimeoutSeconds(activeRoutingPolicy.value)
+  },
+  set(value) {
+    setPolicyVideoPollTimeoutSeconds(activeRoutingPolicy.value, value)
+  },
+})
 const activeConfigCategoryLabel = computed(() => {
   return configCategories.find((item) => item.key === activeConfigCategory.value)?.label || ''
 })
@@ -1123,9 +1139,65 @@ const form = ref({
 })
 const presetModelPick = ref('')
 
+function toPositiveInt(value, fallback = 0) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.trunc(n)
+}
+
+function clampNumber(value, fallback, min, max) {
+  const n = toPositiveInt(value, fallback)
+  return Math.min(max, Math.max(min, n))
+}
+
+function normalizeTimeoutSeconds(policy) {
+  if (!policy) return 0
+  return clampNumber(
+    policy.request_timeout_seconds,
+    120,
+    1,
+    1800
+  )
+}
+
+function normalizeVideoPollTimeoutSeconds(policy) {
+  if (!policy) return 0
+  return clampNumber(
+    policy.video_poll_timeout_seconds,
+    3600,
+    1,
+    86400
+  )
+}
+
+function setPolicyRequestTimeoutSeconds(policy, value) {
+  if (!policy) return
+  const seconds = clampNumber(value, normalizeTimeoutSeconds(policy), 1, 1800)
+  policy.request_timeout_seconds = seconds
+}
+
+function setPolicyVideoPollTimeoutSeconds(policy, value) {
+  if (!policy) return
+  const seconds = clampNumber(value, normalizeVideoPollTimeoutSeconds(policy), 1, 86400)
+  policy.video_poll_timeout_seconds = seconds
+}
+
+function normalizeRoutingPoliciesForUi(policies = {}) {
+  const out = {}
+  for (const [key, policy] of Object.entries(policies || {})) {
+    const next = { ...(policy || {}) }
+    setPolicyRequestTimeoutSeconds(next, normalizeTimeoutSeconds(next))
+    if (key === 'video') {
+      setPolicyVideoPollTimeoutSeconds(next, normalizeVideoPollTimeoutSeconds(next))
+    }
+    out[key] = next
+  }
+  return out
+}
+
 async function loadRoutingPolicies() {
   try {
-    routingPolicies.value = await aiAPI.routingPolicies()
+    routingPolicies.value = normalizeRoutingPoliciesForUi(await aiAPI.routingPolicies())
   } catch (_) {
     routingPolicies.value = {}
   }
@@ -1136,8 +1208,13 @@ async function saveActiveRoutingPolicy() {
   const policy = routingPolicies.value?.[key]
   if (!key || !policy) return
   try {
-    const saved = await aiAPI.updateRoutingPolicy(key, policy)
-    routingPolicies.value = saved || routingPolicies.value
+    const payload = { ...policy }
+    setPolicyRequestTimeoutSeconds(payload, normalizeTimeoutSeconds(payload))
+    if (key === 'video') {
+      setPolicyVideoPollTimeoutSeconds(payload, normalizeVideoPollTimeoutSeconds(payload))
+    }
+    const saved = await aiAPI.updateRoutingPolicy(key, payload)
+    routingPolicies.value = normalizeRoutingPoliciesForUi(saved || routingPolicies.value)
   } catch (e) {
     ElMessage.error('路由策略保存失败：' + (e?.message || ''))
   }
@@ -2089,7 +2166,7 @@ async function importConfigs(event) {
           route_order: cfg.route_order ?? 0,
           retry_count: cfg.retry_count ?? 0,
           cooldown_seconds: cfg.cooldown_seconds ?? 0,
-          request_timeout_ms: cfg.request_timeout_ms ?? 0,
+          request_timeout_seconds: cfg.request_timeout_seconds ?? 0,
           settings: cfg.settings || null
         })
         success++

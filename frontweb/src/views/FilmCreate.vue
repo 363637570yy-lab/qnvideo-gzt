@@ -4824,9 +4824,7 @@ function getStripItems(storyboardId) {
   const sb = (store.storyboards || []).find((b) => Number(b.id) === Number(storyboardId)) || null
   const firstImg = storyboardUseFirstLastFrame.value ? getSbFirstImage(storyboardId) : getSbImage(storyboardId)
   const lastImg = storyboardUseFirstLastFrame.value ? getSbLastImage(storyboardId) : null
-  const boundIds = storyboardUseFirstLastFrame.value
-    ? new Set([firstImg?.id, lastImg?.id].filter((x) => x != null))
-    : new Set()
+  const boundIds = new Set([firstImg?.id, lastImg?.id].filter((x) => x != null))
   return allImgs
     .filter((img) => !boundIds.has(img.id))
     .sort((a, b) => {
@@ -12057,22 +12055,45 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
 .sb-image-area--has-quad {
   flex-direction: column;
   align-items: stretch;
-  overflow-y: auto;
-  max-height: 340px;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 360px;
+  max-height: none;
+  padding: 10px;
+  overflow: visible;
+}
+.sb-image-area--has-quad .sb-main-image-wrap {
+  flex: 0 0 210px;
+  min-height: 210px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.18);
+}
+html.light .sb-image-area--has-quad .sb-main-image-wrap {
+  background: rgba(255, 255, 255, 0.72);
 }
 /* 分镜候选关键帧宫格 */
 .sb-imgs-strip {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  grid-auto-rows: 152px;
   align-items: stretch;
   gap: 6px;
   width: 100%;
-  padding: 6px 8px 4px;
-  overflow: visible;
-  border-top: 1px solid var(--el-border-color-lighter);
+  max-height: 318px;
+  padding: 8px 8px 6px;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
   flex-shrink: 0;
 }
 .sb-strip-hint-icon {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 3;
   font-size: 12px;
   color: var(--el-text-color-placeholder);
   cursor: default;
@@ -12089,7 +12110,8 @@ html.light .sb-ctrl-mode-btn.el-button:hover {
   border: 2px solid transparent;
   transition: border-color 0.2s;
   width: 100%;
-  min-height: 124px;
+  height: 100%;
+  min-height: 0;
   min-width: 0;
   background: var(--el-fill-color-lighter);
 }

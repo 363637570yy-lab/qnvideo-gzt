@@ -24,18 +24,26 @@ function updateLanguage(cfg, log) {
   };
 }
 
+function fallbackVideoGenerationTimeoutSeconds() {
+  return resolveVideoGenerationTimeoutMinutes(loadConfig()) * 60;
+}
+
+function videoGenerationTimeoutSecondsFromPolicies(policies) {
+  const videoPolicy = policies?.video || {};
+  return Number(videoPolicy.video_poll_timeout_seconds) || fallbackVideoGenerationTimeoutSeconds();
+}
+
 /** GET /settings/generation — 获取生成相关全局设置 */
 function getGenerationSettings(db) {
   return (req, res) => {
     const policies = aiConfigService.getRoutingPolicies(db);
-    const video_generation_timeout_minutes =
-      policies.video?.video_poll_timeout_minutes || resolveVideoGenerationTimeoutMinutes(loadConfig());
+    const video_generation_timeout_seconds = videoGenerationTimeoutSecondsFromPolicies(policies);
     response.success(res, {
       policies,
       // 兼容旧前端字段：这些字段不再作为管理员主设置展示。
       concurrency: settingsService.getGlobalSetting(db, 'pipeline_concurrency', 8),
       video_concurrency: settingsService.getGlobalSetting(db, 'pipeline_video_concurrency', 3),
-      video_generation_timeout_minutes,
+      video_generation_timeout_seconds,
     });
   };
 }
@@ -53,8 +61,7 @@ function updateGenerationSettings(db) {
         policies: savedPolicies,
         concurrency: settingsService.getGlobalSetting(db, 'pipeline_concurrency', 8),
         video_concurrency: settingsService.getGlobalSetting(db, 'pipeline_video_concurrency', 3),
-        video_generation_timeout_minutes:
-          savedPolicies.video?.video_poll_timeout_minutes || resolveVideoGenerationTimeoutMinutes(loadConfig()),
+        video_generation_timeout_seconds: videoGenerationTimeoutSecondsFromPolicies(savedPolicies),
       });
     }
 
@@ -75,13 +82,12 @@ function updateGenerationSettings(db) {
     const saved = settingsService.getGlobalSetting(db, 'pipeline_concurrency', 8);
     const saved_video = settingsService.getGlobalSetting(db, 'pipeline_video_concurrency', 3);
     const policiesOut = aiConfigService.getRoutingPolicies(db);
-    const video_generation_timeout_minutes =
-      policiesOut.video?.video_poll_timeout_minutes || resolveVideoGenerationTimeoutMinutes(loadConfig());
+    const video_generation_timeout_seconds = videoGenerationTimeoutSecondsFromPolicies(policiesOut);
     response.success(res, {
       policies: policiesOut,
       concurrency: saved,
       video_concurrency: saved_video,
-      video_generation_timeout_minutes,
+      video_generation_timeout_seconds,
     });
   };
 }
