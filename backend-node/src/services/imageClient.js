@@ -94,6 +94,7 @@ function getProxyExpireHours() {
  */
 function inferProtocol(provider, model) {
   const p = String(provider || '').toLowerCase();
+  if (p === 'cliproxy' || p === 'cliproxyapi' || p === 'cli_proxy_api') return 'cliproxy_gpt_image2';
   if (p === 'dashscope' || p === 'qwen_image') return 'dashscope';
   if (p === 'nano_banana') return 'nano_banana';
   if (p === 'gemini' || p === 'google') return 'gemini';
@@ -850,23 +851,64 @@ function normalizeGptImagePartialImages(value) {
   return Math.min(3, Math.max(0, Math.trunc(n)));
 }
 
-function parseOpenAiImageResponse(data, outputFormat) {
-  const item = data?.data?.[0] || data?.output?.[0] || data?.images?.[0] || null;
+function normalizeGptImagePartialImagesWithDefault(value, fallback = 1) {
+  if (value == null || value === '') return normalizeGptImagePartialImages(fallback);
+  return normalizeGptImagePartialImages(value);
+}
+
+function asImageDataUrl(value, outputFormat) {
+  const s = String(value || '').trim();
+  if (!s) return null;
+  if (/^data:/i.test(s) || /^https?:\/\//i.test(s)) return s;
+  return `data:image/${outputFormat};base64,${s.replace(/\s/g, '')}`;
+}
+
+function parseOpenAiImageItem(item, outputFormat) {
   if (!item) return null;
-  if (typeof item === 'string') {
-    return item.startsWith('data:')
-      ? item
-      : `data:image/${outputFormat};base64,${item.replace(/\s/g, '')}`;
+  if (typeof item === 'string') return asImageDataUrl(item, outputFormat);
+  if (Array.isArray(item)) {
+    for (const child of item) {
+      const parsed = parseOpenAiImageItem(child, outputFormat);
+      if (parsed) return parsed;
+    }
+    return null;
   }
-  if (item.url || item.image_url) return item.url || item.image_url;
-  if (item.b64_json) return `data:image/${outputFormat};base64,${String(item.b64_json).replace(/\s/g, '')}`;
-  if (item.result && typeof item.result === 'string') return item.result;
+  if (typeof item !== 'object') return null;
+  const imageUrlObject = item.image_url && typeof item.image_url === 'object' ? item.image_url : null;
+  const direct =
+    item.url ||
+    imageUrlObject?.url ||
+    (typeof item.image_url === 'string' ? item.image_url : '') ||
+    item.b64_json ||
+    item.base64 ||
+    item.image_base64 ||
+    item.partial_image_b64;
+  if (direct) return asImageDataUrl(direct, outputFormat);
+  if (item.result) return parseOpenAiImageItem(item.result, outputFormat);
   return null;
 }
 
-function parseOpenAiImageStreamResponse(raw, outputFormat) {
-  let finalImage = null;
-  let lastPartialImage = null;
+function parseOpenAiImageResponse(data, outputFormat) {
+  if (!data) return null;
+  const direct = parseOpenAiImageItem(data, outputFormat);
+  if (direct) return direct;
+  if (data.response) {
+    const parsed = parseOpenAiImageResponse(data.response, outputFormat);
+    if (parsed) return parsed;
+  }
+  for (const key of ['data', 'output', 'images']) {
+    const arr = data?.[key];
+    if (!Array.isArray(arr)) continue;
+    for (const item of arr) {
+      const parsed = parseOpenAiImageItem(item, outputFormat) || parseOpenAiImageResponse(item, outputFormat);
+      if (parsed) return parsed;
+    }
+  }
+  return null;
+}
+
+function parseOpenAiSseDataBlocks(raw) {
+  const events = [];
   const chunks = String(raw || '').split(/\r?\n\r?\n/);
   for (const chunk of chunks) {
     const dataText = chunk
@@ -876,17 +918,28 @@ function parseOpenAiImageStreamResponse(raw, outputFormat) {
       .join('\n')
       .trim();
     if (!dataText || dataText === '[DONE]') continue;
-    let event;
     try {
-      event = JSON.parse(dataText);
+      const event = JSON.parse(dataText);
+      if (event && typeof event === 'object') events.push(event);
     } catch (_) {
-      continue;
+      // Ignore malformed keep-alive or proxy diagnostic frames.
     }
+  }
+  return events;
+}
+
+function parseOpenAiImageStreamResponse(raw, outputFormat) {
+  let finalImage = null;
+  let lastPartialImage = null;
+  const events = parseOpenAiSseDataBlocks(raw);
+  for (const event of events) {
     const type = String(event?.type || '');
-    if (type === 'image_generation.partial_image' || type === 'image_edit.partial_image') {
-      if (event.b64_json) {
-        lastPartialImage = `data:image/${outputFormat};base64,${String(event.b64_json).replace(/\s/g, '')}`;
-      }
+    if (
+      type === 'image_generation.partial_image' ||
+      type === 'image_edit.partial_image' ||
+      type === 'response.image_generation_call.partial_image'
+    ) {
+      lastPartialImage = parseOpenAiImageItem(event, outputFormat) || lastPartialImage;
       continue;
     }
     if (event?.object === 'image.generation.result' || event?.object === 'image.edit.result') {
@@ -894,9 +947,15 @@ function parseOpenAiImageStreamResponse(raw, outputFormat) {
       continue;
     }
     if (type === 'image_generation.completed' || type === 'image_edit.completed') {
-      finalImage = event.b64_json
-        ? `data:image/${outputFormat};base64,${String(event.b64_json).replace(/\s/g, '')}`
-        : (parseOpenAiImageResponse(event, outputFormat) || finalImage);
+      finalImage = parseOpenAiImageResponse(event, outputFormat) || finalImage;
+      continue;
+    }
+    if (type === 'response.output_item.done' && event.item) {
+      finalImage = parseOpenAiImageItem(event.item, outputFormat) || finalImage;
+      continue;
+    }
+    if (type === 'response.completed' && event.response) {
+      finalImage = parseOpenAiImageResponse(event.response, outputFormat) || finalImage;
       continue;
     }
     if (event?.response) {
@@ -906,18 +965,62 @@ function parseOpenAiImageStreamResponse(raw, outputFormat) {
   return finalImage || lastPartialImage;
 }
 
+async function readResponseTextWithMetrics(res, log, label, imageGenId, startedAt) {
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const text = await res.text();
+    log.info(`[${label}] response read`, {
+      image_gen_id: imageGenId,
+      status: res.status,
+      total_ms: Date.now() - startedAt,
+      response_chars: text.length,
+      stream_reader: false,
+    });
+    return text;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const parts = [];
+  let bytes = 0;
+  let first_byte_ms = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (first_byte_ms == null) first_byte_ms = Date.now() - startedAt;
+    bytes += value?.byteLength || 0;
+    parts.push(decoder.decode(value, { stream: true }));
+  }
+  parts.push(decoder.decode());
+  const text = parts.join('');
+  log.info(`[${label}] response read`, {
+    image_gen_id: imageGenId,
+    status: res.status,
+    first_byte_ms,
+    total_ms: Date.now() - startedAt,
+    response_bytes: bytes,
+    response_chars: text.length,
+    stream_reader: true,
+  });
+  return text;
+}
+
 async function callOpenAiGptImageApi(db, config, log, opts) {
   const { prompt, model, size, quality, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
   const base = (config.base_url || 'https://api.openai.com/v1').replace(/\/$/, '');
   const settings = parseImageSettings(config);
+  const protocol = String(opts.protocol || config.api_protocol || 'openai_gpt_image').toLowerCase();
+  const isCliProxyGptImage2 = protocol === 'cliproxy_gpt_image2';
+  const logLabel = isCliProxyGptImage2 ? 'CLIProxyAPI GPT Image2' : 'OpenAI GPT Image';
   const outputFormat = normalizeGptImageOutputFormat(settings.output_format);
   const compression = Number(settings.output_compression);
-  const codexCompat = settings.codex_compat === true || settings.codex_cli_compat === true;
+  const codexCompat = isCliProxyGptImage2 || settings.codex_compat === true || settings.codex_cli_compat === true;
   const requestTimeoutMs = aiConfigService.getRequestTimeoutMsForConfig(db, config, 'image', model, IMAGE_HTTP_TIMEOUT_MS);
   const sizeMode = settings.size_mode || settings.openai_size_mode || 'direct';
   const resolvedSize = openAiGptImageSize(size, sizeMode);
   const streamImages = boolSetting(settings.stream_images ?? settings.streamImages ?? settings.stream, true);
-  const partialImages = normalizeGptImagePartialImages(settings.partial_images ?? settings.streamPartialImages);
+  const partialImages = normalizeGptImagePartialImagesWithDefault(
+    settings.partial_images ?? settings.streamPartialImages,
+    isCliProxyGptImage2 ? 0 : 1,
+  );
   const commonFields = {
     model,
     prompt: codexCompat
@@ -949,17 +1052,22 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
   const endpoint = resolvedRefs.length > 0 ? '/images/edits' : '/images/generations';
   const url = base + endpoint;
 
-  log.info('[OpenAI GPT Image] request', {
+  const startedAt = Date.now();
+  log.info(`[${logLabel}] request`, {
     image_gen_id,
     model,
+    protocol,
     endpoint,
     size: resolvedSize,
     size_mode: sizeMode,
     product_size: size,
     output_format: outputFormat,
+    codex_compat: codexCompat,
+    quality_sent: commonFields.quality != null,
     stream: streamImages,
     partial_images: streamImages ? partialImages : undefined,
     ref_count: resolvedRefs.length,
+    prompt_len: String(prompt || '').length,
   });
 
   let raw;
@@ -977,7 +1085,7 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
       }, requestTimeoutMs);
       status = res.status;
       contentType = res.headers.get('content-type') || '';
-      raw = await res.text();
+      raw = await readResponseTextWithMetrics(res, log, logLabel, image_gen_id, startedAt);
     } else {
       const form = new FormData();
       Object.entries(commonFields).forEach(([key, value]) => {
@@ -1010,11 +1118,11 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
       }, requestTimeoutMs);
       status = res.status;
       contentType = res.headers.get('content-type') || '';
-      raw = await res.text();
+      raw = await readResponseTextWithMetrics(res, log, logLabel, image_gen_id, startedAt);
     }
   } catch (e) {
     const msg = e.name === 'AbortError' ? `Image generation HTTP timeout after ${requestTimeoutMs}ms` : e.message;
-    log.error('[OpenAI GPT Image] network error', { image_gen_id, error: msg });
+    log.error(`[${logLabel}] network error`, { image_gen_id, error: msg, total_ms: Date.now() - startedAt });
     return { error: msg };
   }
 
@@ -1043,10 +1151,16 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
     imageUrl = parseOpenAiImageResponse(data, outputFormat);
   }
   if (!imageUrl) return { error: '未返回图片地址' };
+  log.info(`[${logLabel}] parsed image`, {
+    image_gen_id,
+    content_type: contentType,
+    total_ms: Date.now() - startedAt,
+    image_url_len: String(imageUrl || '').length,
+  });
   return {
     image_url: imageUrl,
     actual_params: {
-      protocol: 'openai_gpt_image',
+      protocol,
       endpoint,
       model,
       size: resolvedSize,
@@ -1686,7 +1800,8 @@ async function callImageApiWithConfig(db, log, opts, config) {
     imageServiceType,
     ref_count: Array.isArray(opts.reference_image_urls) ? opts.reference_image_urls.length : 0,
     ref_label_injected: effectivePrompt !== (prompt || ''),
-    effectivePrompt
+    prompt_len: String(effectivePrompt || '').length,
+    prompt_hash: crypto.createHash('sha1').update(String(effectivePrompt || '')).digest('hex').slice(0, 12),
   });
 
   // 多参考图时统一生成 negative_prompt（供各子函数使用）
@@ -1697,7 +1812,7 @@ async function callImageApiWithConfig(db, log, opts, config) {
   const userNegFragment = (user_negative_prompt && String(user_negative_prompt).trim()) || '';
   const mergedNegativePrompt = mergeNegativePromptFragments(autoNegativePrompt, userNegFragment);
 
-  if (protocol === 'openai_gpt_image') {
+  if (protocol === 'openai_gpt_image' || protocol === 'cliproxy_gpt_image2') {
     return callOpenAiGptImageApi(db, config, log, {
       prompt: effectivePrompt,
       model,
@@ -1707,6 +1822,7 @@ async function callImageApiWithConfig(db, log, opts, config) {
       reference_image_urls: opts.reference_image_urls,
       files_base_url: opts.files_base_url,
       storage_local_path: opts.storage_local_path,
+      protocol,
     });
   }
 
@@ -2190,6 +2306,11 @@ module.exports = {
   canAddStoryboardCharacterRef,
   canAddStoryboardObjectRef,
   refListHasCanonical,
+  _test: {
+    parseOpenAiImageResponse,
+    parseOpenAiImageStreamResponse,
+    normalizeGptImagePartialImagesWithDefault,
+  },
   /** 图床 URL 缓存（image_proxy_cache），供 SD2 认证等复用 */
   getProxyCache,
   setProxyCache,

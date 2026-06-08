@@ -460,17 +460,17 @@
             type="primary"
             :loading="pipelineRunning && !pipelinePaused"
             :disabled="!currentEpisodeId || pipelineRunning"
-            @click="startOneClickPipeline"
-          >
-            一键成片（测试中慎用！）
-          </el-button>
-          <el-button
-            :loading="pipelineRunning && !pipelinePaused"
-            :disabled="!currentEpisodeId || pipelineRunning"
             title="仅提取角色、场景、道具与生成分镜文本，不生成图片与视频"
             @click="startTextFrameworkPipeline"
           >
             一键生成素材及分镜文本
+          </el-button>
+          <el-button
+            :loading="pipelineRunning && !pipelinePaused"
+            :disabled="!currentEpisodeId || pipelineRunning"
+            @click="startOneClickPipeline"
+          >
+            一键成片（测试中慎用！）
           </el-button>
           <template v-if="pipelineRunning">
             <el-button v-if="!pipelinePaused" type="warning" @click="pipelinePaused = true">⏸ 暂停</el-button>

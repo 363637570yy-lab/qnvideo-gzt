@@ -296,6 +296,7 @@
           <el-select v-model="form.api_protocol" style="width: 100%" placeholder="选择接口规范（自定义厂商必选）" clearable>
             <el-option label="OpenAI 兼容（大多数中转站默认）" value="openai" />
             <el-option label="OpenAI GPT Image（gpt-image 系列官方图片接口）" value="openai_gpt_image" />
+            <el-option label="CLIProxyAPI gpt-image-2（Codex/Responses 兼容中转）" value="cliproxy_gpt_image2" />
             <el-option label="火山引擎（豆包 Seedream / Seedance）" value="volcengine" />
             <el-option label="火山即梦 Seedance 全能（方舟多图参考，Seedance 2.0 等）" value="volcengine_omni" />
             <el-option label="通义万象 DashScope" value="dashscope" />
@@ -320,6 +321,14 @@
                   <b>适用场景：</b>OpenAI 官方、各类中转/代理站（ChatFire、硅基流动等）<br>
                   <b>Endpoint：</b><code>POST /v1/images/generations</code><br>
                   <pre>{ "model": "dall-e-3", "prompt": "...", "n": 1, "size": "1024x1024" }</pre>
+                </div>
+              </el-collapse-item>
+              <el-collapse-item name="cliproxy-gpt-image2">
+                <template #title><span class="ph-tag ph-tag-img">图片</span> CLIProxyAPI gpt-image-2 — Codex/Responses 兼容中转</template>
+                <div class="ph-body">
+                  <b>适用场景：</b>router-for-me/CLIProxyAPI 暴露的 <code>gpt-image-2</code> 图片模型。<br>
+                  <b>Endpoint：</b><code>POST /v1/images/generations</code> 或 <code>/v1/images/edits</code>，由 CLIProxyAPI 内部转到 Responses 的 <code>image_generation</code> 工具。<br>
+                  <b>系统适配：</b>自动启用 Codex/CLI 兼容提示词保护，默认不发送 <code>quality</code> 和多图 <code>n</code>，流式保持连接但默认不请求中间预览图。
                 </div>
               </el-collapse-item>
               <el-collapse-item name="volcengine-img">
@@ -1329,6 +1338,7 @@ const providerConfigs = {
     { id: 'nano_banana', name: 'NanoBanana', models: ['nano-banana-2', 'nano-banana-pro', 'nano-banana'] },
     // { id: 'chatfire', name: 'Chatfire', models: ['nano-banana-pro', 'doubao-seedream-4-5-251128', 'qwen-image'] },
     { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'] },
+    { id: 'cliproxy', name: 'CLIProxyAPI', models: ['gpt-image-2'] },
     { id: 'openai', name: 'OpenAI', models: ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1'] },
     { id: 'dashscope', name: '通义万象', models: ['wan2.6-image', 'qwen-image-edit-plus-2026-01-09', 'qwen-image-edit-plus', 'qwen-image-edit-max'] },
     { id: 'qwen_image', name: '通义千问', models: ['qwen-image-max', 'qwen-image-plus', 'qwen-image'] }
@@ -1373,6 +1383,9 @@ const providerProtocolMap = {
   volces: 'volcengine',
   volc: 'volcengine',
   nano_banana: 'nano_banana',
+  cliproxy: 'cliproxy_gpt_image2',
+  cliproxyapi: 'cliproxy_gpt_image2',
+  cli_proxy_api: 'cliproxy_gpt_image2',
   dashscope: 'dashscope',
   qwen_image: 'dashscope',
   gemini: 'gemini',
@@ -1401,6 +1414,7 @@ function getBaseUrlForProvider(provider) {
   if (p === 'minimax') return 'https://api.minimaxi.com/v1'
   if (p === 'volces' || p === 'volcengine') return 'https://ark.cn-beijing.volces.com/api/v3'
   if (p === 'openai') return 'https://api.openai.com/v1'
+  if (p === 'cliproxy' || p === 'cliproxyapi' || p === 'cli_proxy_api') return ''
   if (p === 'deepseek') return 'https://api.deepseek.com'
   if (p === 'dashscope') return 'https://dashscope.aliyuncs.com'
   if (p === 'qwen_image') return 'https://dashscope.aliyuncs.com'
@@ -1521,7 +1535,7 @@ const endpointPreviewInfo = computed(() => {
       submitPath = '/v1/images/generations'  // nano_banana base_url 无 /v1
     } else if (proto === 'kling' || p === 'kling' || p === 'klingai') {
       submitPath = '/v1/images/generations'
-    } else if (proto === 'openai_gpt_image') {
+    } else if (proto === 'openai_gpt_image' || proto === 'cliproxy_gpt_image2') {
       submitPath = '/images/generations 或 /images/edits'
     } else {
       submitPath = '/images/generations'  // openai 兼容：base_url 已含 /v1
@@ -1691,6 +1705,7 @@ function protocolLabel(p) {
     openai: 'OpenAI 兼容',
     openai_compatible: 'OpenAI 兼容',
     openai_gpt_image: 'OpenAI GPT Image',
+    cliproxy_gpt_image2: 'CLIProxyAPI gpt-image-2',
     volcengine: '火山引擎',
     volcengine_omni: '火山全能',
     dashscope: '通义万象',
