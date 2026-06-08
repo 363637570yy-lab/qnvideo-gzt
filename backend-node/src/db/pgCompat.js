@@ -41,6 +41,7 @@ const tablesWithSerialId = new Set([
   'image_proxy_cache',
   'ai_model_map',
   'storyboard_characters',
+  'workflow_presets',
 ]);
 
 function normalizeParams(params) {
