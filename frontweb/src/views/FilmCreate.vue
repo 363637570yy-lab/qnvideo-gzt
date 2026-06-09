@@ -4473,7 +4473,6 @@ const filmCreateCtx = proxyRefs({
   batchVideoStopping,
   Box,
   CharacterWorkbench,
-  buildAuxPrompt,
   buildEpisodeContext,
   buildExtractTaskMeta,
   buildFirstFrameImagePrompt,
