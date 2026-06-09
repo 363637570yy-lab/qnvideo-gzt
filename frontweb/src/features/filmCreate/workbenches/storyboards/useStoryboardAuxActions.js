@@ -4,8 +4,11 @@ import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 export function useStoryboardAuxActions(deps = {}) {
   const {
     store,
+    dramaAPI,
     imagesAPI,
     storyboardsAPI,
+    genStore,
+    genResource,
     dramaId,
     currentEpisodeId,
     storyboards,
@@ -46,10 +49,27 @@ export function useStoryboardAuxActions(deps = {}) {
     linkingTailFrameIds,
     usingPrevTailAsFirstIds,
     storyboardUseFirstLastFrame,
+    storyboardIncludeNarration,
+    storyboardUniversalOmni,
+    sbTruncatedWarning,
+    sbTruncatedDismissed,
+    projectAspectRatio,
+    scriptLanguage,
     loadDrama = async () => {},
+    refreshStoryboardsForEpisode = async () => {},
     refreshStoryboardsOnly = async () => {},
     loadSingleStoryboardMedia = async () => {},
+    buildExtractTaskMeta = () => ({}),
+    confirmAdminProjectOperation = async () => true,
+    trackFilmCreateAction = () => {},
+    getSelectedStyle = () => '',
+    getStoryboardCountForApi = () => undefined,
+    getVideoDurationForApi = () => undefined,
+    workflowPresetPayload = () => ({}),
+    textAiPayload = () => ({}),
     ttsAiPayload = () => ({}),
+    pollTask = async () => ({}),
+    polishUniversalSegmentsAfterGeneration = async () => ({ polished: 0 }),
     getSbFirstImage = () => null,
     getSbLastImage = () => null,
     buildFirstFrameImagePrompt = () => '',
@@ -568,6 +588,113 @@ export function useStoryboardAuxActions(deps = {}) {
     }
   }
 
+  async function onGenerateStoryboard() {
+    if (!(await confirmAdminProjectOperation('生成分镜'))) return
+    trackFilmCreateAction('generate_storyboard_click')
+    const episodeId = currentEpisodeId.value
+    if (!episodeId) return
+    const meta = buildExtractTaskMeta(store, dramaId.value, episodeId, genResource.GENERATE_STORYBOARD, 'AI生成分镜')
+    genStore.markRunning(meta)
+    const refreshTimer = setInterval(() => refreshStoryboardsForEpisode(episodeId), 2000)
+    try {
+      const res = await dramaAPI.generateStoryboard(episodeId, {
+        model: undefined,
+        style: getSelectedStyle(),
+        storyboard_count: getStoryboardCountForApi(),
+        video_duration: getVideoDurationForApi(),
+        video_clip_duration: videoClipDuration.value || 10,
+        aspect_ratio: projectAspectRatio.value || '16:9',
+        language: scriptLanguage.value || 'zh',
+        include_narration: !!storyboardIncludeNarration.value,
+        universal_omni_storyboard: !!storyboardUniversalOmni.value,
+        ...workflowPresetPayload('storyboard'),
+        ...textAiPayload(),
+      })
+      const taskId = res?.task_id ?? (typeof res === 'string' ? res : null)
+      if (taskId) {
+        const pollRes = await pollTask(taskId, () => loadDrama(), meta)
+        if (pollRes?.status !== 'completed') return
+        if (pollRes?.result?.truncated) {
+          sbTruncatedWarning.value = true
+          sbTruncatedDismissed.value = false
+        }
+      } else {
+        genStore.markDone(meta)
+      }
+      await loadDrama()
+      storyboardsAPI.batchInferParams(episodeId, false).catch(() => {})
+      const polishRes = await polishUniversalSegmentsAfterGeneration({})
+      const polishedCount = polishRes?.polished ?? 0
+      ElMessage.success(
+        storyboardUniversalOmni.value
+          ? polishedCount > 0
+            ? `全能分镜生成完成，已自动润色 ${polishedCount} 条片段`
+            : '全能分镜生成完成'
+          : '分镜生成完成'
+      )
+      trackFilmCreateAction('generate_storyboard_complete', {
+        extra: { storyboard_count: (store.storyboards || []).length },
+      })
+    } catch (e) {
+      genStore.markFailed(meta, e.message || '生成失败')
+      if (!e.response) ElMessage.error(e.message || '生成失败')
+    } finally {
+      clearInterval(refreshTimer)
+    }
+  }
+
+  async function onAddSingleStoryboard() {
+    if (!currentEpisodeId.value) {
+      ElMessage.warning('请先选择集')
+      return
+    }
+    if (!(await confirmAdminProjectOperation('新增分镜'))) return
+    try {
+      const maxNumber = (store.storyboards || [])
+        .filter((sb) => sb.episode_id === currentEpisodeId.value)
+        .reduce((max, sb) => Math.max(max, sb.storyboard_number || 0), 0)
+      await storyboardsAPI.create({
+        episode_id: currentEpisodeId.value,
+        storyboard_number: maxNumber + 1,
+        title: `镜头 ${maxNumber + 1}`,
+        description: '',
+      })
+      ElMessage.success('添加成功')
+      await loadDrama()
+    } catch (e) {
+      ElMessage.error(e.message || '添加失败')
+    }
+  }
+
+  async function onDeleteSingleStoryboard(id) {
+    if (!(await confirmAdminProjectOperation('删除分镜'))) return
+    try {
+      await ElMessageBox.confirm('确定要删除这个分镜吗？', '提示', {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      })
+      await storyboardsAPI.delete(id)
+      ElMessage.success('删除成功')
+      await loadDrama()
+    } catch (e) {
+      if (e !== 'cancel') {
+        ElMessage.error(e.message || '删除失败')
+      }
+    }
+  }
+
+  async function onInsertStoryboardBefore(sb) {
+    if (!(await confirmAdminProjectOperation('插入分镜'))) return
+    try {
+      await storyboardsAPI.insertBefore(sb.id)
+      ElMessage.success('已在此位置前新增空白分镜')
+      await loadDrama()
+    } catch (e) {
+      ElMessage.error(e.message || '新增失败')
+    }
+  }
+
   function stopSbTtsPreview() {
     if (!sbTtsPreviewAudio) return
     sbTtsPreviewAudio.pause()
@@ -579,9 +706,13 @@ export function useStoryboardAuxActions(deps = {}) {
     countDialogueLinesInSb,
     formatSrtTimestamp,
     normalizeAudioRelPath,
+    onAddSingleStoryboard,
     onBatchInferParams,
+    onDeleteSingleStoryboard,
     onExportNarrationSrt,
     onExportStoryboardSheet,
+    onGenerateStoryboard,
+    onInsertStoryboardBefore,
     onLinkTailFrameToNext,
     onOpenVideoParamsDialog,
     onRegenerateLayoutDescription,
