@@ -6432,7 +6432,6 @@ function applyRouteToStore() {
 
 // 过渡桥接：主要 UI 模板已拆出组件，业务状态暂留父页面；后续按 tab 下沉到 composables。
 const filmCreateCtx = proxyRefs({
-  _findStyleOption,
   AccountMenu,
   ACTIVE_VIDEO_AI_CONFIG_TTL_MS,
   activeVideoAiConfigCache,
