@@ -637,7 +637,10 @@ async function extractAppearanceFromImage(db, log, cfg, characterId) {
   const { isRefusalResponse } = require('./aiClient');
   let appearance;
   try {
-    appearance = await generateTextWithVision(db, log, 'text', userPrompt, systemPrompt, imgSrc, { max_tokens: 2000 });
+    appearance = await generateTextWithVision(db, log, 'text', userPrompt, systemPrompt, imgSrc, {
+      scene_key: 'vision_character_extract',
+      max_tokens: 2000,
+    });
   } catch (err) {
     log.error('[extractAppearanceFromImage] AI 调用失败', { characterId, error: err.message });
     const errMsg = /image|vision|visual|multimodal/i.test(err.message)

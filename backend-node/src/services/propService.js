@@ -196,7 +196,10 @@ async function extractPropFromImage(db, log, cfg, propId) {
 
   let description;
   try {
-    description = await generateTextWithVision(db, log, 'text', userPrompt, systemPrompt, imgSrc, { max_tokens: 2000 });
+    description = await generateTextWithVision(db, log, 'text', userPrompt, systemPrompt, imgSrc, {
+      scene_key: 'vision_prop_extract',
+      max_tokens: 2000,
+    });
   } catch (err) {
     log.error('[extractPropFromImage] AI 调用失败', { propId, error: err.message });
     const errMsg = /image|vision|visual|multimodal/i.test(err.message)

@@ -1,61 +1,12 @@
 // 与 Go pkg/ai + application/services/ai_service 对齐：读取 ai_service_configs，调用 OpenAI 兼容的 chat completions
-const aiConfigService = require('./aiConfigService');
 const { applyDeepSeekChatOptions } = require('./deepseekConfig');
 const { getNoAiConfigMessage } = require('../utils/aiFriendlyErrors');
 const https = require('https');
 const http = require('http');
-
-/**
- * 非流式 POST，发送 JSON body，等待完整 HTTP 响应后返回。
- * 用于视觉分析等短请求，兼容 o-series 推理模型和各种第三方代理。
- */
-function postJSONNonStream(url, headers, body, timeoutMs = 120000) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const mod = parsed.protocol === 'https:' ? https : http;
-    const bodyStr = JSON.stringify(body);
-    const reqHeaders = {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(bodyStr),
-      ...headers,
-    };
-    const options = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method: 'POST',
-      headers: reqHeaders,
-    };
-
-    const req = mod.request(options, (res) => {
-      const chunks = [];
-      res.on('data', (c) => chunks.push(c));
-      res.on('end', () => {
-        const raw = Buffer.concat(chunks).toString('utf-8');
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 500)}`));
-        }
-        try {
-          const json = JSON.parse(raw);
-          // 兼容标准 OpenAI 格式与推理模型
-          const content = json.choices?.[0]?.message?.content
-            || json.choices?.[0]?.message?.reasoning_content
-            || null;
-          resolve({ status: res.statusCode, body: content, raw });
-        } catch (_) {
-          resolve({ status: res.statusCode, body: null, raw });
-        }
-      });
-      res.on('error', reject);
-    });
-
-    const timer = setTimeout(() => { req.destroy(); reject(new Error(`Vision request timeout after ${timeoutMs}ms`)); }, timeoutMs);
-    req.on('error', (e) => { clearTimeout(timer); reject(e); });
-    req.on('close', () => clearTimeout(timer));
-    req.write(bodyStr);
-    req.end();
-  });
-}
+const { postJSONNonStream, postJSONStream } = require('./ai-text/openAiChatTransport');
+const modelRouter = require('./ai-runtime/modelRouter');
+const modelCallLogger = require('./ai-runtime/modelCallLogger');
+const usageEstimator = require('./ai-runtime/usageEstimator');
 
 /**
  * 图生等长耗时 JSON POST：使用 Node http(s) + 可配置超时（默认 10 分钟），
@@ -107,106 +58,13 @@ function postJSONWithTimeout(url, headers, body, timeoutMs = 600000) {
   });
 }
 
-/**
- * 用 SSE 流式输出（stream: true）请求 OpenAI 兼容接口。
- * 流式模式下 socket 每收到一个 token 就重置静默计时器，只要模型在生成就不会超时，
- * 彻底解决分镜等长耗时任务的 "fetch failed / timeout" 问题。
- * silenceTimeoutMs：连续多少毫秒无任何数据才判定超时（默认 60 秒）。
- */
-function postJSONStream(url, headers, body, silenceTimeoutMs = 60000, onProgress = null) {
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const mod = parsed.protocol === 'https:' ? https : http;
-    // 强制开启流式输出
-    const streamBody = { ...body, stream: true };
-    const bodyStr = JSON.stringify(streamBody);
-    const reqHeaders = {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(bodyStr),
-      ...headers,
-    };
-    const options = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method: 'POST',
-      headers: reqHeaders,
-    };
-
-    let silenceTimer = null;
-    const resetSilenceTimer = () => {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        req.destroy();
-        reject(new Error(`AI stream silence timeout after ${silenceTimeoutMs}ms`));
-      }, silenceTimeoutMs);
-    };
-
-    const req = mod.request(options, (res) => {
-      const statusCode = res.statusCode;
-      // 非 2xx 时先读完整 body 再报错（可能是 JSON 错误信息）
-      if (statusCode < 200 || statusCode >= 300) {
-        const errChunks = [];
-        res.on('data', (c) => errChunks.push(c));
-        res.on('end', () => {
-          clearTimeout(silenceTimer);
-          reject(new Error(`HTTP ${statusCode}: ${Buffer.concat(errChunks).toString('utf-8').slice(0, 500)}`));
-        });
-        return;
-      }
-
-      let accumulated = '';
-      let sseBuffer = '';
-      let firstToken = true;
-      resetSilenceTimer();
-
-      res.on('data', (chunk) => {
-        resetSilenceTimer();
-        sseBuffer += chunk.toString('utf-8');
-        // 按行解析 SSE
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop(); // 保留不完整的最后一行
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const data = trimmed.slice(5).trim();
-          if (data === '[DONE]') continue;
-          try {
-            const evt = JSON.parse(data);
-            const delta = evt.choices?.[0]?.delta?.content;
-            if (delta) {
-              if (firstToken) {
-                firstToken = false;
-                if (onProgress) onProgress(0, 'first_token', '');
-              }
-              accumulated += delta;
-              if (onProgress) onProgress(accumulated.length, null, accumulated);
-            }
-          } catch (_) { /* 忽略无法解析的行 */ }
-        }
-      });
-
-      res.on('end', () => {
-        clearTimeout(silenceTimer);
-        resolve({ status: statusCode, body: accumulated });
-      });
-      res.on('error', (e) => { clearTimeout(silenceTimer); reject(e); });
-    });
-
-    req.on('error', (e) => { clearTimeout(silenceTimer); reject(e); });
-    resetSilenceTimer(); // 连接建立阶段也需要计时
-    req.write(bodyStr);
-    req.end();
-  });
-}
-
 // 运行时按路由策略选择配置，并自动跳过冷却/停用的配置。
 function getDefaultConfig(db, serviceType) {
-  return aiConfigService.getRuntimeConfigCandidates(db, serviceType)[0] || null;
+  return modelRouter.getDefaultConfig(db, serviceType);
 }
 
 function getConfigForModel(db, serviceType, modelName) {
-  return aiConfigService.getRuntimeConfigCandidates(db, serviceType, { model: modelName })[0] || null;
+  return modelRouter.getConfigForModel(db, serviceType, modelName);
 }
 
 function buildChatUrl(config) {
@@ -228,21 +86,7 @@ function getModelFromConfig(config, preferredModel) {
  * 返回 { config, modelOverride } 或 null（未配置时）
  */
 function getConfigFromModelMap(db, sceneKey) {
-  try {
-    const row = db.prepare('SELECT * FROM ai_model_map WHERE key = ?').get(sceneKey);
-    if (!row) return null;
-    const configs = aiConfigService.listConfigs(db, row.service_type || 'text');
-    let config = null;
-    if (row.config_id) {
-      config = configs.find((c) => c.id === row.config_id && c.is_active) || null;
-    }
-    if (!config) {
-      config = configs.find((c) => c.is_active) || null;
-    }
-    return config ? { config, modelOverride: row.model_override || null } : null;
-  } catch (_) {
-    return null;
-  }
+  return modelRouter.getSceneMappedEntry(db, sceneKey);
 }
 
 function uniqueTextEntries(entries) {
@@ -260,29 +104,51 @@ function uniqueTextEntries(entries) {
 function getTextCandidateEntries(db, serviceType, options = {}) {
   const preferredModel = options.model || null;
   const requestedConfigId = options.ai_config_id || options.config_id || null;
+  const routeContext = {
+    user_id: options.user_id || options.userId || options.operator_user_id || options.user?.id || null,
+    project_id: options.project_id || options.projectId || options.drama_id || null,
+  };
   const entries = [];
   if (options.scene_key) {
-    const mapped = getConfigFromModelMap(db, options.scene_key);
-    if (mapped?.config) {
-      entries.push({ config: mapped.config, modelOverride: mapped.modelOverride || null });
-    }
+    entries.push(...modelRouter.getSceneMappedEntries(db, options.scene_key, {
+      serviceType: serviceType || 'text',
+      model: preferredModel,
+      config_id: requestedConfigId,
+      usage_estimate: options.usage_estimate || options.usageEstimate,
+      ...routeContext,
+    }));
   }
   const fallbackServiceType = serviceType || 'text';
-  for (const cfg of aiConfigService.getRuntimeConfigCandidates(db, fallbackServiceType, {
+  for (const cfg of modelRouter.getRuntimeConfigCandidates(db, fallbackServiceType, {
     model: preferredModel,
     config_id: requestedConfigId,
+    scene_key: options.scene_key || null,
+    usage_estimate: options.usage_estimate || options.usageEstimate,
+    ...routeContext,
   })) {
     entries.push({ config: cfg, modelOverride: null });
   }
   if (fallbackServiceType !== 'text') {
-    for (const cfg of aiConfigService.getRuntimeConfigCandidates(db, 'text', {
+    for (const cfg of modelRouter.getRuntimeConfigCandidates(db, 'text', {
       model: preferredModel,
       config_id: requestedConfigId,
+      scene_key: options.scene_key || null,
+      usage_estimate: options.usage_estimate || options.usageEstimate,
+      ...routeContext,
     })) {
       entries.push({ config: cfg, modelOverride: null });
     }
   }
   return uniqueTextEntries(entries);
+}
+
+function buildModelCallContextFromOptions(options = {}) {
+  return {
+    user_id: options.user_id || options.userId || options.operator_user_id || options.user?.id || null,
+    project_id: options.project_id || options.projectId || options.drama_id || null,
+    task_id: options.task_id || options.taskId || null,
+    trace_id: options.trace_id || options.traceId || null,
+  };
 }
 
 function buildTextRequestContext(log, config, preferredModel, options = {}, label = 'AI') {
@@ -342,7 +208,12 @@ function buildTextRequestContext(log, config, preferredModel, options = {}, labe
 
 async function generateText(db, log, serviceType, userPrompt, systemPrompt, options = {}) {
   const { model: preferredModel, streamCallback = null, scene_key = null } = options;
-  const entries = getTextCandidateEntries(db, serviceType, options);
+  const callContext = buildModelCallContextFromOptions(options);
+  const routeOptions = {
+    ...options,
+    usage_estimate: usageEstimator.estimateTextUsage(userPrompt, systemPrompt, options),
+  };
+  const entries = getTextCandidateEntries(db, serviceType, routeOptions);
   if (scene_key && entries[0]?.modelOverride) {
     log.info('AI generateText: scene_key routing', {
       scene_key,
@@ -351,7 +222,7 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
     });
   }
   if (entries.length === 0) {
-    throw new Error(getNoAiConfigMessage('text'));
+    throw new Error(modelRouter.getRuntimeQuotaBlockMessage(db, serviceType || 'text', routeOptions) || getNoAiConfigMessage('text'));
   }
   let lastErr = null;
   for (let i = 0; i < entries.length; i += 1) {
@@ -362,8 +233,8 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
       userPrompt,
       systemPrompt,
     }, 'AI generateText');
-    const retryCount = aiConfigService.getRetryCountForConfig(db, config, serviceType || 'text', model);
-    const silenceMs = aiConfigService.getRequestTimeoutMsForConfig(db, config, serviceType || 'text', model, 60000);
+    const retryCount = modelRouter.getRetryCountForConfig(db, config, serviceType || 'text', model);
+    const silenceMs = modelRouter.getRequestTimeoutMsForConfig(db, config, serviceType || 'text', model, 60000);
     let stopRouting = false;
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
       const startMs = Date.now();
@@ -389,7 +260,21 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
         const content = res.body;
         const elapsedMs = Date.now() - startMs;
         if (!content) throw new Error('AI 返回内容为空');
-        aiConfigService.recordConfigSuccess(db, config.id);
+        modelRouter.recordConfigSuccess(db, config.id);
+        modelCallLogger.recordModelCall(db, {
+          service_type: serviceType || 'text',
+          scene_key,
+          config_id: config.id,
+          provider: config.provider,
+          api_protocol: config.api_protocol,
+          model,
+          status: 'success',
+          elapsed_ms: elapsedMs,
+          prompt: [systemPrompt, userPrompt],
+          usage: res.usage,
+          diagnostics: { json_mode: !!options.json_mode, stream: true },
+          ...callContext,
+        });
         log.info('AI raw response received', { config_id: config.id, model, text_length: content.length, elapsed_ms: elapsedMs, text_preview: content.slice(0, 200) });
         return content;
       } catch (err) {
@@ -398,7 +283,21 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
           log.warn('AI generateText retrying same config', { config_id: config.id, model, attempt: attempt + 1, error: err.message });
           continue;
         }
-        const failure = aiConfigService.recordConfigFailure(db, config.id, err, { serviceType: serviceType || 'text', model });
+        const failure = modelRouter.recordConfigFailure(db, config.id, err, { serviceType: serviceType || 'text', model });
+        modelCallLogger.recordModelCall(db, {
+          service_type: serviceType || 'text',
+          scene_key,
+          config_id: config.id,
+          provider: config.provider,
+          api_protocol: config.api_protocol,
+          model,
+          status: 'failed',
+          elapsed_ms: Date.now() - startMs,
+          prompt: [systemPrompt, userPrompt],
+          error: err,
+          diagnostics: { reason: failure.reason, fallbackable: failure.fallbackable, stream: true },
+          ...callContext,
+        });
         log.warn('AI generateText failed, trying next config if available', {
           config_id: config.id,
           model,
@@ -423,7 +322,12 @@ async function generateText(db, log, serviceType, userPrompt, systemPrompt, opti
  */
 async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt, options = {}, onDelta) {
   const { model: preferredModel, scene_key = null } = options;
-  const entries = getTextCandidateEntries(db, serviceType, options);
+  const callContext = buildModelCallContextFromOptions(options);
+  const routeOptions = {
+    ...options,
+    usage_estimate: usageEstimator.estimateTextUsage(userPrompt, systemPrompt, options),
+  };
+  const entries = getTextCandidateEntries(db, serviceType, routeOptions);
   if (scene_key && entries[0]?.modelOverride) {
     log.info('AI streamGenerateText: scene_key routing', {
       scene_key,
@@ -432,7 +336,7 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
     });
   }
   if (entries.length === 0) {
-    throw new Error(getNoAiConfigMessage('text'));
+    throw new Error(modelRouter.getRuntimeQuotaBlockMessage(db, serviceType || 'text', routeOptions) || getNoAiConfigMessage('text'));
   }
   const silenceMs = options.silence_timeout_ms != null ? Number(options.silence_timeout_ms) : 120000;
   let lastErr = null;
@@ -444,10 +348,10 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
       userPrompt,
       systemPrompt,
     }, 'AI streamGenerateText');
-    const retryCount = aiConfigService.getRetryCountForConfig(db, config, serviceType || 'text', model);
+    const retryCount = modelRouter.getRetryCountForConfig(db, config, serviceType || 'text', model);
     const streamSilenceMs = options.silence_timeout_ms != null
       ? Number(options.silence_timeout_ms)
-      : aiConfigService.getRequestTimeoutMsForConfig(db, config, serviceType || 'text', model, silenceMs);
+      : modelRouter.getRequestTimeoutMsForConfig(db, config, serviceType || 'text', model, silenceMs);
     let stopRouting = false;
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
       const startMs = Date.now();
@@ -480,7 +384,21 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
         );
         const content = res.body;
         if (!content) throw new Error('AI 返回内容为空');
-        aiConfigService.recordConfigSuccess(db, config.id);
+        modelRouter.recordConfigSuccess(db, config.id);
+        modelCallLogger.recordModelCall(db, {
+          service_type: serviceType || 'text',
+          scene_key,
+          config_id: config.id,
+          provider: config.provider,
+          api_protocol: config.api_protocol,
+          model,
+          status: 'success',
+          elapsed_ms: Date.now() - startMs,
+          prompt: [systemPrompt, userPrompt],
+          usage: res.usage,
+          diagnostics: { json_mode: !!options.json_mode, stream: true },
+          ...callContext,
+        });
         log.info('AI streamGenerateText done', { config_id: config.id, model, text_length: content.length, elapsed_ms: Date.now() - startMs });
         return content;
       } catch (err) {
@@ -489,7 +407,21 @@ async function streamGenerateText(db, log, serviceType, userPrompt, systemPrompt
           log.warn('AI streamGenerateText retrying same config', { config_id: config.id, model, attempt: attempt + 1, error: err.message });
           continue;
         }
-        const failure = aiConfigService.recordConfigFailure(db, config.id, err, { serviceType: serviceType || 'text', model });
+        const failure = modelRouter.recordConfigFailure(db, config.id, err, { serviceType: serviceType || 'text', model });
+        modelCallLogger.recordModelCall(db, {
+          service_type: serviceType || 'text',
+          scene_key,
+          config_id: config.id,
+          provider: config.provider,
+          api_protocol: config.api_protocol,
+          model,
+          status: 'failed',
+          elapsed_ms: Date.now() - startMs,
+          prompt: [systemPrompt, userPrompt],
+          error: err,
+          diagnostics: { reason: failure.reason, fallbackable: failure.fallbackable, stream: true },
+          ...callContext,
+        });
         log.warn('AI streamGenerateText failed, trying next config if available', {
           config_id: config.id,
           model,
@@ -576,82 +508,127 @@ async function generateTextWithVision(db, log, serviceType, userPrompt, systemPr
     const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
     const mime = mimeMap[ext] || 'image/jpeg';
     imageUrlForApi = `data:${mime};base64,${buf.toString('base64')}`;
-    imageLogInfo = { image_type: 'local_file', image_path: imageSource.localAbsPath, image_size_kb: Math.round(buf.length / 1024), image_mime: mime };
+    imageLogInfo = { image_type: 'local_file', image_size_kb: Math.round(buf.length / 1024), image_mime: mime };
   } else {
     throw new Error('imageSource 必须包含 imageUrl 或 localAbsPath');
   }
 
-  // 复用 generateText 的配置查找逻辑
   const { model: preferredModel, temperature = 0.3, max_tokens = 500 } = options;
-  let config = preferredModel
-    ? getConfigForModel(db, serviceType, preferredModel)
-    : getDefaultConfig(db, serviceType);
-  if (!config) config = getDefaultConfig(db, 'text');
-  if (!config) throw new Error(getNoAiConfigMessage('text'));
-  const model = getModelFromConfig(config, preferredModel);
-  const url = buildChatUrl(config);
-
-  log.info('[Vision] 开始请求', {
-    config_id: config.id,
-    config_name: config.name,
-    api_protocol: config.api_protocol || 'openai',
-    base_url: config.base_url,
-    model,
-    is_reasoning_model: /^o\d/i.test(model),
-    max_tokens: Number(max_tokens),
-    ...imageLogInfo,
-  });
-
-  const maxTok = Number(max_tokens);
-  // o1/o3/o4 系列推理模型不支持 temperature，且 system role 需改为 developer role
-  const isReasoningModel = /^o\d/i.test(model);
-  const systemRole = isReasoningModel ? 'developer' : 'system';
-
-  // 推理模型把 system 内容并入 user 消息前缀（部分代理不识别 developer role）
-  const mergedUserText = (systemPrompt && isReasoningModel)
-    ? `${systemPrompt}\n\n${userPrompt}`
-    : userPrompt;
-
-  // OpenAI vision 消息格式
-  // max_tokens 供旧版/普通模型使用；max_completion_tokens 供推理模型（o1/o3/o4）使用
-  const body = {
-    model,
-    messages: [
-      ...(systemPrompt && !isReasoningModel ? [{ role: systemRole, content: systemPrompt }] : []),
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: mergedUserText },
-          { type: 'image_url', image_url: { url: imageUrlForApi } },
-        ],
-      },
-    ],
-    // 推理模型用 max_completion_tokens，普通模型用 max_tokens，不能同时传
-    ...(isReasoningModel ? { max_completion_tokens: maxTok } : { max_tokens: maxTok }),
-    // 推理模型不支持 temperature，跳过
-    ...(isReasoningModel ? {} : { temperature: Number(temperature) }),
+  const callContext = buildModelCallContextFromOptions(options);
+  const routeOptions = {
+    ...options,
+    usage_estimate: usageEstimator.estimateTextUsage(userPrompt, systemPrompt, { ...options, max_tokens }),
   };
+  const entries = getTextCandidateEntries(db, serviceType, routeOptions);
+  if (entries.length === 0 && serviceType !== 'text') {
+    entries.push(...getTextCandidateEntries(db, 'text', routeOptions));
+  }
+  if (entries.length === 0) throw new Error(modelRouter.getRuntimeQuotaBlockMessage(db, serviceType || 'text', routeOptions) || getNoAiConfigMessage('text'));
 
-  const startMs = Date.now();
-  let res;
-  try {
-    // 使用非流式请求：视觉分析响应短，且流式对推理模型（o1/o3/o4）和部分代理兼容性差
-    res = await postJSONNonStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, 120000);
-  } catch (httpErr) {
-    log.error('[Vision] HTTP 请求失败', { model, url: url.slice(0, 80), error: httpErr.message });
-    throw httpErr;
-  }
-  const content = res.body;
-  if (!content) {
-    log.error('[Vision] 返回内容为空', {
+  let lastErr = null;
+  for (let i = 0; i < entries.length; i += 1) {
+    const { config, modelOverride } = entries[i];
+    const effectivePreferredModel = modelOverride || preferredModel;
+    const model = getModelFromConfig(config, effectivePreferredModel);
+    const url = buildChatUrl(config);
+    const maxTok = Number(max_tokens);
+    const isReasoningModel = /^o\d/i.test(model);
+    const systemRole = isReasoningModel ? 'developer' : 'system';
+    const mergedUserText = (systemPrompt && isReasoningModel)
+      ? `${systemPrompt}\n\n${userPrompt}`
+      : userPrompt;
+    const body = {
       model,
-      status: res.status,
-      raw_response: (res.raw || '').slice(0, 300),
-    });
-    throw new Error(`AI vision 返回内容为空（HTTP ${res.status}），原始响应：${(res.raw || '').slice(0, 200)}`);
+      messages: [
+        ...(systemPrompt && !isReasoningModel ? [{ role: systemRole, content: systemPrompt }] : []),
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: mergedUserText },
+            { type: 'image_url', image_url: { url: imageUrlForApi } },
+          ],
+        },
+      ],
+      ...(isReasoningModel ? { max_completion_tokens: maxTok } : { max_tokens: maxTok }),
+      ...(isReasoningModel ? {} : { temperature: Number(temperature) }),
+    };
+    const requestTimeoutMs = modelRouter.getRequestTimeoutMsForConfig(db, config, serviceType || 'text', model, 120000);
+    const retryCount = modelRouter.getRetryCountForConfig(db, config, serviceType || 'text', model);
+    let stopRouting = false;
+
+    for (let attempt = 0; attempt <= retryCount; attempt += 1) {
+      const startMs = Date.now();
+      try {
+        log.info('[Vision] 开始请求', {
+          config_id: config.id,
+          config_name: config.name,
+          api_protocol: config.api_protocol || 'openai',
+          model,
+          is_reasoning_model: isReasoningModel,
+          max_tokens: maxTok,
+          attempt: attempt + 1,
+          retry_count: retryCount,
+          ...imageLogInfo,
+        });
+        const res = await postJSONNonStream(url, { Authorization: 'Bearer ' + (config.api_key || '') }, body, requestTimeoutMs);
+        const content = res.body;
+        if (!content) {
+          throw new Error(`AI vision 返回内容为空（HTTP ${res.status}），原始响应：${(res.raw || '').slice(0, 200)}`);
+        }
+        modelRouter.recordConfigSuccess(db, config.id);
+        modelCallLogger.recordModelCall(db, {
+          service_type: serviceType || 'text',
+          scene_key: options.scene_key || null,
+          config_id: config.id,
+          provider: config.provider,
+          api_protocol: config.api_protocol,
+          model,
+          status: 'success',
+          elapsed_ms: Date.now() - startMs,
+          prompt: [systemPrompt, userPrompt],
+          usage: res.usage,
+          diagnostics: { vision: true, image_type: imageLogInfo.image_type },
+          ...callContext,
+        });
+        log.info('[Vision] 请求成功', { model, elapsed_ms: Date.now() - startMs, result_len: content.length, result_preview: content.slice(0, 100) });
+        return content.trim();
+      } catch (err) {
+        lastErr = err;
+        if (attempt < retryCount) {
+          log.warn('[Vision] 当前配置失败，按策略重试', { config_id: config.id, model, attempt: attempt + 1, error: err.message });
+          continue;
+        }
+        const failure = modelRouter.recordConfigFailure(db, config.id, err, { serviceType: serviceType || 'text', model });
+        modelCallLogger.recordModelCall(db, {
+          service_type: serviceType || 'text',
+          scene_key: options.scene_key || null,
+          config_id: config.id,
+          provider: config.provider,
+          api_protocol: config.api_protocol,
+          model,
+          status: 'failed',
+          elapsed_ms: Date.now() - startMs,
+          prompt: [systemPrompt, userPrompt],
+          error: err,
+          diagnostics: { vision: true, reason: failure.reason, fallbackable: failure.fallbackable },
+          ...callContext,
+        });
+        log.warn('[Vision] 当前配置失败，尝试下一个可用配置', {
+          config_id: config.id,
+          model,
+          reason: failure.reason,
+          fallbackable: failure.fallbackable,
+          error: failure.message,
+        });
+        if (!failure.fallbackable || i === entries.length - 1) {
+          stopRouting = true;
+          break;
+        }
+      }
+    }
+    if (stopRouting) break;
   }
-  log.info('[Vision] 请求成功', { model, elapsed_ms: Date.now() - startMs, result_len: content.length, result_preview: content.slice(0, 100) });
-  return content.trim();
+  throw lastErr || new Error('AI vision 分析失败');
 }
 
 const EXTRACT_PROMPTS = {

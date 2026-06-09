@@ -40,6 +40,10 @@ const tablesWithSerialId = new Set([
   'prop_libraries',
   'image_proxy_cache',
   'ai_model_map',
+  'ai_model_call_logs',
+  'ai_usage_events',
+  'ai_quota_policies',
+  'ai_quota_counters',
   'storyboard_characters',
   'workflow_presets',
 ]);

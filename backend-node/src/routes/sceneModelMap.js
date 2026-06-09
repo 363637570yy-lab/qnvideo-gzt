@@ -1,4 +1,11 @@
 const response = require('../response');
+const modelSceneKeys = require('../services/ai-runtime/modelSceneKeys');
+
+function definitions() {
+  return (req, res) => {
+    response.success(res, modelSceneKeys.getSceneKeyDefinitions());
+  };
+}
 
 function list(db, log) {
   return (req, res) => {
@@ -114,6 +121,7 @@ function remove(db, log) {
 
 module.exports = function sceneModelMapRoutes(db, log) {
   return {
+    definitions: definitions(),
     list: list(db, log),
     get: get(db, log),
     create: create(db, log),

@@ -81,6 +81,36 @@ function createDb() {
       task_id TEXT,
       deleted_at TEXT
     );
+    CREATE TABLE ai_service_configs (
+      id INTEGER PRIMARY KEY,
+      name TEXT
+    );
+    CREATE TABLE ai_model_call_logs (
+      id INTEGER PRIMARY KEY,
+      service_type TEXT,
+      scene_key TEXT,
+      config_id INTEGER,
+      provider TEXT,
+      api_protocol TEXT,
+      model TEXT,
+      status TEXT,
+      elapsed_ms INTEGER,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      total_tokens INTEGER,
+      image_count INTEGER,
+      audio_seconds REAL,
+      video_seconds REAL,
+      prompt_chars INTEGER,
+      prompt_hash TEXT,
+      task_id TEXT,
+      project_id INTEGER,
+      trace_id TEXT,
+      error_message TEXT,
+      usage_json TEXT,
+      diagnostics_json TEXT,
+      created_at TEXT
+    );
   `);
   return db;
 }
@@ -147,6 +177,45 @@ test('created tasks store explicit project ownership and operator context', () =
   assert.equal(task.owner_user_id, 'owner-1');
   assert.equal(task.operator_user_id, 'admin-1');
   assert.equal(taskService.canUserSeeTask(db, task, { id: 'owner-1', role: 'user' }), true);
+});
+
+test('task diagnostics include related model calls and traces', () => {
+  const db = createDb();
+  insertTask(db, 'task-model-1', 'image_generation', 9);
+  db.prepare('INSERT INTO ai_service_configs (id, name) VALUES (?, ?)').run(2, 'image relay');
+  db.prepare(`
+    INSERT INTO ai_model_call_logs (
+      service_type, scene_key, config_id, provider, api_protocol, model, status,
+      elapsed_ms, total_tokens, image_count, task_id, project_id, trace_id,
+      error_message, diagnostics_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'image',
+    'character_image',
+    2,
+    'openai',
+    'openai_gpt_image',
+    'gpt-image-2',
+    'failed',
+    42000,
+    null,
+    1,
+    'task-model-1',
+    9,
+    'trace-1',
+    'HTTP 504 timeout',
+    JSON.stringify({ image_gen_id: 7 }),
+    '2026-06-09T00:00:00Z'
+  );
+
+  const diagnostics = taskService.getTaskDiagnostics(db, 'task-model-1');
+
+  assert.equal(diagnostics.model_calls.total, 1);
+  assert.equal(diagnostics.model_calls.failed, 1);
+  assert.equal(diagnostics.model_calls.latest_trace_id, 'trace-1');
+  assert.equal(diagnostics.model_calls.usage.image_count, 1);
+  assert.equal(diagnostics.model_calls.items[0].config_name, 'image relay');
+  assert.equal(diagnostics.model_calls.items[0].diagnostics.image_gen_id, 7);
 });
 
 test('scene image tasks resolve scene id without treating it as a drama id', () => {

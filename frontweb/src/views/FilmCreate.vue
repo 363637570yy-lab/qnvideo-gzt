@@ -35,6 +35,10 @@
             <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
             {{ isDark ? '浅色' : '暗色' }}
           </el-button>
+          <el-button class="btn-ai-config" @click="showUsageCenterDialog = true">
+            <el-icon><DataAnalysis /></el-icon>
+            用量中心
+          </el-button>
           <el-button v-if="isAdminUser" class="btn-ai-config" @click="showAiConfigDialog = true">
             <el-icon><Setting /></el-icon>
             AI配置
@@ -476,6 +480,21 @@
             <el-button v-if="!pipelinePaused" type="warning" @click="pipelinePaused = true">⏸ 暂停</el-button>
             <el-button v-else type="success" @click="onPipelineResume">▶ 继续</el-button>
           </template>
+        </div>
+        <div class="pipeline-model-strategy" v-loading="aiRouteLoading">
+          <span class="pipeline-model-strategy-title">模型策略</span>
+          <el-tooltip
+            v-for="item in pipelineModelStrategyItems"
+            :key="item.key"
+            :content="item.tooltip"
+            placement="top"
+          >
+            <span class="pipeline-model-chip" :class="{ specified: item.specified, empty: item.empty }">
+              <span class="pipeline-model-chip-label">{{ item.label }}</span>
+              <strong>{{ item.summary }}</strong>
+            </span>
+          </el-tooltip>
+          <el-button size="small" text @click="loadRuntimeAiConfigs(true)">刷新</el-button>
         </div>
         <div v-if="pipelineRunning || pipelineErrorLog.length > 0" class="pipeline-status">
           <div v-if="pipelineCurrentStep" class="pipeline-current-step">
@@ -2982,6 +3001,7 @@
     <el-dialog v-if="isAdminUser" v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close class="ai-config-dialog">
       <AIConfigContent v-if="showAiConfigDialog && isAdminUser" />
     </el-dialog>
+    <UsageCenterDialog v-model:visible="showUsageCenterDialog" />
     <WorkflowPresetConfigDialog
       v-if="isAdminUser"
       v-model="showWorkflowConfigDialog"
@@ -3027,7 +3047,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, DataAnalysis } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFilmStore } from '@/stores/film'
 import { useGenerationTaskStore, GEN_RESOURCE } from '@/stores/generationTaskStore'
@@ -3053,6 +3073,7 @@ import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
+import UsageCenterDialog from '@/components/UsageCenterDialog.vue'
 import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEditor.vue'
 import {
   generationStyleOptions,
@@ -3138,6 +3159,7 @@ function goList() {
 
 
 const showAiConfigDialog = ref(false)
+const showUsageCenterDialog = ref(false)
 const showWorkflowConfigDialog = ref(false)
 const workflowPresetLoading = ref(false)
 const workflowPresetOptions = reactive({
@@ -3217,11 +3239,22 @@ const aiRouteTypes = [
   { key: 'video', label: '视频' },
   { key: 'tts', label: '音频' },
 ]
+const pipelineModelStrategyTypes = [
+  { key: 'text', label: '文本' },
+  { key: 'image', label: '图像' },
+  { key: 'video', label: '视频' },
+]
 const runtimeAiConfigs = reactive({
   text: [],
   image: [],
   video: [],
   tts: [],
+})
+const runtimeRoutingPolicies = reactive({
+  text: null,
+  image: null,
+  video: null,
+  tts: null,
 })
 const selectedAiConfigIds = reactive({
   text: '',
@@ -3289,6 +3322,36 @@ const aiRouteSummary = computed(() => {
   return selected > 0 ? `${selected}项指定` : '自动'
 })
 
+function routePrimaryConfig(type) {
+  const selectedId = normalizeAiRouteId(selectedAiConfigIds[type])
+  if (selectedId) {
+    return (runtimeAiConfigs[type] || []).find((cfg) => String(cfg.id) === selectedId) || null
+  }
+  return (runtimeAiConfigs[type] || [])[0] || null
+}
+
+const pipelineModelStrategyItems = computed(() => {
+  return pipelineModelStrategyTypes.map(({ key, label }) => {
+    const selectedId = normalizeAiRouteId(selectedAiConfigIds[key])
+    const cfg = routePrimaryConfig(key)
+    const model = cfg?.default_model || (Array.isArray(cfg?.model) ? cfg.model[0] : '')
+    const name = cfg?.name || cfg?.provider || ''
+    const strategy = selectedId ? '指定' : '自动'
+    const summary = cfg ? `${strategy} · ${name || model || '未命名'}` : '未配置'
+    const tooltip = cfg
+      ? `${label} ${strategy}使用：${configOptionLabel(cfg)}`
+      : `${label} 暂无可用配置`
+    return {
+      key,
+      label,
+      summary,
+      tooltip,
+      specified: !!selectedId,
+      empty: !cfg,
+    }
+  })
+})
+
 function aiRoutePayload(type, field = 'ai_config_id') {
   const id = Number(selectedAiConfigIds[type])
   if (!Number.isFinite(id) || id <= 0) return {}
@@ -3315,6 +3378,20 @@ function ttsAiPayload() {
   return aiRoutePayload('tts', 'tts_config_id')
 }
 
+function normalizeRuntimeConcurrency(value, fallback, max = 500) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(max, Math.max(1, Math.trunc(n)))
+}
+
+function applyRuntimeRoutingPolicies(policies = {}) {
+  aiRouteTypes.forEach(({ key }) => {
+    runtimeRoutingPolicies[key] = policies?.[key] || null
+  })
+  pipelineConcurrency.value = normalizeRuntimeConcurrency(runtimeRoutingPolicies.image?.concurrency_limit, 4, 8)
+  pipelineVideoConcurrency.value = normalizeRuntimeConcurrency(runtimeRoutingPolicies.video?.concurrency_limit, 3)
+}
+
 async function loadRuntimeAiConfigs(force = false) {
   if (aiRoutesLoaded.value && !force) return
   aiRouteLoading.value = true
@@ -3328,6 +3405,7 @@ async function loadRuntimeAiConfigs(force = false) {
         selectedAiConfigIds[key] = ''
       }
     })
+    applyRuntimeRoutingPolicies(res?.routing_policies || {})
     aiRoutesLoaded.value = true
   } catch (_) {
     aiRouteTypes.forEach(({ key }) => {
@@ -3635,9 +3713,13 @@ const pipelineVideoConcurrency = ref(3)
 const pipelineActiveTasks = reactive(new Set())
 
 async function loadPipelineConcurrency() {
-  // 单页面提交速度只是浏览器到服务器的保护值，不再暴露给管理员配置。
-  pipelineConcurrency.value = 8
-  pipelineVideoConcurrency.value = 3
+  try {
+    const res = await aiAPI.runtimeRoutes()
+    applyRuntimeRoutingPolicies(res?.routing_policies || {})
+  } catch (_) {
+    pipelineConcurrency.value = 4
+    pipelineVideoConcurrency.value = 3
+  }
 }
 
 /**
@@ -9790,6 +9872,7 @@ onMounted(async () => {
   }, 1000)
   loadPipelineConcurrency()
   loadWorkflowPresets()
+  loadRuntimeAiConfigs()
   applyRouteToStore()
 })
 
@@ -10772,6 +10855,51 @@ html.light .section-title { color: #1e1b4b; }
 .one-click-label {
   font-size: 14px;
   color: var(--el-text-color-primary);
+  white-space: nowrap;
+  font-weight: 600;
+}
+.pipeline-model-strategy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  min-height: 28px;
+}
+.pipeline-model-strategy-title {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+.pipeline-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 7px;
+  background: var(--el-fill-color-lighter);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.pipeline-model-chip.specified {
+  border-color: rgba(124, 58, 237, 0.35);
+  background: rgba(124, 58, 237, 0.08);
+}
+.pipeline-model-chip.empty {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: rgba(239, 68, 68, 0.08);
+}
+.pipeline-model-chip-label {
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+}
+.pipeline-model-chip strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
 }

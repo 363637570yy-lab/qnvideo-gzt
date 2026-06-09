@@ -1,6 +1,6 @@
 {
   "name": "qnvideo-gzt-backend",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "description": "Node.js backend for 芊柠AI视频工作台",
   "main": "src/server.js",
   "scripts": {

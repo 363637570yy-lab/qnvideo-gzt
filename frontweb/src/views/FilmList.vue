@@ -31,6 +31,9 @@
             <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
             {{ isDark ? '浅色' : '暗色' }}
           </el-button>
+          <el-button class="btn-settings" @click="showUsageCenterDialog = true">
+            <el-icon><DataAnalysis /></el-icon>用量中心
+          </el-button>
           <el-button v-if="isAdminUser" class="btn-settings" @click="router.push('/admin/users')">
             <el-icon><User /></el-icon>用户管理
           </el-button>
@@ -161,6 +164,7 @@
     <el-dialog v-if="isAdminUser" v-model="showAiConfigDialog" title="AI 配置" width="90%" destroy-on-close>
       <AIConfigContent v-if="showAiConfigDialog && isAdminUser" />
     </el-dialog>
+    <UsageCenterDialog v-model:visible="showUsageCenterDialog" />
 
     <!-- 公共角色库 -->
     <el-dialog v-model="showCharLibrary" title="素材库 · 角色" width="720px" destroy-on-close class="library-dialog" @open="loadCharLibraryList">
@@ -378,7 +382,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Edit, Delete, Setting, Plus, User, PictureFilled, Box, Sunny, Moon, Download, Upload, QuestionFilled, FolderOpened, MagicStick, Files } from '@element-plus/icons-vue'
+import { Edit, Delete, Setting, Plus, User, PictureFilled, Box, Sunny, Moon, Download, Upload, QuestionFilled, FolderOpened, MagicStick, Files, DataAnalysis } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { dramaAPI } from '@/api/drama'
 import { characterLibraryAPI } from '@/api/characterLibrary'
@@ -386,6 +390,7 @@ import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
+import UsageCenterDialog from '@/components/UsageCenterDialog.vue'
 import { uploadAPI } from '@/api/upload'
 import { aiAPI } from '@/api/ai'
 import { imagesAPI } from '@/api/images'
@@ -463,6 +468,7 @@ const projectOwnerFilter = ref('')
 const userOptions = ref([])
 
 const showAiConfigDialog = ref(false)
+const showUsageCenterDialog = ref(false)
 const vendorLockEnabled = ref(false)
 
 // 图片预览

@@ -70,10 +70,13 @@ async function processPropImageGeneration(db, log, taskId, propId, opts) {
       prompt: workflowPrompt,
       size: imageSize,
       drama_id: prop.drama_id,
+      prop_id: prop.id || propId,
       model: model || undefined,
       preferred_provider: preferredProvider || undefined,
       ai_config_id: opts?.ai_config_id || opts?.image_config_id || undefined,
       user_negative_prompt: userNeg || undefined,
+      task_id: taskId,
+      user: opts?.user,
     });
   } catch (err) {
     const originalMessage = err.message || '未知错误';

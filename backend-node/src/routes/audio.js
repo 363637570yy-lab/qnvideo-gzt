@@ -41,6 +41,7 @@ function routes(db, log, cfg) {
           storyboard_id: storyboard_id || null,
           storage_base: getStoragePath(),
           ai_config_id: req.body?.ai_config_id || req.body?.tts_config_id || null,
+          user: req.user,
         });
         if (storyboard_id && result.local_path) {
           const now = new Date().toISOString();
@@ -84,6 +85,7 @@ function routes(db, log, cfg) {
             storyboard_id: row.id,
             storage_base: storagePath,
             ai_config_id: req.body?.ai_config_id || req.body?.tts_config_id || null,
+            user: req.user,
           });
           if (result.local_path) {
             const now = new Date().toISOString();

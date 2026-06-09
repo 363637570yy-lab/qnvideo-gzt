@@ -41,6 +41,16 @@ function isVideoTaskCancelled(db, row, videoGenId, now, log) {
   return true;
 }
 
+function getVideoTaskUserId(db, taskId) {
+  if (!db || !taskId) return null;
+  try {
+    const task = db.prepare('SELECT operator_user_id, owner_user_id FROM async_tasks WHERE id = ?').get(String(taskId));
+    return task?.operator_user_id || task?.owner_user_id || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function list(db, query) {
   let sql = 'FROM video_generations WHERE deleted_at IS NULL';
   const params = [];
@@ -271,13 +281,6 @@ async function processVideoGeneration(db, log, videoGenId) {
     const storageLocalPath = path.isAbsolute(cfg.storage?.local_path)
       ? cfg.storage.local_path
       : path.join(process.cwd(), cfg.storage?.local_path || './data/storage');
-    const config = videoClient.getVideoConfigCandidates(db, row.model, row.ai_config_id)[0] || null;
-    if (!config) {
-      const noConfigMessage = getNoAiConfigMessage('video');
-      setVideoGenFailed(db, videoGenId, noConfigMessage, now);
-      if (row.task_id) taskService.updateTaskError(db, row.task_id, noConfigMessage);
-      return;
-    }
     let reference_urls = null;
     if (row.reference_image_urls) {
       try {
@@ -310,6 +313,7 @@ async function processVideoGeneration(db, log, videoGenId) {
       prompt: row.prompt,
       model: row.model,
       ai_config_id: row.ai_config_id || undefined,
+      scene_key: 'storyboard_video',
       duration: effectiveDuration,
       aspect_ratio: rowForAspect.aspect_ratio,
       resolution: row.resolution,
@@ -326,6 +330,8 @@ async function processVideoGeneration(db, log, videoGenId) {
       files_base_url: filesBaseUrl,
       storage_local_path: storageLocalPath,
       video_gen_id: videoGenId,
+      task_id: row.task_id || null,
+      user_id: getVideoTaskUserId(db, row.task_id),
     });
     const now2 = new Date().toISOString();
     if (isVideoTaskCancelled(db, row, videoGenId, now2, log)) return;
@@ -387,6 +393,13 @@ async function processVideoGeneration(db, log, videoGenId) {
       return;
     }
     if (result.task_id) {
+      const selectedConfig = result._ai_config || videoClient.getVideoConfigCandidates(db, row.model, row.ai_config_id, 'storyboard_video')[0] || null;
+      if (!selectedConfig) {
+        const noConfigMessage = getNoAiConfigMessage('video');
+        setVideoGenFailed(db, videoGenId, noConfigMessage, now2);
+        if (row.task_id) taskService.updateTaskError(db, row.task_id, noConfigMessage);
+        return;
+      }
       db.prepare('UPDATE video_generations SET status = ?, updated_at = ? WHERE id = ?').run(
         'processing',
         now2,
@@ -406,7 +419,7 @@ async function processVideoGeneration(db, log, videoGenId) {
         log,
         videoGenId,
         result.task_id,
-        config,
+        selectedConfig,
         pollMaxAttempts,
         POLL_INTERVAL_MS,
         { localTaskId: row.task_id }

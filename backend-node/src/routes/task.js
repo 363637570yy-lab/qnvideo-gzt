@@ -8,7 +8,7 @@ function getTaskStatus(db, log) {
     if (!taskService.canUserSeeTask(db, task, req.user)) {
       return response.forbidden(res, '只能访问自己账号下的视频项目');
     }
-    response.success(res, task);
+    response.success(res, { ...task, diagnostics: taskService.getTaskDiagnostics(db, task.id) });
   };
 }
 

@@ -47,6 +47,16 @@ function parseIds(value) {
   return [...new Set(raw.map((id) => Number(String(id).trim())).filter((n) => Number.isFinite(n) && n > 0))];
 }
 
+function getImageTaskUserId(db, taskId) {
+  if (!db || !taskId) return null;
+  try {
+    const task = db.prepare('SELECT operator_user_id, owner_user_id FROM async_tasks WHERE id = ?').get(String(taskId));
+    return task?.operator_user_id || task?.owner_user_id || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function rowToItem(r) {
   return {
     id: r.id,
@@ -1512,10 +1522,13 @@ async function processImageGeneration(db, log, imageGenId) {
       size: imageSize,
       quality: row.quality,
       drama_id: row.drama_id,
+      storyboard_id: row.storyboard_id,
       character_id: row.character_id,
       image_gen_id: imageGenId,
       ai_config_id: row.ai_config_id || undefined,
       imageServiceType,
+      task_id: row.task_id || undefined,
+      user_id: getImageTaskUserId(db, row.task_id),
       reference_image_urls: reference_image_urls || undefined,
       files_base_url: filesBaseUrl,
       storage_local_path: storageLocalPath,

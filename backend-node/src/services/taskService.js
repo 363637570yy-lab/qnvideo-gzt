@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const modelRuntimeService = require('./ai-runtime/modelRuntimeService');
 
 function normalizeUserId(value) {
   return value != null && String(value).trim() ? String(value).trim() : null;
@@ -107,6 +108,76 @@ function getTask(db, taskId) {
   const row = db.prepare('SELECT * FROM async_tasks WHERE id = ? AND deleted_at IS NULL').get(taskId);
   if (!row) return null;
   return rowToTask(row);
+}
+
+function summarizeModelCallLogs(logs = []) {
+  const summary = {
+    total: logs.length,
+    failed: 0,
+    latest_trace_id: null,
+    traces: [],
+    usage: {
+      total_tokens: 0,
+      image_count: 0,
+      video_seconds: 0,
+      audio_seconds: 0,
+    },
+  };
+  const traceSet = new Set();
+  for (const log of logs) {
+    if (log.status && log.status !== 'success') summary.failed += 1;
+    if (log.trace_id) {
+      if (!summary.latest_trace_id) summary.latest_trace_id = log.trace_id;
+      traceSet.add(log.trace_id);
+    }
+    summary.usage.total_tokens += Number(log.total_tokens || 0);
+    summary.usage.image_count += Number(log.image_count || 0);
+    summary.usage.video_seconds += Number(log.video_seconds || 0);
+    summary.usage.audio_seconds += Number(log.audio_seconds || 0);
+  }
+  summary.traces = [...traceSet].slice(0, 10);
+  return summary;
+}
+
+function getTaskDiagnostics(db, taskId) {
+  if (!taskId) return null;
+  try {
+    const logs = modelRuntimeService.listModelCallLogs(db, {
+      task_id: taskId,
+      days: 30,
+      limit: 20,
+    });
+    const items = (logs.items || []).map((item) => ({
+      id: item.id,
+      service_type: item.service_type,
+      scene_key: item.scene_key,
+      config_id: item.config_id,
+      config_name: item.config_name,
+      provider: item.provider,
+      api_protocol: item.api_protocol,
+      model: item.model,
+      status: item.status,
+      elapsed_ms: item.elapsed_ms,
+      total_tokens: item.total_tokens,
+      image_count: item.image_count,
+      video_seconds: item.video_seconds,
+      audio_seconds: item.audio_seconds,
+      trace_id: item.trace_id,
+      error_message: item.error_message,
+      diagnostics: item.diagnostics,
+      created_at: item.created_at,
+    }));
+    const summary = summarizeModelCallLogs(items);
+    return {
+      model_calls: {
+        ...summary,
+        total: logs.total || summary.total,
+        items,
+      },
+    };
+  } catch (_) {
+    return { model_calls: { total: 0, failed: 0, items: [], traces: [], usage: {} } };
+  }
 }
 
 function taskTypesFromFilter(filters = {}) {
@@ -361,4 +432,5 @@ module.exports = {
   updateTaskStatus,
   updateTaskError,
   updateTaskResult,
+  getTaskDiagnostics,
 };

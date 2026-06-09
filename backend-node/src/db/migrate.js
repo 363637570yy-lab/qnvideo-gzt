@@ -320,6 +320,7 @@ function ensureAllColumns(database) {
       last_error    TEXT,
       last_error_at TEXT,
       failure_count INTEGER DEFAULT 0,
+      capabilities_json TEXT,
       settings      TEXT,
       created_at    TEXT,
       updated_at    TEXT,
@@ -346,6 +347,7 @@ function ensureAllColumns(database) {
     { name: 'last_error',     type: 'TEXT' },
     { name: 'last_error_at',  type: 'TEXT' },
     { name: 'failure_count',  type: 'INTEGER DEFAULT 0' },
+    { name: 'capabilities_json', type: 'TEXT' },
     { name: 'settings',       type: 'TEXT' },
     { name: 'created_at',     type: 'TEXT' },
     { name: 'updated_at',     type: 'TEXT' },
@@ -354,6 +356,178 @@ function ensureAllColumns(database) {
   try {
     database.exec("UPDATE ai_service_configs SET service_type = 'image' WHERE service_type = 'storyboard_image'");
   } catch (_) {}
+
+  // --- ai_model_call_logs ---
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS ai_model_call_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      service_type TEXT NOT NULL DEFAULT '',
+      scene_key TEXT,
+      config_id INTEGER,
+      provider TEXT,
+      api_protocol TEXT,
+      model TEXT,
+      status TEXT,
+      elapsed_ms INTEGER,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      total_tokens INTEGER,
+      image_count INTEGER,
+      audio_seconds REAL,
+      video_seconds REAL,
+      prompt_chars INTEGER,
+      prompt_hash TEXT,
+      task_id TEXT,
+      project_id INTEGER,
+      trace_id TEXT,
+      error_message TEXT,
+      usage_json TEXT,
+      diagnostics_json TEXT,
+      created_at TEXT
+    )`);
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_model_call_logs_created ON ai_model_call_logs (created_at)');
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_model_call_logs_config_created ON ai_model_call_logs (config_id, created_at)');
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_model_call_logs_service_created ON ai_model_call_logs (service_type, created_at)');
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_model_call_logs_trace ON ai_model_call_logs (trace_id)');
+  } catch (_) {}
+  ensureColumns(database, 'ai_model_call_logs', [
+    { name: 'service_type', type: 'TEXT NOT NULL DEFAULT \'\'' },
+    { name: 'scene_key', type: 'TEXT' },
+    { name: 'config_id', type: 'INTEGER' },
+    { name: 'provider', type: 'TEXT' },
+    { name: 'api_protocol', type: 'TEXT' },
+    { name: 'model', type: 'TEXT' },
+    { name: 'status', type: 'TEXT' },
+    { name: 'elapsed_ms', type: 'INTEGER' },
+    { name: 'input_tokens', type: 'INTEGER' },
+    { name: 'output_tokens', type: 'INTEGER' },
+    { name: 'total_tokens', type: 'INTEGER' },
+    { name: 'image_count', type: 'INTEGER' },
+    { name: 'audio_seconds', type: 'REAL' },
+    { name: 'video_seconds', type: 'REAL' },
+    { name: 'prompt_chars', type: 'INTEGER' },
+    { name: 'prompt_hash', type: 'TEXT' },
+    { name: 'task_id', type: 'TEXT' },
+    { name: 'project_id', type: 'INTEGER' },
+    { name: 'trace_id', type: 'TEXT' },
+    { name: 'error_message', type: 'TEXT' },
+    { name: 'usage_json', type: 'TEXT' },
+    { name: 'diagnostics_json', type: 'TEXT' },
+    { name: 'created_at', type: 'TEXT' },
+  ]);
+
+  // --- ai_usage_events ---
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS ai_usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      call_log_id INTEGER,
+      service_type TEXT NOT NULL DEFAULT '',
+      scene_key TEXT,
+      config_id INTEGER,
+      provider TEXT,
+      api_protocol TEXT,
+      model TEXT,
+      user_id TEXT,
+      project_id INTEGER,
+      task_id TEXT,
+      status TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      total_tokens INTEGER,
+      image_count INTEGER,
+      video_seconds REAL,
+      audio_seconds REAL,
+      storage_bytes INTEGER,
+      estimated_cost REAL,
+      actual_cost REAL,
+      usage_source TEXT,
+      period_key TEXT,
+      trace_id TEXT,
+      created_at TEXT
+    )`);
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_events_period ON ai_usage_events (period_key, service_type)');
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_events_config_period ON ai_usage_events (config_id, period_key)');
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_events_model_period ON ai_usage_events (model, period_key)');
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_usage_events_trace ON ai_usage_events (trace_id)');
+  } catch (_) {}
+  ensureColumns(database, 'ai_usage_events', [
+    { name: 'call_log_id', type: 'INTEGER' },
+    { name: 'service_type', type: 'TEXT NOT NULL DEFAULT \'\'' },
+    { name: 'scene_key', type: 'TEXT' },
+    { name: 'config_id', type: 'INTEGER' },
+    { name: 'provider', type: 'TEXT' },
+    { name: 'api_protocol', type: 'TEXT' },
+    { name: 'model', type: 'TEXT' },
+    { name: 'user_id', type: 'TEXT' },
+    { name: 'project_id', type: 'INTEGER' },
+    { name: 'task_id', type: 'TEXT' },
+    { name: 'status', type: 'TEXT' },
+    { name: 'input_tokens', type: 'INTEGER' },
+    { name: 'output_tokens', type: 'INTEGER' },
+    { name: 'total_tokens', type: 'INTEGER' },
+    { name: 'image_count', type: 'INTEGER' },
+    { name: 'video_seconds', type: 'REAL' },
+    { name: 'audio_seconds', type: 'REAL' },
+    { name: 'storage_bytes', type: 'INTEGER' },
+    { name: 'estimated_cost', type: 'REAL' },
+    { name: 'actual_cost', type: 'REAL' },
+    { name: 'usage_source', type: 'TEXT' },
+    { name: 'period_key', type: 'TEXT' },
+    { name: 'trace_id', type: 'TEXT' },
+    { name: 'created_at', type: 'TEXT' },
+  ]);
+
+  // --- ai_quota_policies / ai_quota_counters ---
+  try {
+    database.exec(`CREATE TABLE IF NOT EXISTS ai_quota_policies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_type TEXT NOT NULL DEFAULT 'config',
+      scope_id TEXT,
+      service_type TEXT,
+      model TEXT,
+      scene_key TEXT,
+      period_type TEXT NOT NULL DEFAULT 'day',
+      limit_unit TEXT NOT NULL DEFAULT 'requests',
+      limit_value REAL NOT NULL DEFAULT 0,
+      action_on_exceed TEXT NOT NULL DEFAULT 'fallback',
+      enabled INTEGER DEFAULT 1,
+      created_at TEXT,
+      updated_at TEXT,
+      deleted_at TEXT
+    )`);
+    database.exec(`CREATE TABLE IF NOT EXISTS ai_quota_counters (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      policy_id INTEGER NOT NULL,
+      period_key TEXT NOT NULL,
+      used_value REAL DEFAULT 0,
+      reserved_value REAL DEFAULT 0,
+      updated_at TEXT
+    )`);
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_quota_policies_lookup ON ai_quota_policies (enabled, service_type, scope_type, scope_id, deleted_at)');
+    database.exec('CREATE INDEX IF NOT EXISTS idx_ai_quota_counters_policy_period ON ai_quota_counters (policy_id, period_key)');
+  } catch (_) {}
+  ensureColumns(database, 'ai_quota_policies', [
+    { name: 'scope_type', type: 'TEXT NOT NULL DEFAULT \'config\'' },
+    { name: 'scope_id', type: 'TEXT' },
+    { name: 'service_type', type: 'TEXT' },
+    { name: 'model', type: 'TEXT' },
+    { name: 'scene_key', type: 'TEXT' },
+    { name: 'period_type', type: 'TEXT NOT NULL DEFAULT \'day\'' },
+    { name: 'limit_unit', type: 'TEXT NOT NULL DEFAULT \'requests\'' },
+    { name: 'limit_value', type: 'REAL NOT NULL DEFAULT 0' },
+    { name: 'action_on_exceed', type: 'TEXT NOT NULL DEFAULT \'fallback\'' },
+    { name: 'enabled', type: 'INTEGER DEFAULT 1' },
+    { name: 'created_at', type: 'TEXT' },
+    { name: 'updated_at', type: 'TEXT' },
+    { name: 'deleted_at', type: 'TEXT' },
+  ]);
+  ensureColumns(database, 'ai_quota_counters', [
+    { name: 'policy_id', type: 'INTEGER NOT NULL DEFAULT 0' },
+    { name: 'period_key', type: 'TEXT NOT NULL DEFAULT \'\'' },
+    { name: 'used_value', type: 'REAL DEFAULT 0' },
+    { name: 'reserved_value', type: 'REAL DEFAULT 0' },
+    { name: 'updated_at', type: 'TEXT' },
+  ]);
 
   // --- async_tasks ---
   ensureColumns(database, 'async_tasks', [

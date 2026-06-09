@@ -1,4 +1,8 @@
 const aiConfigService = require('../services/aiConfigService');
+const modelRuntimeService = require('../services/ai-runtime/modelRuntimeService');
+const modelCapabilityService = require('../services/ai-runtime/modelCapabilityService');
+const usageTracker = require('../services/ai-runtime/usageTracker');
+const quotaGuard = require('../services/ai-runtime/quotaGuard');
 const response = require('../response');
 
 function list(db) {
@@ -32,6 +36,83 @@ function runtimeRoutesPublic(db) {
 function routingPolicies(db) {
   return (req, res) => {
     response.success(res, aiConfigService.getRoutingPolicies(db));
+  };
+}
+
+function modelCallLogs(db, log) {
+  return (req, res) => {
+    try {
+      response.success(res, modelRuntimeService.listModelCallLogs(db, req.query || {}));
+    } catch (err) {
+      log.error('List model call logs failed', { error: err.message });
+      response.internalError(res, '读取模型调用日志失败');
+    }
+  };
+}
+
+function modelUsageSummary(db, log) {
+  return (req, res) => {
+    try {
+      response.success(res, modelRuntimeService.getModelUsageSummary(db, req.query || {}));
+    } catch (err) {
+      log.error('Get model usage summary failed', { error: err.message });
+      response.internalError(res, '读取模型用量摘要失败');
+    }
+  };
+}
+
+function modelUsageDaily(db, log) {
+  return (req, res) => {
+    try {
+      response.success(res, usageTracker.getUsageDailySummary(db, req.query || {}));
+    } catch (err) {
+      log.error('Get model usage daily failed', { error: err.message });
+      response.internalError(res, '读取模型用量日汇总失败');
+    }
+  };
+}
+
+function modelCapabilityDefinitions() {
+  return (req, res) => {
+    response.success(res, modelCapabilityService.getCapabilityDefinitions());
+  };
+}
+
+function quotaPolicies(db, log) {
+  return (req, res) => {
+    try {
+      response.success(res, quotaGuard.listPolicies(db, req.query || {}));
+    } catch (err) {
+      log.error('List quota policies failed', { error: err.message });
+      response.internalError(res, '读取额度策略失败');
+    }
+  };
+}
+
+function saveQuotaPolicy(db, log) {
+  return (req, res) => {
+    try {
+      const policy = quotaGuard.upsertPolicy(db, { ...(req.body || {}), id: req.params.id || req.body?.id });
+      response.success(res, policy);
+    } catch (err) {
+      log.error('Save quota policy failed', { error: err.message });
+      response.badRequest(res, err.message || '保存额度策略失败');
+    }
+  };
+}
+
+function deleteQuotaPolicy(db, log) {
+  return (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) return response.badRequest(res, '无效的额度策略 ID');
+    try {
+      const ok = quotaGuard.deletePolicy(db, id);
+      if (!ok) return response.notFound(res, '额度策略不存在');
+      response.success(res, { deleted: true });
+    } catch (err) {
+      log.error('Delete quota policy failed', { error: err.message });
+      response.internalError(res, '删除额度策略失败');
+    }
   };
 }
 
@@ -249,6 +330,13 @@ module.exports = function aiConfigRoutes(db, log, cfg) {
     runtimeRoutesPublic: runtimeRoutesPublic(db),
     routingPolicies: routingPolicies(db),
     updateRoutingPolicy: updateRoutingPolicy(db),
+    modelCallLogs: modelCallLogs(db, log),
+    modelUsageSummary: modelUsageSummary(db, log),
+    modelUsageDaily: modelUsageDaily(db, log),
+    modelCapabilityDefinitions: modelCapabilityDefinitions(),
+    quotaPolicies: quotaPolicies(db, log),
+    saveQuotaPolicy: saveQuotaPolicy(db, log),
+    deleteQuotaPolicy: deleteQuotaPolicy(db, log),
     get: get(db),
     vendorLock: vendorLock(cfg),
     create: create(db, log, cfg),

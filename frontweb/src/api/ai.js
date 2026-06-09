@@ -19,6 +19,31 @@ export const aiAPI = {
   updateRoutingPolicy(serviceType, body) {
     return request.put(`/ai-configs/routing-policies/${serviceType}`, body)
   },
+  modelCallLogs(params = {}) {
+    return request.get('/ai-configs/model-call-logs', { params })
+  },
+  modelUsageSummary(params = {}) {
+    return request.get('/ai-configs/model-usage-summary', { params })
+  },
+  modelUsageDaily(params = {}) {
+    return request.get('/ai-configs/model-usage-daily', { params })
+  },
+  publicModelUsageDaily(params = {}) {
+    return request.get('/runtime/model-usage-daily', { params })
+  },
+  modelCapabilities() {
+    return request.get('/ai-configs/model-capabilities')
+  },
+  quotaPolicies(params = {}) {
+    return request.get('/ai-configs/quota-policies', { params })
+  },
+  saveQuotaPolicy(body) {
+    if (body?.id) return request.put(`/ai-configs/quota-policies/${body.id}`, body)
+    return request.post('/ai-configs/quota-policies', body)
+  },
+  deleteQuotaPolicy(id) {
+    return request.delete(`/ai-configs/quota-policies/${id}`)
+  },
   get(id) {
     return request.get(`/ai-configs/${id}`)
   },

@@ -120,3 +120,21 @@ test('routing policy accepts seconds without exposing legacy time units', () => 
   assert.equal(Object.hasOwn(reread.video, 'request_timeout_ms'), false);
   assert.equal(Object.hasOwn(reread.video, 'video_poll_timeout_minutes'), false);
 });
+
+test('image routing policy clamps unsafe concurrency defaults', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE global_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT
+    );
+  `);
+
+  const saved = updateRoutingPolicy(db, 'image', {
+    concurrency_limit: 100,
+  });
+
+  assert.equal(saved.image.concurrency_limit, 8);
+  assert.equal(getRoutingPolicies(db).image.concurrency_limit, 8);
+});

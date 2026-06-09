@@ -4,6 +4,9 @@ export const sceneModelMapAPI = {
   list() {
     return request.get('/scene-model-map')
   },
+  definitions() {
+    return request.get('/scene-model-map/definitions')
+  },
   get(key) {
     return request.get(`/scene-model-map/${key}`)
   },

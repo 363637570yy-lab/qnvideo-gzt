@@ -72,30 +72,13 @@
               :name="cat.key"
             />
           </el-tabs>
-          <div v-if="activeRoutingPolicy" class="routing-policy-card">
-            <div class="routing-policy-title">{{ activeConfigCategoryLabel }}全局策略</div>
-            <span class="routing-policy-label">路由</span>
-            <el-select v-model="activeRoutingPolicy.strategy" size="small" style="width: 132px" @change="saveActiveRoutingPolicy">
-              <el-option label="顺序优先" value="sequential" />
-              <el-option label="轮询" value="round_robin" />
-            </el-select>
-            <span class="routing-policy-label">同时生成上限</span>
-            <el-input-number v-model="activeRoutingPolicy.concurrency_limit" size="small" :min="1" :max="500" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">提交请求超时</span>
-            <el-input-number v-model="activeRequestTimeoutSeconds" size="small" :min="1" :max="1800" :step="10" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">秒</span>
-            <template v-if="activeRoutingPolicyKey === 'video'">
-              <span class="routing-policy-label">视频生成最长等待</span>
-              <el-input-number v-model="activeVideoPollTimeoutSeconds" size="small" :min="1" :max="86400" :step="60" controls-position="right" @change="saveActiveRoutingPolicy" />
-              <span class="routing-policy-label">秒</span>
-            </template>
-            <span class="routing-policy-label">失败重试</span>
-            <el-input-number v-model="activeRoutingPolicy.retry_count" size="small" :min="0" :max="5" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">次</span>
-            <span class="routing-policy-label">异常暂停</span>
-            <el-input-number v-model="activeRoutingPolicy.cooldown_seconds" size="small" :min="0" :max="86400" :step="30" controls-position="right" @change="saveActiveRoutingPolicy" />
-            <span class="routing-policy-label">秒</span>
-          </div>
+          <AiRoutingPolicyCard
+            v-if="activeRoutingPolicy"
+            :policy="activeRoutingPolicy"
+            :policy-key="activeRoutingPolicyKey"
+            :label="activeConfigCategoryLabel"
+            @save="saveRoutingPolicy"
+          />
           <el-table
             v-loading="loading"
             :data="filteredConfigs"
@@ -122,6 +105,30 @@
             <el-table-column prop="default_model" label="默认模型" min-width="130" show-overflow-tooltip>
               <template #default="{ row }">
                 {{ row.default_model || (Array.isArray(row.model) && row.model[0]) || '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="能力" min-width="178">
+              <template #default="{ row }">
+                <AiCapabilityTags :capabilities="row.capabilities || []" :limit="4" />
+              </template>
+            </el-table-column>
+            <el-table-column label="今日用量" min-width="154">
+              <template #default="{ row }">
+                <div v-if="quotaUnitsForRow(row).length" class="quota-lines">
+                  <span v-for="unit in quotaUnitsForRow(row)" :key="unit.unit" class="quota-line">
+                    {{ unit.short }} {{ formatQuotaNumber(quotaUsedValue(row, unit.unit)) }}
+                  </span>
+                </div>
+                <span v-else class="no-default">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="每日限额" min-width="168">
+              <template #default="{ row }">
+                <div v-if="quotaUnitsForRow(row).length" class="quota-limit-cell">
+                  <span class="quota-limit-summary">{{ quotaLimitSummary(row) }}</span>
+                  <el-button link type="primary" size="small" @click="openQuotaDialog(row)">设置</el-button>
+                </div>
+                <span v-else class="no-default">—</span>
               </template>
             </el-table-column>
             <el-table-column prop="service_type" label="类型" width="148">
@@ -181,6 +188,11 @@
       <el-tab-pane label="高级设置（业务场景）" name="sceneModelMap">
         <div class="tab-content">
           <SceneModelMap />
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="运行观测" name="runtime">
+        <div class="tab-content">
+          <ModelRuntimePanel />
         </div>
       </el-tab-pane>
       <el-tab-pane label="SD2 资产管理" name="sd2_assets">
@@ -997,6 +1009,69 @@ input_reference = (图片文件，可选)</pre>
         <el-button type="primary" :loading="bulkKeySaving" :disabled="!bulkKeyInput.trim()" @click="submitBulkKey">确认替换</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="quotaDialogVisible"
+      title="每日限额设置"
+      width="560px"
+      :close-on-click-modal="false"
+    >
+      <template v-if="quotaTargetRow">
+        <el-alert
+          type="info"
+          :closable="false"
+          class="quota-dialog-tip"
+          title="默认 0 表示不限制。这里的限额只作用于当前 API 配置；选择具体模型后，可细分到该配置内的单个模型。"
+        />
+        <el-form label-width="120px" class="quota-form">
+          <el-form-item label="配置">
+            <span>{{ quotaTargetRow.name || ('配置 #' + quotaTargetRow.id) }}</span>
+          </el-form-item>
+          <el-form-item label="限额对象">
+            <el-select v-model="quotaForm.model" style="width: 100%" @change="hydrateQuotaForm">
+              <el-option label="整条配置（所有模型）" value="" />
+              <el-option
+                v-for="model in quotaTargetModels"
+                :key="model"
+                :label="model"
+                :value="model"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item
+            v-for="unit in quotaUnitsForRow(quotaTargetRow)"
+            :key="unit.unit"
+            :label="'每日' + unit.label"
+          >
+            <div class="quota-input-row">
+              <el-input-number
+                v-model="quotaForm.limits[unit.unit]"
+                :min="0"
+                :step="unit.step || 1"
+                controls-position="right"
+              />
+              <span class="quota-used-hint">
+                今日已用 {{ formatQuotaNumber(quotaUsedValue(quotaTargetRow, unit.unit, quotaForm.model)) }} {{ unit.suffix }}
+              </span>
+            </div>
+          </el-form-item>
+          <el-form-item label="超额动作">
+            <el-select v-model="quotaForm.action_on_exceed" style="width: 260px">
+              <el-option
+                v-for="action in quotaActionOptions"
+                :key="action.value"
+                :label="action.label"
+                :value="action.value"
+              />
+            </el-select>
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="quotaDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="quotaSaving" @click="saveQuotaLimits">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -1007,6 +1082,9 @@ import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRoun
 import { aiAPI } from '@/api/ai'
 import PromptEditor from '@/components/PromptEditor.vue'
 import SceneModelMap from '@/components/SceneModelMap.vue'
+import AiRoutingPolicyCard from '@/components/aiConfig/AiRoutingPolicyCard.vue'
+import AiCapabilityTags from '@/components/aiConfig/AiCapabilityTags.vue'
+import ModelRuntimePanel from '@/components/aiConfig/ModelRuntimePanel.vue'
 import Sd2AssetManagement from '@/components/Sd2AssetManagement.vue'
 
 const activeTab = ref('configs')
@@ -1039,22 +1117,6 @@ const filteredConfigs = computed(() => {
 const routingPolicies = ref({})
 const activeRoutingPolicyKey = computed(() => activeConfigCategory.value === 'audio' ? 'tts' : activeConfigCategory.value)
 const activeRoutingPolicy = computed(() => routingPolicies.value?.[activeRoutingPolicyKey.value] || null)
-const activeRequestTimeoutSeconds = computed({
-  get() {
-    return normalizeTimeoutSeconds(activeRoutingPolicy.value)
-  },
-  set(value) {
-    setPolicyRequestTimeoutSeconds(activeRoutingPolicy.value, value)
-  },
-})
-const activeVideoPollTimeoutSeconds = computed({
-  get() {
-    return normalizeVideoPollTimeoutSeconds(activeRoutingPolicy.value)
-  },
-  set(value) {
-    setPolicyVideoPollTimeoutSeconds(activeRoutingPolicy.value, value)
-  },
-})
 const activeConfigCategoryLabel = computed(() => {
   return configCategories.find((item) => item.key === activeConfigCategory.value)?.label || ''
 })
@@ -1064,6 +1126,46 @@ watch(activeConfigCategory, () => {
 })
 const batchDeleting = ref(false)
 const vendorLock = ref({ enabled: false, config_file: '' })
+const quotaPolicies = ref([])
+const quotaUsageDaily = ref({ by_config: [] })
+const quotaDialogVisible = ref(false)
+const quotaTargetRow = ref(null)
+const quotaSaving = ref(false)
+const quotaForm = ref({
+  model: '',
+  action_on_exceed: 'fallback',
+  limits: {},
+})
+const quotaActionOptions = [
+  { value: 'fallback', label: '自动切换/跳过该配置' },
+  { value: 'warn_only', label: '仅提醒，不阻断' },
+  { value: 'disable_today', label: '禁用当日' },
+  { value: 'require_admin', label: '管理员确认' },
+]
+const quotaUnitsByService = {
+  text: [
+    { unit: 'requests', label: '请求数', short: '请求', suffix: '次' },
+    { unit: 'tokens', label: 'Token', short: 'Token', suffix: 'token', step: 1000 },
+  ],
+  image: [
+    { unit: 'requests', label: '请求数', short: '请求', suffix: '次' },
+    { unit: 'images', label: '图片张数', short: '图片', suffix: '张' },
+  ],
+  video: [
+    { unit: 'requests', label: '请求数', short: '请求', suffix: '次' },
+    { unit: 'video_seconds', label: '视频秒数', short: '视频', suffix: '秒', step: 10 },
+  ],
+  tts: [
+    { unit: 'requests', label: '请求数', short: '请求', suffix: '次' },
+    { unit: 'audio_seconds', label: '音频秒数', short: '音频', suffix: '秒', step: 10 },
+  ],
+}
+const quotaTargetModels = computed(() => {
+  const models = quotaTargetRow.value?.model
+  return (Array.isArray(models) ? models : (models ? [models] : []))
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+})
 
 function nextRouteOrderForServiceType(serviceType) {
   const sameType = (list.value || []).filter((row) => row.service_type === serviceType)
@@ -1148,84 +1250,181 @@ const form = ref({
 })
 const presetModelPick = ref('')
 
-function toPositiveInt(value, fallback = 0) {
-  const n = Number(value)
-  if (!Number.isFinite(n) || n <= 0) return fallback
-  return Math.trunc(n)
-}
-
-function clampNumber(value, fallback, min, max) {
-  const n = toPositiveInt(value, fallback)
-  return Math.min(max, Math.max(min, n))
-}
-
-function normalizeTimeoutSeconds(policy) {
-  if (!policy) return 0
-  return clampNumber(
-    policy.request_timeout_seconds,
-    120,
-    1,
-    1800
-  )
-}
-
-function normalizeVideoPollTimeoutSeconds(policy) {
-  if (!policy) return 0
-  return clampNumber(
-    policy.video_poll_timeout_seconds,
-    3600,
-    1,
-    86400
-  )
-}
-
-function setPolicyRequestTimeoutSeconds(policy, value) {
-  if (!policy) return
-  const seconds = clampNumber(value, normalizeTimeoutSeconds(policy), 1, 1800)
-  policy.request_timeout_seconds = seconds
-}
-
-function setPolicyVideoPollTimeoutSeconds(policy, value) {
-  if (!policy) return
-  const seconds = clampNumber(value, normalizeVideoPollTimeoutSeconds(policy), 1, 86400)
-  policy.video_poll_timeout_seconds = seconds
-}
-
-function normalizeRoutingPoliciesForUi(policies = {}) {
-  const out = {}
-  for (const [key, policy] of Object.entries(policies || {})) {
-    const next = { ...(policy || {}) }
-    setPolicyRequestTimeoutSeconds(next, normalizeTimeoutSeconds(next))
-    if (key === 'video') {
-      setPolicyVideoPollTimeoutSeconds(next, normalizeVideoPollTimeoutSeconds(next))
-    }
-    out[key] = next
-  }
-  return out
-}
-
 async function loadRoutingPolicies() {
   try {
-    routingPolicies.value = normalizeRoutingPoliciesForUi(await aiAPI.routingPolicies())
+    routingPolicies.value = await aiAPI.routingPolicies()
   } catch (_) {
     routingPolicies.value = {}
   }
 }
 
-async function saveActiveRoutingPolicy() {
-  const key = activeRoutingPolicyKey.value
-  const policy = routingPolicies.value?.[key]
+async function saveRoutingPolicy({ key, policy }) {
   if (!key || !policy) return
   try {
-    const payload = { ...policy }
-    setPolicyRequestTimeoutSeconds(payload, normalizeTimeoutSeconds(payload))
-    if (key === 'video') {
-      setPolicyVideoPollTimeoutSeconds(payload, normalizeVideoPollTimeoutSeconds(payload))
-    }
-    const saved = await aiAPI.updateRoutingPolicy(key, payload)
-    routingPolicies.value = normalizeRoutingPoliciesForUi(saved || routingPolicies.value)
+    const saved = await aiAPI.updateRoutingPolicy(key, policy)
+    routingPolicies.value = saved || routingPolicies.value
   } catch (e) {
     ElMessage.error('路由策略保存失败：' + (e?.message || ''))
+  }
+}
+
+async function loadQuotaData() {
+  try {
+    const [policies, usage] = await Promise.all([
+      aiAPI.quotaPolicies(),
+      aiAPI.modelUsageDaily({ days: 1 }),
+    ])
+    quotaPolicies.value = Array.isArray(policies) ? policies : []
+    quotaUsageDaily.value = usage || { by_config: [] }
+  } catch (_) {
+    quotaPolicies.value = []
+    quotaUsageDaily.value = { by_config: [] }
+  }
+}
+
+function quotaUnitsForRow(row) {
+  return quotaUnitsByService[row?.service_type] || []
+}
+
+function normalizeQuotaModel(model) {
+  return String(model || '').trim()
+}
+
+function findQuotaPolicy(row, unit, model = '', exactModel = true) {
+  if (!row?.id || !unit) return null
+  const targetModel = normalizeQuotaModel(model)
+  const matches = quotaPolicies.value.filter((policy) => (
+    policy.scope_type === 'config' &&
+    String(policy.scope_id || '') === String(row.id) &&
+    policy.service_type === row.service_type &&
+    policy.limit_unit === unit
+  ))
+  const exact = matches.find((policy) => normalizeQuotaModel(policy.model) === targetModel)
+  if (exact || exactModel) return exact || null
+  return matches.find((policy) => !normalizeQuotaModel(policy.model)) || null
+}
+
+function quotaUsageField(unit) {
+  const map = {
+    requests: 'requests',
+    tokens: 'total_tokens',
+    images: 'image_count',
+    video_seconds: 'video_seconds',
+    audio_seconds: 'audio_seconds',
+  }
+  return map[unit] || unit
+}
+
+function quotaUsedValue(row, unit, model = '') {
+  if (!row?.id || !unit) return 0
+  const field = quotaUsageField(unit)
+  const targetModel = normalizeQuotaModel(model)
+  return (quotaUsageDaily.value?.by_config || [])
+    .filter((item) => String(item.config_id || '') === String(row.id))
+    .filter((item) => !targetModel || normalizeQuotaModel(item.model) === targetModel)
+    .reduce((sum, item) => sum + Number(item[field] || 0), 0)
+}
+
+function formatQuotaNumber(value) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n)) return '0'
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: n < 10 ? 1 : 0 })
+}
+
+function quotaActionLabel(value) {
+  return quotaActionOptions.find((item) => item.value === value)?.label || '自动切换/跳过该配置'
+}
+
+function quotaLimitSummary(row) {
+  const units = quotaUnitsForRow(row)
+  if (!units.length) return '—'
+  const configLimits = units
+    .map((unit) => ({ unit, policy: findQuotaPolicy(row, unit.unit, '', true) }))
+    .filter(({ policy }) => Number(policy?.limit_value || 0) > 0)
+    .map(({ unit, policy }) => `${unit.short} ${formatQuotaNumber(policy.limit_value)}`)
+  const modelLimitCount = new Set(
+    quotaPolicies.value
+      .filter((policy) => (
+        policy.scope_type === 'config' &&
+        String(policy.scope_id || '') === String(row.id) &&
+        policy.service_type === row.service_type &&
+        normalizeQuotaModel(policy.model) &&
+        Number(policy.limit_value || 0) > 0
+      ))
+      .map((policy) => normalizeQuotaModel(policy.model))
+  ).size
+  const firstAction = quotaPolicies.value.find((policy) => (
+    policy.scope_type === 'config' &&
+    String(policy.scope_id || '') === String(row.id) &&
+    policy.service_type === row.service_type &&
+    Number(policy.limit_value || 0) > 0
+  ))?.action_on_exceed
+  const parts = [...configLimits]
+  if (modelLimitCount > 0) parts.push(`${modelLimitCount} 个模型细分`)
+  if (!parts.length) return '0=不限'
+  return `${parts.join(' / ')} · ${quotaActionLabel(firstAction)}`
+}
+
+function openQuotaDialog(row) {
+  if (!quotaUnitsForRow(row).length) return
+  quotaTargetRow.value = row
+  quotaForm.value = {
+    model: '',
+    action_on_exceed: 'fallback',
+    limits: {},
+  }
+  hydrateQuotaForm()
+  quotaDialogVisible.value = true
+}
+
+function hydrateQuotaForm() {
+  const row = quotaTargetRow.value
+  if (!row) return
+  const model = normalizeQuotaModel(quotaForm.value.model)
+  const limits = {}
+  let action = 'fallback'
+  for (const unit of quotaUnitsForRow(row)) {
+    const policy = findQuotaPolicy(row, unit.unit, model, true)
+    limits[unit.unit] = Number(policy?.limit_value || 0)
+    if (policy?.action_on_exceed) action = policy.action_on_exceed
+  }
+  quotaForm.value = {
+    ...quotaForm.value,
+    model,
+    action_on_exceed: action,
+    limits,
+  }
+}
+
+async function saveQuotaLimits() {
+  const row = quotaTargetRow.value
+  if (!row) return
+  quotaSaving.value = true
+  try {
+    const model = normalizeQuotaModel(quotaForm.value.model)
+    for (const unit of quotaUnitsForRow(row)) {
+      const existing = findQuotaPolicy(row, unit.unit, model, true)
+      await aiAPI.saveQuotaPolicy({
+        ...(existing?.id ? { id: existing.id } : {}),
+        scope_type: 'config',
+        scope_id: String(row.id),
+        service_type: row.service_type,
+        model,
+        scene_key: '',
+        period_type: 'day',
+        limit_unit: unit.unit,
+        limit_value: Number(quotaForm.value.limits?.[unit.unit] || 0),
+        action_on_exceed: quotaForm.value.action_on_exceed || 'fallback',
+        enabled: true,
+      })
+    }
+    ElMessage.success('每日限额已保存')
+    quotaDialogVisible.value = false
+    await loadQuotaData()
+  } catch (e) {
+    ElMessage.error('限额保存失败：' + (e?.message || ''))
+  } finally {
+    quotaSaving.value = false
   }
 }
 
@@ -2210,6 +2409,7 @@ onMounted(() => {
   loadVendorLock()
   loadList()
   loadRoutingPolicies()
+  loadQuotaData()
 })
 </script>
 
@@ -2426,35 +2626,55 @@ code {
 .runtime-config-tabs :deep(.el-tabs__header) {
   margin-bottom: 8px;
 }
-.routing-policy-card {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-  margin: -4px 0 12px;
-  padding: 10px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fafafa;
-}
-.routing-policy-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #303133;
-  margin-right: 4px;
-}
-.routing-policy-label {
-  font-size: 12px;
-  color: #606266;
-}
-.routing-policy-card :deep(.el-input-number) {
-  width: 132px;
-}
 .order-actions {
   display: flex;
   align-items: center;
   gap: 2px;
   white-space: nowrap;
+}
+.quota-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.quota-line {
+  color: var(--el-text-color-regular, #606266);
+  white-space: nowrap;
+}
+.quota-limit-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.quota-limit-summary {
+  min-width: 0;
+  color: var(--el-text-color-regular, #606266);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-dialog-tip {
+  margin-bottom: 14px;
+}
+.quota-form {
+  padding-right: 8px;
+}
+.quota-input-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+.quota-input-row :deep(.el-input-number) {
+  width: 160px;
+}
+.quota-used-hint {
+  color: var(--el-text-color-secondary, #909399);
+  font-size: 12px;
 }
 .vendor-lock-bar {
   display: flex;

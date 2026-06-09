@@ -2,7 +2,27 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeMaterialHubToken } = require('./jimengMaterialHubService');
-const settingsService = require('./settingsService');
+const minimaxTtsAdapter = require('./ai-audio/adapters/minimaxTts');
+const openAiTtsAdapter = require('./ai-audio/adapters/openAiTts');
+const routingPolicyService = require('./ai-runtime/routingPolicyService');
+const modelCapabilityService = require('./ai-runtime/modelCapabilityService');
+const quotaGuard = require('./ai-runtime/quotaGuard');
+const {
+  normalizeServiceType,
+  clampInt,
+  timeoutSecondsToMs,
+  timeoutMsToSeconds,
+  getRoutingPolicies,
+  getRoutingPolicy,
+  updateRoutingPolicy,
+  getRoutingCursor,
+  bumpRoutingCursor,
+  rotateByCursor,
+  capAttemptConfigs,
+  resolveConfigRoutingPolicy,
+  getRetryCountForConfig,
+  getRequestTimeoutMsForConfig,
+} = routingPolicyService;
 
 function normalizeApiKeyForService(serviceType, apiKey) {
   if (serviceType === 'jimeng2_character_auth' && apiKey != null) {
@@ -28,145 +48,12 @@ function modelFromDb(val) {
   }
 }
 
-const ROUTING_POLICY_KEY = 'ai_routing_policies';
-const ROUTING_CURSOR_KEY = 'ai_routing_cursors';
-
 const RUNTIME_ROUTE_TYPES = [
   { key: 'text', label: '文本' },
   { key: 'image', label: '图像' },
   { key: 'video', label: '视频' },
   { key: 'tts', label: '音频' },
 ];
-
-const DEFAULT_ROUTING_POLICIES = {
-  text: {
-    strategy: 'sequential',
-    max_attempt_configs: 0,
-    concurrency_limit: 20,
-    retry_count: 1,
-    cooldown_seconds: 30,
-    cooldown_max_seconds: 1800,
-    request_timeout_seconds: 120,
-    video_poll_timeout_seconds: null,
-  },
-  image: {
-    strategy: 'sequential',
-    max_attempt_configs: 0,
-    concurrency_limit: 100,
-    retry_count: 1,
-    cooldown_seconds: 120,
-    cooldown_max_seconds: 1800,
-    request_timeout_seconds: 900,
-    video_poll_timeout_seconds: null,
-  },
-  video: {
-    strategy: 'sequential',
-    max_attempt_configs: 0,
-    concurrency_limit: 10,
-    retry_count: 0,
-    cooldown_seconds: 300,
-    cooldown_max_seconds: 3600,
-    request_timeout_seconds: 180,
-    video_poll_timeout_seconds: 3600,
-  },
-  tts: {
-    strategy: 'sequential',
-    max_attempt_configs: 0,
-    concurrency_limit: 10,
-    retry_count: 1,
-    cooldown_seconds: 60,
-    cooldown_max_seconds: 1800,
-    request_timeout_seconds: 180,
-    video_poll_timeout_seconds: null,
-  },
-  jimeng2_character_auth: {
-    strategy: 'sequential',
-    max_attempt_configs: 0,
-    concurrency_limit: 5,
-    retry_count: 0,
-    cooldown_seconds: 300,
-    cooldown_max_seconds: 3600,
-    request_timeout_seconds: 120,
-    video_poll_timeout_seconds: null,
-  },
-};
-
-function normalizeServiceType(serviceType) {
-  return serviceType === 'storyboard_image' ? 'image' : (serviceType || 'text');
-}
-
-function clampInt(value, fallback, min, max) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.trunc(n)));
-}
-
-function timeoutSecondsToMs(value, fallbackMs = 0) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallbackMs;
-  return clampInt(n, Math.ceil(fallbackMs / 1000), 0, 30 * 60) * 1000;
-}
-
-function timeoutMsToSeconds(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.ceil(n / 1000);
-}
-
-function normalizeRoutingPolicy(serviceType, raw = {}) {
-  const key = normalizeServiceType(serviceType);
-  const defaults = DEFAULT_ROUTING_POLICIES[key] || DEFAULT_ROUTING_POLICIES.text;
-  const strategy = raw.strategy === 'round_robin' ? 'round_robin' : 'sequential';
-  const requestTimeoutSeconds = clampInt(
-    raw.request_timeout_seconds,
-    defaults.request_timeout_seconds,
-    1,
-    30 * 60
-  );
-  const videoPollTimeoutSeconds = key === 'video'
-    ? clampInt(
-        raw.video_poll_timeout_seconds,
-        defaults.video_poll_timeout_seconds,
-        1,
-        24 * 3600
-      )
-    : null;
-  return {
-    strategy,
-    max_attempt_configs: clampInt(raw.max_attempt_configs, defaults.max_attempt_configs, 0, 50),
-    concurrency_limit: clampInt(raw.concurrency_limit, defaults.concurrency_limit, 1, 500),
-    retry_count: clampInt(raw.retry_count, defaults.retry_count, 0, 5),
-    cooldown_seconds: clampInt(raw.cooldown_seconds, defaults.cooldown_seconds, 0, 24 * 3600),
-    cooldown_max_seconds: clampInt(raw.cooldown_max_seconds, defaults.cooldown_max_seconds, 1, 24 * 3600),
-    request_timeout_seconds: requestTimeoutSeconds,
-    video_poll_timeout_seconds: videoPollTimeoutSeconds,
-  };
-}
-
-function getRoutingPolicies(db) {
-  const saved = settingsService.getGlobalSetting(db, ROUTING_POLICY_KEY, {});
-  const out = {};
-  for (const key of Object.keys(DEFAULT_ROUTING_POLICIES)) {
-    out[key] = normalizeRoutingPolicy(key, saved?.[key] || {});
-  }
-  return out;
-}
-
-function getRoutingPolicy(db, serviceType) {
-  const key = normalizeServiceType(serviceType);
-  return getRoutingPolicies(db)[key] || normalizeRoutingPolicy(key);
-}
-
-function updateRoutingPolicy(db, serviceType, patch) {
-  const key = normalizeServiceType(serviceType);
-  if (!DEFAULT_ROUTING_POLICIES[key]) {
-    throw new Error(`不支持的服务类型: ${serviceType}`);
-  }
-  const all = getRoutingPolicies(db);
-  all[key] = normalizeRoutingPolicy(key, { ...all[key], ...(patch || {}) });
-  settingsService.setGlobalSetting(db, ROUTING_POLICY_KEY, all);
-  return all;
-}
 
 function listConfigs(db, serviceType) {
   const order = 'ORDER BY route_order ASC, created_at DESC, id ASC';
@@ -179,6 +66,17 @@ function listConfigs(db, serviceType) {
   }
   const rows = params.length ? db.prepare(sql).all(...params) : db.prepare(sql).all();
   return rows.map(rowToConfig);
+}
+
+function capabilityOverridesToDb(value) {
+  if (value === undefined) return undefined;
+  if (value == null || value === '') return null;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch (_) {
+    return null;
+  }
 }
 
 function getActivePublicConfig(db, serviceType) {
@@ -201,6 +99,7 @@ function toPublicRuntimeConfig(cfg) {
     retry_count: cfg.retry_count || 0,
     cooldown_seconds: cfg.cooldown_seconds || 0,
     request_timeout_seconds: cfg.request_timeout_seconds || 0,
+    capabilities: cfg.capabilities || [],
     health_status: cfg.health_status || 'ok',
     disabled_until: cfg.disabled_until || null,
     last_error: cfg.last_error || null,
@@ -289,8 +188,8 @@ function createConfig(db, log, req) {
   }
   const defaultModel = req.default_model != null ? String(req.default_model).trim() || null : null;
   const info = db.prepare(
-    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, route_order, retry_count, cooldown_seconds, request_timeout_ms, is_active, settings, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+    `INSERT INTO ai_service_configs (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, route_order, retry_count, cooldown_seconds, request_timeout_ms, is_active, capabilities_json, settings, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
   ).run(
     serviceType,
     req.provider || '',
@@ -306,6 +205,7 @@ function createConfig(db, log, req) {
     req.retry_count ?? 0,
     req.cooldown_seconds ?? 0,
     timeoutSecondsToMs(req.request_timeout_seconds, 0),
+    capabilityOverridesToDb(req.capabilities_json ?? req.capabilities) || null,
     req.settings || null,
     now,
     now
@@ -380,6 +280,10 @@ function updateConfig(db, log, id, req) {
   if (req.settings != null) {
     updates.push('settings = ?');
     params.push(req.settings);
+  }
+  if (req.capabilities_json !== undefined || req.capabilities !== undefined) {
+    updates.push('capabilities_json = ?');
+    params.push(capabilityOverridesToDb(req.capabilities_json ?? req.capabilities));
   }
   if (typeof req.is_active === 'boolean') {
     updates.push('is_active = ?');
@@ -475,6 +379,7 @@ function rowToConfig(r) {
     retry_count: Number(r.retry_count || 0),
     cooldown_seconds: Number(r.cooldown_seconds || 0),
     request_timeout_seconds: timeoutMsToSeconds(r.request_timeout_ms),
+    capabilities_json: r.capabilities_json || null,
     is_active: r.is_active == null ? true : !!r.is_active,
     health_status: r.health_status || 'ok',
     disabled_until: r.disabled_until || null,
@@ -493,6 +398,7 @@ function rowToConfig(r) {
       if (s.group_id) cfg.group_id = s.group_id;
     } catch (_) {}
   }
+  cfg.capabilities = modelCapabilityService.normalizeCapabilities(r.capabilities_json, cfg);
   return cfg;
 }
 
@@ -510,29 +416,89 @@ function isRouteEligible(cfg, nowMs = Date.now(), options = {}) {
   return true;
 }
 
-function getRoutingCursor(db, serviceType) {
-  const cursors = settingsService.getGlobalSetting(db, ROUTING_CURSOR_KEY, {});
-  const n = Number(cursors?.[serviceType] || 0);
-  return Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+function isQuotaAllowedForRuntime(db, serviceType, cfg, options = {}) {
+  if (options.includeQuotaExceeded) return true;
+  try {
+    const model = options.model || options.preferredModel || cfg.default_model || (Array.isArray(cfg.model) ? cfg.model[0] : cfg.model) || '';
+    const estimate = {
+      requests: 1,
+      ...(options.usage_estimate || options.usageEstimate || options.estimate || {}),
+    };
+    return quotaGuard.isConfigQuotaAllowed(db, {
+      config: cfg,
+      service_type: serviceType,
+      scene_key: options.scene_key || options.sceneKey,
+      model,
+      user_id: options.user_id || options.userId,
+      project_id: options.project_id || options.projectId || options.drama_id,
+    }, estimate).allowed;
+  } catch (_) {
+    return true;
+  }
 }
 
-function bumpRoutingCursor(db, serviceType, step = 1) {
-  const cursors = settingsService.getGlobalSetting(db, ROUTING_CURSOR_KEY, {});
-  const current = Number(cursors?.[serviceType] || 0);
-  cursors[serviceType] = (Number.isFinite(current) ? current : 0) + step;
-  settingsService.setGlobalSetting(db, ROUTING_CURSOR_KEY, cursors);
+function formatQuotaViolation(violation = {}) {
+  const unitLabels = {
+    requests: '请求数',
+    tokens: 'Token',
+    images: '图片张数',
+    video_seconds: '视频秒数',
+    audio_seconds: '音频秒数',
+    seconds: '音视频秒数',
+    cost: '成本',
+    storage_bytes: '存储',
+  };
+  const unit = unitLabels[violation.limit_unit] || violation.limit_unit || '用量';
+  const used = Number(violation.used_value || 0);
+  const reserve = Number(violation.reserved_value || 0);
+  const limit = Number(violation.limit_value || 0);
+  return `${unit}额度不足：已用 ${used}，本次预计 ${reserve}，限额 ${limit}`;
 }
 
-function rotateByCursor(items, cursor) {
-  if (!Array.isArray(items) || items.length <= 1) return items;
-  const idx = Math.abs(cursor) % items.length;
-  return [...items.slice(idx), ...items.slice(0, idx)];
-}
-
-function capAttemptConfigs(items, policy) {
-  const max = Number(policy?.max_attempt_configs || 0);
-  if (!Number.isFinite(max) || max <= 0) return items;
-  return items.slice(0, Math.max(1, Math.trunc(max)));
+function getRuntimeQuotaBlockMessage(db, serviceType, options = {}) {
+  if (options.includeQuotaExceeded) return null;
+  try {
+    serviceType = normalizeServiceType(serviceType);
+    const list = listConfigs(db, serviceType);
+    const nowMs = Date.now();
+    const requestedId = options.config_id != null || options.ai_config_id != null
+      ? Number(options.config_id ?? options.ai_config_id)
+      : null;
+    const preferredModel = options.model || options.preferredModel || null;
+    const estimate = {
+      requests: 1,
+      ...(options.usage_estimate || options.usageEstimate || options.estimate || {}),
+    };
+    const eligible = list.filter((cfg) => {
+      if (!isRouteEligible(cfg, nowMs, {
+        includeInactive: !!options.includeInactive,
+        includeCoolingDown: !!options.includeCoolingDown,
+      })) return false;
+      if (requestedId && Number.isFinite(requestedId) && Number(cfg.id) !== requestedId) return false;
+      if (preferredModel) {
+        const models = Array.isArray(cfg.model) ? cfg.model : (cfg.model != null ? [cfg.model] : []);
+        if (!models.includes(String(preferredModel).trim())) return false;
+      }
+      return true;
+    });
+    const quotaViolations = [];
+    for (const cfg of eligible) {
+      const model = preferredModel || cfg.default_model || (Array.isArray(cfg.model) ? cfg.model[0] : cfg.model) || '';
+      const check = quotaGuard.isConfigQuotaAllowed(db, {
+        config: cfg,
+        service_type: serviceType,
+        scene_key: options.scene_key || options.sceneKey,
+        model,
+        user_id: options.user_id || options.userId,
+        project_id: options.project_id || options.projectId || options.drama_id,
+      }, estimate);
+      if (!check.allowed) quotaViolations.push(...check.violations);
+    }
+    if (!quotaViolations.length) return null;
+    return `当前${serviceType}模型额度已达到限制，${formatQuotaViolation(quotaViolations[0])}`;
+  } catch (_) {
+    return null;
+  }
 }
 
 function getRuntimeConfigCandidates(db, serviceType, options = {}) {
@@ -548,13 +514,19 @@ function getRuntimeConfigCandidates(db, serviceType, options = {}) {
   const preferredModel = options.model || options.preferredModel || null;
 
   let candidates = list.filter((cfg) => {
-    return isRouteEligible(cfg, nowMs, { includeInactive, includeCoolingDown });
+    return (
+      isRouteEligible(cfg, nowMs, { includeInactive, includeCoolingDown }) &&
+      isQuotaAllowedForRuntime(db, serviceType, cfg, options)
+    );
   });
 
   if (requestedId && Number.isFinite(requestedId)) {
     const requested = list.find((cfg) => Number(cfg.id) === requestedId);
     if (!requested) return [];
-    if (!isRouteEligible(requested, nowMs, { includeInactive, includeCoolingDown })) {
+    if (
+      !isRouteEligible(requested, nowMs, { includeInactive, includeCoolingDown }) ||
+      !isQuotaAllowedForRuntime(db, serviceType, requested, options)
+    ) {
       return options.fallback === false
         ? []
         : capAttemptConfigs(candidates.filter((cfg) => Number(cfg.id) !== requestedId), getRoutingPolicy(db, serviceType));
@@ -592,45 +564,6 @@ function sanitizeErrorMessage(err) {
     .slice(0, 500);
 }
 
-function parseSettings(raw) {
-  if (!raw) return {};
-  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-function resolveConfigRoutingPolicy(db, config, serviceType, modelName) {
-  const key = normalizeServiceType(serviceType || config?.service_type || 'text');
-  const base = { ...getRoutingPolicy(db, key) };
-  let requestTimeoutMs = clampInt(base.request_timeout_seconds, 120, 1, 30 * 60) * 1000;
-  if (config) {
-    if (Number(config.retry_count) > 0) base.retry_count = clampInt(config.retry_count, base.retry_count, 0, 5);
-    if (Number(config.cooldown_seconds) > 0) base.cooldown_seconds = clampInt(config.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
-    if (Number(config.request_timeout_seconds) > 0) requestTimeoutMs = timeoutSecondsToMs(config.request_timeout_seconds, requestTimeoutMs);
-    const settings = parseSettings(config.settings);
-    const routing = settings.routing && typeof settings.routing === 'object' ? settings.routing : {};
-    if (routing.retry_count != null) base.retry_count = clampInt(routing.retry_count, base.retry_count, 0, 5);
-    if (routing.cooldown_seconds != null) base.cooldown_seconds = clampInt(routing.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
-    if (routing.cooldown_max_seconds != null) base.cooldown_max_seconds = clampInt(routing.cooldown_max_seconds, base.cooldown_max_seconds, 1, 24 * 3600);
-    if (routing.request_timeout_seconds != null) requestTimeoutMs = clampInt(routing.request_timeout_seconds, Math.ceil(requestTimeoutMs / 1000), 1, 30 * 60) * 1000;
-    const modelKey = modelName ? String(modelName).trim() : '';
-    const modelOverrides = routing.model_overrides && typeof routing.model_overrides === 'object' ? routing.model_overrides : {};
-    const modelPatch = modelKey ? modelOverrides[modelKey] : null;
-    if (modelPatch && typeof modelPatch === 'object') {
-      if (modelPatch.retry_count != null) base.retry_count = clampInt(modelPatch.retry_count, base.retry_count, 0, 5);
-      if (modelPatch.cooldown_seconds != null) base.cooldown_seconds = clampInt(modelPatch.cooldown_seconds, base.cooldown_seconds, 0, 24 * 3600);
-      if (modelPatch.request_timeout_seconds != null) requestTimeoutMs = clampInt(modelPatch.request_timeout_seconds, Math.ceil(requestTimeoutMs / 1000), 1, 30 * 60) * 1000;
-    }
-  }
-  base.request_timeout_seconds = Math.ceil(Number(requestTimeoutMs || 0) / 1000);
-  base.request_timeout_ms = requestTimeoutMs;
-  return base;
-}
-
 function getConfigByIdForRuntime(db, configId) {
   if (!db || !configId) return null;
   try {
@@ -639,15 +572,6 @@ function getConfigByIdForRuntime(db, configId) {
   } catch (_) {
     return null;
   }
-}
-
-function getRetryCountForConfig(db, config, serviceType, modelName) {
-  return resolveConfigRoutingPolicy(db, config, serviceType, modelName).retry_count;
-}
-
-function getRequestTimeoutMsForConfig(db, config, serviceType, modelName, fallbackMs) {
-  const policy = resolveConfigRoutingPolicy(db, config, serviceType, modelName);
-  return clampInt(policy.request_timeout_ms, fallbackMs, 1000, 30 * 60 * 1000);
 }
 
 function classifyAiFailure(err) {
@@ -788,12 +712,27 @@ async function testConnection(opts) {
 
   // --- TTS 语音合成 ---
   if (serviceType === 'tts') {
-    // MiniMax T2A：用 /v1/models 或直接对 chat 端点做轻量探针
-    const ttsBase = base.includes('minimaxi.com') || base.includes('minimax') ? base : base;
-    // 尝试调用一个极简的 MiniMax T2A 请求（1 字，验证 key 合法性）
-    // 为避免真实扣费，使用非计费的 list-voices 或 models 接口
-    const probeUrl = ttsBase + '/text_to_speech';
-    const probeBody = JSON.stringify({ model: model || 'speech-02-hd', text: 'hi', stream: false });
+    let ttsSettings = {};
+    try { ttsSettings = opts.settings ? (typeof opts.settings === 'string' ? JSON.parse(opts.settings) : opts.settings) : {}; } catch (_) {}
+    const groupId = opts.group_id || ttsSettings.group_id || '';
+    const voiceId = opts.voice_id || ttsSettings.voice_id || (provider === 'minimax' ? 'female-shaonv' : 'alloy');
+    const probeUrl = provider === 'minimax'
+      ? minimaxTtsAdapter.buildMinimaxTtsUrl(base, groupId)
+      : openAiTtsAdapter.buildOpenAiTtsUrl(base);
+    const probeBody = provider === 'minimax'
+      ? JSON.stringify({
+          model: model || 'speech-02-hd',
+          text: 'hi',
+          stream: false,
+          voice_setting: { voice_id: voiceId, speed: 1.0, vol: 1.0, pitch: 0 },
+          audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3', channel: 1 },
+        })
+      : JSON.stringify({
+          model: model || 'tts-1',
+          input: 'hi',
+          voice: voiceId,
+          response_format: 'mp3',
+        });
     const res = await fetch(probeUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (opts.api_key || '') },
@@ -1019,8 +958,8 @@ function applyVendorLock(db, log, cfg) {
       : item.model ? JSON.stringify([item.model]) : '[]';
     db.prepare(
       `INSERT INTO ai_service_configs
-        (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, route_order, retry_count, cooldown_seconds, request_timeout_ms, is_active, settings, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+        (service_type, provider, api_protocol, name, base_url, api_key, model, default_model, endpoint, query_endpoint, route_order, retry_count, cooldown_seconds, request_timeout_ms, is_active, capabilities_json, settings, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
     ).run(
       normalizeServiceType(item.service_type || 'text'),
       item.provider || '',
@@ -1036,6 +975,7 @@ function applyVendorLock(db, log, cfg) {
       item.retry_count ?? 0,
       item.cooldown_seconds ?? 0,
       timeoutSecondsToMs(item.request_timeout_seconds, 0),
+      capabilityOverridesToDb(item.capabilities_json ?? item.capabilities) || null,
       item.settings || null,
       now,
       now
@@ -1068,6 +1008,7 @@ module.exports = {
   listRuntimePublicConfigs,
   getRuntimeModelRoutes,
   getRuntimeConfigCandidates,
+  getRuntimeQuotaBlockMessage,
   recordConfigSuccess,
   recordConfigFailure,
   classifyAiFailure,

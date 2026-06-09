@@ -58,6 +58,7 @@ function setupRouter(cfg, db, log) {
   r.get('/runtime/model-routes', aiConfig.runtimeRoutesPublic);
   r.get('/runtime/ai-configs', aiConfig.runtimeListPublic);
   r.get('/runtime/ai-configs/active', aiConfig.activePublic);
+  r.get('/runtime/model-usage-daily', aiConfig.modelUsageDaily);
   r.get('/workflow-presets', workflowPresets.list);
   r.get('/workflow-presets/:id', workflowPresets.get);
   r.post('/workflow-presets', requireAdmin(), workflowPresets.create);
@@ -122,6 +123,14 @@ function setupRouter(cfg, db, log) {
   r.put('/ai-configs/reorder', aiConfig.reorder);  // 必须在 /:id 之前
   r.get('/ai-configs/routing-policies', aiConfig.routingPolicies);
   r.put('/ai-configs/routing-policies/:service_type', aiConfig.updateRoutingPolicy);
+  r.get('/ai-configs/model-call-logs', aiConfig.modelCallLogs);
+  r.get('/ai-configs/model-usage-summary', aiConfig.modelUsageSummary);
+  r.get('/ai-configs/model-usage-daily', aiConfig.modelUsageDaily);
+  r.get('/ai-configs/model-capabilities', aiConfig.modelCapabilityDefinitions);
+  r.get('/ai-configs/quota-policies', aiConfig.quotaPolicies);
+  r.post('/ai-configs/quota-policies', aiConfig.saveQuotaPolicy);
+  r.put('/ai-configs/quota-policies/:id', aiConfig.saveQuotaPolicy);
+  r.delete('/ai-configs/quota-policies/:id', aiConfig.deleteQuotaPolicy);
   r.get('/ai-configs/:id', aiConfig.get);
   r.put('/ai-configs/:id', aiConfig.update);
   r.delete('/ai-configs/:id', aiConfig.delete);
@@ -336,6 +345,7 @@ function setupRouter(cfg, db, log) {
 
   // ---------- scene model map ----------
   r.get('/scene-model-map', sceneModelMap.list);
+  r.get('/scene-model-map/definitions', sceneModelMap.definitions);
   r.post('/scene-model-map', sceneModelMap.create);
   r.get('/scene-model-map/:key', sceneModelMap.get);
   r.put('/scene-model-map/:key', sceneModelMap.update);

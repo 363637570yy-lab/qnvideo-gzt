@@ -445,6 +445,7 @@ async function generateSingleFrame(db, log, cfg, sb, scene, characterNames, mode
   let aiResponse;
   try {
     aiResponse = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
+      scene_key: 'storyboard_frame_prompt',
       model: model || undefined,
       max_tokens: 2400,
     });
@@ -682,6 +683,7 @@ async function regenerateLayoutDescription(db, log, storyboardId) {
   log.info('[布局重生成] 开始', { storyboard_id: sid, has_prev: !!prevSb, has_next: !!nextSb });
 
   const raw = await aiClient.generateText(db, log, 'text', userPrompt, systemPrompt, {
+    scene_key: 'storyboard_layout',
     max_tokens: 300,
     temperature: 0.35,
   });

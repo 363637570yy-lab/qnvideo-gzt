@@ -2,156 +2,84 @@
  * TTS 语音合成服务
  * 支持多种 TTS 接口：minimax、edge-tts（本地）、通用 HTTP
  */
-const https = require('https');
-const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
-
-/**
- * 使用 MiniMax T2A v2 合成语音
- */
-async function synthesizeWithMinimax(text, voiceId, apiKey, groupId, model, timeoutMs = 180000) {
-  const body = JSON.stringify({
-    model: model || 'speech-02-hd',
-    text,
-    stream: false,
-    voice_setting: {
-      voice_id: voiceId || 'female-shaonv',
-      speed: 1.0,
-      vol: 1.0,
-      pitch: 0,
-    },
-    audio_setting: {
-      sample_rate: 32000,
-      bitrate: 128000,
-      format: 'mp3',
-      channel: 1,
-    },
-  });
-  const url = `https://api.minimax.chat/v1/t2a_v2?GroupId=${groupId}`;
-  return new Promise((resolve, reject) => {
-    const reqOpts = {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Length': Buffer.byteLength(body),
-      },
-    };
-    const urlObj = new URL(url);
-    const client = urlObj.protocol === 'https:' ? https : http;
-    const req = client.request(urlObj, reqOpts, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        if (res.statusCode !== 200) {
-          reject(new Error(`MiniMax TTS HTTP ${res.statusCode}: ${Buffer.concat(chunks).toString()}`));
-          return;
-        }
-        const data = JSON.parse(Buffer.concat(chunks).toString());
-        if (data.base_resp?.status_code !== 0) {
-          reject(new Error(`MiniMax TTS error: ${data.base_resp?.status_msg || 'unknown'}`));
-          return;
-        }
-        const audioHex = data.data?.audio;
-        if (!audioHex) { reject(new Error('MiniMax TTS 未返回音频')); return; }
-        resolve(Buffer.from(audioHex, 'hex'));
-      });
-    });
-    const timer = setTimeout(() => { req.destroy(); reject(new Error(`MiniMax TTS 请求超时（${timeoutMs}ms）`)); }, timeoutMs);
-    req.on('error', (e) => { clearTimeout(timer); reject(e); });
-    req.on('close', () => clearTimeout(timer));
-    req.write(body);
-    req.end();
-  });
-}
-
-/**
- * 使用 OpenAI TTS API 合成语音（兼容所有 OpenAI 格式的代理）
- * POST {base_url}/audio/speech  body: { model, input, voice, response_format, speed }
- */
-async function synthesizeWithOpenai(text, voice, apiKey, baseUrl, model, speed, timeoutMs = 180000) {
-  const url = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '') + '/audio/speech';
-  const body = JSON.stringify({
-    model: model || 'tts-1',
-    input: text,
-    voice: voice || 'alloy',
-    response_format: 'mp3',
-    speed: speed || 1.0,
-  });
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(url);
-    const mod = parsed.protocol === 'https:' ? https : http;
-    const reqOpts = {
-      hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
-      path: parsed.pathname + parsed.search,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-        ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
-      },
-    };
-    const req = mod.request(reqOpts, (res) => {
-      const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`OpenAI TTS HTTP ${res.statusCode}: ${buf.toString('utf-8').slice(0, 500)}`));
-          return;
-        }
-        resolve(buf);
-      });
-    });
-    const timer = setTimeout(() => { req.destroy(); reject(new Error(`OpenAI TTS 请求超时（${timeoutMs}ms）`)); }, timeoutMs);
-    req.on('error', (e) => { clearTimeout(timer); reject(e); });
-    req.on('close', () => clearTimeout(timer));
-    req.write(body);
-    req.end();
-  });
-}
+const minimaxTtsAdapter = require('./ai-audio/adapters/minimaxTts');
+const openAiTtsAdapter = require('./ai-audio/adapters/openAiTts');
+const modelRouter = require('./ai-runtime/modelRouter');
+const modelCallLogger = require('./ai-runtime/modelCallLogger');
+const modelSceneKeys = require('./ai-runtime/modelSceneKeys');
+const usageEstimator = require('./ai-runtime/usageEstimator');
 
 /**
  * 合成 TTS 并保存到本地文件
  * @returns {{ local_path: string, audio_url: string }}
  */
-async function synthesize(db, log, { text, storyboard_id, config, storage_base, voice_id, speed, ai_config_id, tts_config_id }) {
+async function synthesize(db, log, { text, storyboard_id, scene_key, sceneKey, config, storage_base, voice_id, speed, ai_config_id, tts_config_id, user, user_id, userId, project_id, projectId, drama_id, task_id, taskId, trace_id, traceId }) {
   if (!text || !text.trim()) throw new Error('text 不能为空');
-  const aiConfigService = require('./aiConfigService');
+  const sceneKeyForRoute = modelSceneKeys.resolveTtsSceneKey({ storyboard_id, scene_key, sceneKey });
+  const callContext = {
+    user_id: user_id || userId || user?.id || null,
+    project_id: project_id || projectId || drama_id || null,
+    task_id: task_id || taskId || null,
+    trace_id: trace_id || traceId || null,
+  };
+  const quotaEstimate = usageEstimator.estimateTtsUsage(text, speed || 1);
   const candidates = config
-    ? [config]
-    : aiConfigService.getRuntimeConfigCandidates(db, 'tts', {
+    ? [{ config, modelOverride: null }]
+    : (() => {
+        const mapped = modelRouter.getSceneMappedEntries(db, sceneKeyForRoute, {
+          serviceType: 'tts',
+          config_id: ai_config_id || tts_config_id || null,
+          scene_key: sceneKeyForRoute,
+          usage_estimate: quotaEstimate,
+          ...callContext,
+        });
+        return mapped.length
+          ? mapped
+          : modelRouter.getRuntimeConfigCandidates(db, 'tts', {
+            config_id: ai_config_id || tts_config_id || null,
+            scene_key: sceneKeyForRoute,
+            usage_estimate: quotaEstimate,
+            ...callContext,
+          }).map((item) => ({ config: item, modelOverride: null }));
+      })();
+  if (!candidates.length) {
+    throw new Error(modelRouter.getRuntimeQuotaBlockMessage(db, 'tts', {
       config_id: ai_config_id || tts_config_id || null,
-    });
-  if (!candidates.length) throw new Error('未配置 TTS 模型，请在「AI 配置」中添加 service_type=tts 的配置');
+      scene_key: sceneKeyForRoute,
+      usage_estimate: quotaEstimate,
+      ...callContext,
+    }) || '未配置 TTS 模型，请在「AI 配置」中添加 service_type=tts 的配置');
+  }
   let audioBuffer;
   let provider = '';
   let ttsModel = '';
   let lastError = null;
 
   for (let i = 0; i < candidates.length; i += 1) {
-    const ttsConfig = candidates[i];
+    const { config: ttsConfig, modelOverride } = candidates[i];
     provider = (ttsConfig.provider || '').toLowerCase();
     let ttsSettings = {};
     try { ttsSettings = JSON.parse(ttsConfig.settings || '{}'); } catch (_) {}
     const voiceId = voice_id || ttsConfig.voice_id || ttsSettings.voice_id || '';
     const groupId = ttsConfig.group_id || ttsSettings.group_id || '';
-    ttsModel = ttsConfig.default_model || (Array.isArray(ttsConfig.model) ? ttsConfig.model[0] : ttsConfig.model) || '';
+    ttsModel = modelOverride || ttsConfig.default_model || (Array.isArray(ttsConfig.model) ? ttsConfig.model[0] : ttsConfig.model) || '';
     const finalSpeed = speed || ttsSettings.speed || 1.0;
-    const requestTimeoutMs = aiConfigService.getRequestTimeoutMsForConfig(db, ttsConfig, 'tts', ttsModel, 180000);
+    const requestTimeoutMs = modelRouter.getRequestTimeoutMsForConfig(db, ttsConfig, 'tts', ttsModel, 180000);
 
+    const startMs = Date.now();
     try {
       if (provider === 'minimax') {
-        audioBuffer = await synthesizeWithMinimax(
+        audioBuffer = await minimaxTtsAdapter.synthesizeWithMinimax(
           text,
           voiceId || 'female-shaonv',
           ttsConfig.api_key,
           groupId,
           ttsModel || 'speech-02-hd',
-          requestTimeoutMs
+          requestTimeoutMs,
+          ttsConfig.base_url
         );
       } else if (provider === 'openai' || ttsConfig.base_url) {
         log?.info?.('TTS synthesize with OpenAI-compatible provider', {
@@ -162,7 +90,7 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
           model: ttsModel || null,
           text_length: text.length,
         });
-        audioBuffer = await synthesizeWithOpenai(
+        audioBuffer = await openAiTtsAdapter.synthesizeWithOpenai(
           text,
           voiceId || 'alloy',
           ttsConfig.api_key,
@@ -174,11 +102,40 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
       } else {
         throw new Error(`不支持的 TTS provider: ${provider}，目前支持 openai、minimax`);
       }
-      aiConfigService.recordConfigSuccess(db, ttsConfig.id);
+      modelRouter.recordConfigSuccess(db, ttsConfig.id);
+      modelCallLogger.recordModelCall(db, {
+        service_type: 'tts',
+        scene_key: sceneKeyForRoute,
+        config_id: ttsConfig.id,
+        provider: ttsConfig.provider,
+        api_protocol: ttsConfig.api_protocol,
+        model: ttsModel,
+        status: 'success',
+        elapsed_ms: Date.now() - startMs,
+        prompt: text,
+        usage: usageEstimator.estimateTtsUsage(text, finalSpeed),
+        usage_source: 'estimated',
+        diagnostics: { text_length: text.length, voice_id: voiceId || null },
+        ...callContext,
+      });
       break;
     } catch (err) {
       lastError = err;
-      const failure = aiConfigService.recordConfigFailure(db, ttsConfig.id, err);
+      const failure = modelRouter.recordConfigFailure(db, ttsConfig.id, err, { serviceType: 'tts', model: ttsModel });
+      modelCallLogger.recordModelCall(db, {
+        service_type: 'tts',
+        scene_key: sceneKeyForRoute,
+        config_id: ttsConfig.id,
+        provider: ttsConfig.provider,
+        api_protocol: ttsConfig.api_protocol,
+        model: ttsModel,
+        status: 'failed',
+        elapsed_ms: Date.now() - startMs,
+        prompt: text,
+        error: err,
+        diagnostics: { reason: failure.reason, fallbackable: failure.fallbackable, text_length: text.length },
+        ...callContext,
+      });
       log?.warn?.('[TTS] 当前配置失败，尝试下一个可用配置', {
         config_id: ttsConfig.id,
         reason: failure.reason,
@@ -202,4 +159,4 @@ async function synthesize(db, log, { text, storyboard_id, config, storage_base, 
   return { local_path: localPath };
 }
 
-module.exports = { synthesize };
+module.exports = { synthesize, _test: { estimateTtsAudioSeconds: usageEstimator.estimateTtsAudioSeconds } };
