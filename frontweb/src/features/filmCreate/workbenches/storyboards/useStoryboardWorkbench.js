@@ -9,7 +9,9 @@ export function useStoryboardWorkbench(deps = {}) {
     imagesAPI,
     videosAPI,
     videoClipDuration,
-    getSbAllImages = () => [],
+    storyboardUseFirstLastFrame,
+    assetVideoUrl = () => '',
+    recordHasPlayableVideoUrl = () => false,
   } = deps
 
   const sbCharacterIds = ref({})
@@ -104,6 +106,10 @@ export function useStoryboardWorkbench(deps = {}) {
 
   function defaultStoryboardDuration() {
     return Number(videoClipDuration?.value ?? videoClipDuration) || 10
+  }
+
+  function isFirstLastFrameMode() {
+    return !!(storyboardUseFirstLastFrame?.value ?? storyboardUseFirstLastFrame)
   }
 
   function syncStoryboardStateFromEpisode(episode) {
@@ -312,6 +318,217 @@ export function useStoryboardWorkbench(deps = {}) {
     return map
   }
 
+  /** 主播放器强制随记录/地址重建，避免重新生成后 <video> 仍缓存旧 src。 */
+  function sbMainVideoPlayerKey(storyboardId) {
+    const video = getSbVideo(storyboardId)
+    if (!video) return ''
+    const src = assetVideoUrl(video)
+    return `${video.id}:${video.updated_at || ''}:${src.slice(0, 160)}`
+  }
+
+  function uploadingSbImageSlot(storyboardId) {
+    return sbImageUploadSlotById.value[storyboardId] || null
+  }
+
+  function frameTypeForSlot(slot) {
+    return slot === 'last' ? 'storyboard_last' : 'storyboard_first'
+  }
+
+  function resolveSbImageById(storyboardId, imageId) {
+    if (imageId == null) return null
+    const images = getSbAllImages(storyboardId)
+    return images.find((image) => image.id === imageId) || null
+  }
+
+  function getSbFirstImage(storyboardId) {
+    const images = getSbAllImages(storyboardId)
+    const storyboard = (store?.storyboards || []).find((item) => item.id === storyboardId)
+
+    if (storyboard?.first_frame_image_id != null) {
+      const bound = resolveSbImageById(storyboardId, storyboard.first_frame_image_id)
+      if (bound) return bound
+    }
+
+    const selectedId = sbSelectedImgId.value[storyboardId]
+    if (selectedId != null) {
+      const selected = images.find((image) => image.id === selectedId)
+      if (selected) return selected
+    }
+
+    const typed = images.find((image) => image.frame_type === 'storyboard_first')
+    if (typed) return typed
+    return null
+  }
+
+  function getSbLastImage(storyboardId) {
+    const images = getSbAllImages(storyboardId)
+    const storyboard = (store?.storyboards || []).find((item) => item.id === storyboardId)
+
+    if (storyboard?.last_frame_image_id != null) {
+      const bound = resolveSbImageById(storyboardId, storyboard.last_frame_image_id)
+      if (bound) return bound
+    }
+
+    const selectedId = sbSelectedLastImgId.value[storyboardId]
+    if (selectedId != null) {
+      const selected = images.find((image) => image.id === selectedId)
+      if (selected) return selected
+    }
+
+    const typed = images.find((image) => image.frame_type === 'storyboard_last')
+    if (typed) return typed
+
+    if (storyboard?.last_frame_image_url || storyboard?.last_frame_local_path) {
+      return {
+        id: storyboard.last_frame_image_id,
+        image_url: storyboard.last_frame_image_url,
+        local_path: storyboard.last_frame_local_path,
+        frame_type: 'storyboard_last',
+      }
+    }
+    return null
+  }
+
+  function hasSbImage(storyboard) {
+    if (isFirstLastFrameMode()) {
+      return hasSbFirstLastPair(storyboard)
+    }
+    return !!(getSbImage(storyboard.id) || (storyboard && (storyboard.composed_image || storyboard.image_url)))
+  }
+
+  function hasSbFirstLastPair(storyboard) {
+    return !!(getSbFirstImage(storyboard.id) && getSbLastImage(storyboard.id))
+  }
+
+  function getSbAllImages(storyboardId) {
+    const list = sbImages.value[storyboardId]
+    if (!Array.isArray(list)) return []
+    return list.filter(
+      (image) =>
+        image.status === 'completed' &&
+        image.frame_type !== 'quad_grid' &&
+        image.frame_type !== 'nine_grid' &&
+        (image.image_url || image.local_path)
+    )
+  }
+
+  function isAuxStoryboardImage(image) {
+    const frameType = String(image?.frame_type || '')
+    return !!image?.aux_role ||
+      frameType === 'storyboard_motion_sketch' ||
+      frameType === 'storyboard_layout_sketch' ||
+      frameType === 'storyboard_pose_ref' ||
+      frameType === 'storyboard_camera_path' ||
+      frameType === 'storyboard_aux_ref'
+  }
+
+  function getSbPrimaryImages(storyboardId) {
+    return getSbAllImages(storyboardId).filter((image) => !isAuxStoryboardImage(image))
+  }
+
+  function getSbImage(storyboardId) {
+    if (isFirstLastFrameMode()) return getSbFirstImage(storyboardId)
+    const images = getSbPrimaryImages(storyboardId)
+    if (!images.length) return null
+    const selectedId = sbSelectedImgId.value[storyboardId]
+    if (selectedId != null) {
+      const found = images.find((image) => image.id === selectedId)
+      if (found) return found
+    }
+    const confirmed = images
+      .filter((image) => image.selected)
+      .sort((a, b) => (Number(a.slot_index ?? 999) - Number(b.slot_index ?? 999)) || (Number(b.id || 0) - Number(a.id || 0)))[0]
+    if (confirmed) return confirmed
+    return images[0]
+  }
+
+  function getQuadGridImage(storyboardId) {
+    const list = sbImages.value[storyboardId]
+    if (!Array.isArray(list)) return null
+    return list.find(
+      (image) =>
+        image.status === 'completed' &&
+        (image.frame_type === 'quad_grid' || image.frame_type === 'nine_grid') &&
+        (image.image_url || image.local_path)
+    ) || null
+  }
+
+  function getSbAllVideos(storyboardId) {
+    const list = sbVideos.value[storyboardId]
+    if (!Array.isArray(list)) return []
+    return list.filter((video) => video.status === 'completed' && recordHasPlayableVideoUrl(video))
+  }
+
+  function getSbVideo(storyboardId) {
+    const all = getSbAllVideos(storyboardId)
+    if (all.length === 0) return null
+    const selectedId = sbSelectedVideoId.value[storyboardId]
+    if (selectedId != null) {
+      const found = all.find((video) => video.id === selectedId)
+      if (found) return found
+    }
+    return all[0]
+  }
+
+  function getNextStoryboard(storyboardId) {
+    const list = store?.storyboards || []
+    const index = list.findIndex((storyboard) => storyboard.id === storyboardId)
+    if (index === -1 || index === list.length - 1) return null
+    return list[index + 1]
+  }
+
+  function getPrevStoryboard(storyboardId) {
+    const list = store?.storyboards || []
+    const index = list.findIndex((storyboard) => storyboard.id === storyboardId)
+    if (index === -1 || index === 0) return null
+    return list[index - 1]
+  }
+
+  function canUsePrevTailAsFirst(storyboard) {
+    const prev = getPrevStoryboard(storyboard?.id)
+    return !!(prev && getSbLastImage(prev.id))
+  }
+
+  function getVideoStripItems(storyboardId) {
+    const all = getSbAllVideos(storyboardId)
+    const current = getSbVideo(storyboardId)
+    return all
+      .filter((video) => !current || video.id !== current.id)
+      .map((video, index) => ({
+        key: `vid-${video.id}`,
+        video,
+        src: assetVideoUrl(video),
+        label: `历史${index + 2}`,
+      }))
+  }
+
+  function onSelectSbMainVideo(storyboard, video) {
+    sbSelectedVideoId.value = { ...sbSelectedVideoId.value, [storyboard.id]: video.id }
+    storyboardsAPI.update(storyboard.id, {
+      video_url: video.video_url || null,
+      local_path: video.local_path || undefined,
+    }).catch((error) => console.warn('[主视频] 保存后端失败', error))
+  }
+
+  function getSbVideoError(storyboardId) {
+    if (sbVideoErrors.value[storyboardId]) return sbVideoErrors.value[storyboardId]
+    const list = sbVideos.value[storyboardId]
+    if (!Array.isArray(list) || list.length === 0) return ''
+    const hasCompleted = list.some((item) => item.status === 'completed' && recordHasPlayableVideoUrl(item))
+    if (hasCompleted) return ''
+    const bogusCompleted = list.find(
+      (item) => item.status === 'completed' && item.video_url && !recordHasPlayableVideoUrl(item)
+    )
+    if (bogusCompleted) {
+      const url = String(bogusCompleted.video_url || '').trim()
+      if (url) return url
+      if (bogusCompleted.error_msg) return bogusCompleted.error_msg
+    }
+    const failed = list.filter((item) => item.status === 'failed' && item.error_msg)
+    if (failed.length === 0) return ''
+    return failed[0].error_msg
+  }
+
   function restoreSelectionsFromBackend() {
     const boards = store?.storyboards || []
     for (const storyboard of boards) {
@@ -417,6 +634,7 @@ export function useStoryboardWorkbench(deps = {}) {
     batchVideoRunning,
     batchVideoStopping,
     charactersAvailableToAddToSb,
+    canUsePrevTailAsFirst,
     dragOverSbId,
     editingFramePromptRegenerating,
     editingFramePromptSaving,
@@ -432,16 +650,32 @@ export function useStoryboardWorkbench(deps = {}) {
     generatingSbLastImageIds,
     generatingSbVideoIds,
     generatingUniversalSegmentIds,
+    frameTypeForSlot,
     getMovementLabel,
+    getNextStoryboard,
+    getPrevStoryboard,
+    getQuadGridImage,
+    getSbAllImages,
+    getSbAllVideos,
     getSbCharacterId,
     getSbCharacterIds,
+    getSbFirstImage,
+    getSbImage,
+    getSbLastImage,
+    getSbPrimaryImages,
     getSbPropId,
     getSbPropIds,
     getSbSelectedCharacters,
     getSbSelectedProps,
     getSbSelectedScene,
+    getSbVideo,
+    getSbVideoError,
+    getVideoStripItems,
     groupByStoryboardId,
+    hasSbFirstLastPair,
+    hasSbImage,
     inferringParams,
+    isAuxStoryboardImage,
     linkingTailFrameIds,
     regeneratingLayoutSbIds,
     regenSbImagesForAsset,
@@ -489,10 +723,13 @@ export function useStoryboardWorkbench(deps = {}) {
     loadSingleStoryboardMedia,
     loadStoryboardMedia,
     onSbAddCharacterCommand,
+    onSelectSbMainVideo,
     onStoryboardCharacterChange,
     onStoryboardPropChange,
     onStoryboardSceneChange,
+    resolveSbImageById,
     restoreSelectionsFromBackend,
+    sbMainVideoPlayerKey,
     setSbCharacterId,
     setSbPropId,
     showFramePromptEditor,
@@ -503,6 +740,7 @@ export function useStoryboardWorkbench(deps = {}) {
     ttsSbIds,
     ttsSbNarrationIds,
     uploadingSbImageId,
+    uploadingSbImageSlot,
     upscalingSbIds,
     usingPrevTailAsFirstIds,
     videoFrameContiguity,

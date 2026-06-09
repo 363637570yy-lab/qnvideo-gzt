@@ -502,6 +502,7 @@ const {
   batchVideoRunning,
   batchVideoStopping,
   charactersAvailableToAddToSb,
+  canUsePrevTailAsFirst,
   dragOverSbId,
   editingFramePromptRegenerating,
   editingFramePromptSaving,
@@ -517,27 +518,46 @@ const {
   generatingSbLastImageIds,
   generatingSbVideoIds,
   generatingUniversalSegmentIds,
+  frameTypeForSlot,
   getMovementLabel,
+  getNextStoryboard,
+  getPrevStoryboard,
+  getQuadGridImage,
+  getSbAllImages,
+  getSbAllVideos,
   getSbCharacterId,
   getSbCharacterIds,
+  getSbFirstImage,
+  getSbImage,
+  getSbLastImage,
+  getSbPrimaryImages,
   getSbPropId,
   getSbPropIds,
   getSbSelectedCharacters,
   getSbSelectedProps,
   getSbSelectedScene,
+  getSbVideo,
+  getSbVideoError,
+  getVideoStripItems,
   groupByStoryboardId,
+  hasSbFirstLastPair,
+  hasSbImage,
   inferringParams,
+  isAuxStoryboardImage,
   linkingTailFrameIds,
   loadSingleStoryboardMedia,
   loadStoryboardMedia,
   onSbAddCharacterCommand,
+  onSelectSbMainVideo,
   onStoryboardCharacterChange,
   onStoryboardPropChange,
   onStoryboardSceneChange,
   regeneratingLayoutSbIds,
   regenSbImagesForAsset,
   regenSbImagesProgress,
+  resolveSbImageById,
   restoreSelectionsFromBackend,
+  sbMainVideoPlayerKey,
   sbAction,
   sbAngle,
   sbAngleH,
@@ -588,6 +608,7 @@ const {
   ttsSbIds,
   ttsSbNarrationIds,
   uploadingSbImageId,
+  uploadingSbImageSlot,
   upscalingSbIds,
   usingPrevTailAsFirstIds,
   videoFrameContiguity,
@@ -598,7 +619,9 @@ const {
   imagesAPI,
   videosAPI,
   videoClipDuration,
-  getSbAllImages: (...args) => getSbAllImages(...args),
+  storyboardUseFirstLastFrame,
+  assetVideoUrl: (...args) => assetVideoUrl(...args),
+  recordHasPlayableVideoUrl: (...args) => recordHasPlayableVideoUrl(...args),
 })
 
 function getSbVideosRef() {
@@ -1181,208 +1204,6 @@ function onSbImageDrop(e, sb) {
   dragOverSbId.value = null
   const file = getFirstImageFile(e.dataTransfer)
   if (file && sb?.id) doUploadSbImage(sb.id, file)
-}
-
-/** 主播放器强制随记录/地址重建，避免重新生成后 <video> 仍缓存旧 src */
-function sbMainVideoPlayerKey(sbId) {
-  const v = getSbVideo(sbId)
-  if (!v) return ''
-  const src = assetVideoUrl(v)
-  return `${v.id}:${v.updated_at || ''}:${src.slice(0, 160)}`
-}
-function uploadingSbImageSlot(sbId) {
-  return sbImageUploadSlotById.value[sbId] || null
-}
-
-function frameTypeForSlot(slot) {
-  return slot === 'last' ? 'storyboard_last' : 'storyboard_first'
-}
-
-function resolveSbImageById(storyboardId, imageId) {
-  if (imageId == null) return null
-  const images = getSbAllImages(storyboardId)
-  return images.find((i) => i.id === imageId) || null
-}
-
-/** 首帧图（首尾帧模式下严格优先服务器绑定的 first_frame_image_id） */
-function getSbFirstImage(storyboardId) {
-  const images = getSbAllImages(storyboardId)
-  const sb = (store.storyboards || []).find((b) => b.id === storyboardId)
-
-  // 最高权威：服务器已绑定的首帧
-  if (sb?.first_frame_image_id != null) {
-    const bound = resolveSbImageById(storyboardId, sb.first_frame_image_id)
-    if (bound) return bound
-  }
-
-  const sel = sbSelectedImgId.value[storyboardId]
-  if (sel != null) {
-    const found = images.find((i) => i.id === sel)
-    if (found) return found
-  }
-
-  const typed = images.find((i) => i.frame_type === 'storyboard_first')
-  if (typed) return typed
-  // 不再回退到 images[0]，避免把尾帧图片误显示为首帧
-  return null
-}
-
-/** 尾帧图（首尾帧模式下严格优先服务器绑定的 last_frame_image_id） */
-function getSbLastImage(storyboardId) {
-  const images = getSbAllImages(storyboardId)
-  const sb = (store.storyboards || []).find((b) => b.id === storyboardId)
-
-  // 最高权威：服务器已绑定的尾帧（后端 bindStoryboardFrameImage 正确写入的 last_frame_image_id）
-  if (sb?.last_frame_image_id != null) {
-    const bound = resolveSbImageById(storyboardId, sb.last_frame_image_id)
-    if (bound) return bound
-  }
-
-  // 仅在没有服务器绑定时才考虑手动选择（首尾帧生成后我们会主动清除手动选择）
-  const sel = sbSelectedLastImgId.value[storyboardId]
-  if (sel != null) {
-    const found = images.find((i) => i.id === sel)
-    if (found) return found
-  }
-
-  const typed = images.find((i) => i.frame_type === 'storyboard_last')
-  if (typed) return typed
-
-  if (sb?.last_frame_image_url || sb?.last_frame_local_path) {
-    return {
-      id: sb.last_frame_image_id,
-      image_url: sb.last_frame_image_url,
-      local_path: sb.last_frame_local_path,
-      frame_type: 'storyboard_last',
-    }
-  }
-  return null
-}
-
-/** 该分镜是否有图（接口拉取的或 composed_image） */
-function hasSbImage(sb) {
-  if (storyboardUseFirstLastFrame.value) {
-    return hasSbFirstLastPair(sb)
-  }
-  return !!(getSbImage(sb.id) || (sb && (sb.composed_image || sb.image_url)))
-}
-
-function hasSbFirstLastPair(sb) {
-  return !!(getSbFirstImage(sb.id) && getSbLastImage(sb.id))
-}
-/** 取该分镜下所有已完成的非四宫格图片列表 */
-function getSbAllImages(storyboardId) {
-  const list = sbImages.value[storyboardId]
-  if (!Array.isArray(list)) return []
-  return list.filter((i) => i.status === 'completed' && i.frame_type !== 'quad_grid' && i.frame_type !== 'nine_grid' && (i.image_url || i.local_path))
-}
-function isAuxStoryboardImage(img) {
-  const ft = String(img?.frame_type || '')
-  return !!img?.aux_role || ft === 'storyboard_motion_sketch' || ft === 'storyboard_layout_sketch' || ft === 'storyboard_pose_ref' || ft === 'storyboard_camera_path' || ft === 'storyboard_aux_ref'
-}
-function getSbPrimaryImages(storyboardId) {
-  return getSbAllImages(storyboardId).filter((img) => !isAuxStoryboardImage(img))
-}
-/** 取当前主图（首尾帧模式下等同首帧） */
-function getSbImage(storyboardId) {
-  if (storyboardUseFirstLastFrame.value) return getSbFirstImage(storyboardId)
-  const images = getSbPrimaryImages(storyboardId)
-  if (!images.length) return null
-  const selectedId = sbSelectedImgId.value[storyboardId]
-  if (selectedId != null) {
-    const found = images.find((i) => i.id === selectedId)
-    if (found) return found
-  }
-  const confirmed = images
-    .filter((i) => i.selected)
-    .sort((a, b) => (Number(a.slot_index ?? 999) - Number(b.slot_index ?? 999)) || (Number(b.id || 0) - Number(a.id || 0)))[0]
-  if (confirmed) return confirmed
-  return images[0]
-}
-/** 取该分镜下的四宫格整图记录 */
-function getQuadGridImage(storyboardId) {
-  const list = sbImages.value[storyboardId]
-  if (!Array.isArray(list)) return null
-  return list.find((i) => i.status === 'completed' && (i.frame_type === 'quad_grid' || i.frame_type === 'nine_grid') && (i.image_url || i.local_path)) || null
-}
-/** 取该分镜所有已完成的视频记录 */
-function getSbAllVideos(storyboardId) {
-  const list = sbVideos.value[storyboardId]
-  if (!Array.isArray(list)) return []
-  return list.filter((i) => i.status === 'completed' && recordHasPlayableVideoUrl(i))
-}
-/** 取该分镜当前选中的视频（尊重 sbSelectedVideoId，否则默认第一条） */
-function getSbVideo(storyboardId) {
-  const all = getSbAllVideos(storyboardId)
-  if (all.length === 0) return null
-  const selectedId = sbSelectedVideoId.value[storyboardId]
-  if (selectedId != null) {
-    const found = all.find((v) => v.id === selectedId)
-    if (found) return found
-  }
-  return all[0]
-}
-/** 取下一个分镜（按 storyboard_number 顺序） */
-function getNextStoryboard(storyboardId) {
-  const list = store.storyboards || []
-  const idx = list.findIndex((s) => s.id === storyboardId)
-  if (idx === -1 || idx === list.length - 1) return null
-  return list[idx + 1]
-}
-
-/** 取上一个分镜（按 storyboard_number 顺序，用于“上镜尾帧”快速衔接） */
-function getPrevStoryboard(storyboardId) {
-  const list = store.storyboards || []
-  const idx = list.findIndex((s) => s.id === storyboardId)
-  if (idx === -1 || idx === 0) return null
-  return list[idx - 1]
-}
-
-/** 辅助判断：当前分镜是否有“上一镜尾帧”可用于快速替换首帧 */
-function canUsePrevTailAsFirst(sb) {
-  const p = getPrevStoryboard(sb?.id)
-  return !!(p && getSbLastImage(p.id))
-}
-
-/** 视频历史条：返回非当前选中的已完成视频列表 */
-function getVideoStripItems(storyboardId) {
-  const all = getSbAllVideos(storyboardId)
-  const current = getSbVideo(storyboardId)
-  return all
-    .filter((v) => !current || v.id !== current.id)
-    .map((v, idx) => ({
-      key: `vid-${v.id}`,
-      video: v,
-      src: assetVideoUrl(v),
-      label: `历史${idx + 2}`,
-    }))
-}
-/** 选中某条历史视频为当前视频，并持久化到分镜记录供合成视频使用 */
-function onSelectSbMainVideo(sb, video) {
-  sbSelectedVideoId.value = { ...sbSelectedVideoId.value, [sb.id]: video.id }
-  storyboardsAPI.update(sb.id, {
-    video_url: video.video_url || null,
-    local_path: video.local_path || undefined,
-  }).catch(e => console.warn('[主视频] 保存后端失败', e))
-}
-/** 取该分镜最近一次视频生成的错误信息（从 API 返回的记录或本地即时错误） */
-function getSbVideoError(storyboardId) {
-  if (sbVideoErrors.value[storyboardId]) return sbVideoErrors.value[storyboardId]
-  const list = sbVideos.value[storyboardId]
-  if (!Array.isArray(list) || list.length === 0) return ''
-  const hasCompleted = list.some((i) => i.status === 'completed' && recordHasPlayableVideoUrl(i))
-  if (hasCompleted) return ''
-  const bogusCompleted = list.find(
-    (i) => i.status === 'completed' && i.video_url && !recordHasPlayableVideoUrl(i)
-  )
-  if (bogusCompleted) {
-    const u = String(bogusCompleted.video_url || '').trim()
-    if (u) return u
-    if (bogusCompleted.error_msg) return bogusCompleted.error_msg
-  }
-  const failed = list.filter((i) => i.status === 'failed' && i.error_msg)
-  if (failed.length === 0) return ''
-  return failed[0].error_msg
 }
 
 function getGeneratingSetsBag() {
