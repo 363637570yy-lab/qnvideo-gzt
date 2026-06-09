@@ -155,6 +155,9 @@ export function useAiRouteSelection(options = {}) {
       aiRouteTypes.forEach(({ key }) => {
         runtimeAiConfigs[key] = []
       })
+      if (typeof options.setPipelineConcurrencyFallback === 'function') {
+        options.setPipelineConcurrencyFallback()
+      }
     } finally {
       aiRouteLoading.value = false
     }

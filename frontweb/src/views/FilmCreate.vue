@@ -110,7 +110,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, proxyRefs } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, DataAnalysis } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { useFilmStore } from '@/stores/film'
@@ -137,6 +137,7 @@ import FilmCreateHeader from '@/features/filmCreate/layout/FilmCreateHeader.vue'
 import FilmWorkbenchTabs from '@/features/filmCreate/layout/FilmWorkbenchTabs.vue'
 import ProjectPipelinePanel from '@/features/filmCreate/layout/ProjectPipelinePanel.vue'
 import QuickNav from '@/features/filmCreate/layout/QuickNav.vue'
+import { useQuickNavProgress } from '@/features/filmCreate/layout/useQuickNavProgress'
 import ResourceRefImageInputs from '@/features/filmCreate/shared/components/ResourceRefImageInputs.vue'
 import FilmCreateCommonDialogs from '@/features/filmCreate/shared/components/FilmCreateCommonDialogs.vue'
 import ScriptWorkbench from '@/features/filmCreate/workbenches/script/ScriptWorkbench.vue'
@@ -164,6 +165,7 @@ import { usePipelineRunner } from '@/features/filmCreate/shared/composables/useP
 import { usePipelineOrchestrator } from '@/features/filmCreate/shared/composables/usePipelineOrchestrator'
 import { useResourceImageManager } from '@/features/filmCreate/shared/composables/useResourceImageManager'
 import { useAssetStoryboardLinks } from '@/features/filmCreate/shared/composables/useAssetStoryboardLinks'
+import { useAdminProjectGuard } from '@/features/filmCreate/shared/composables/useAdminProjectGuard'
 import { localPathToUrl as resourceLocalPathToUrl, parseExtraImages as parseResourceExtraImages } from '@/features/filmCreate/shared/utils/resourceImages'
 import { useScriptWorkbench } from '@/features/filmCreate/workbenches/script/useScriptWorkbench'
 import { useCharacters } from '@/features/filmCreate/workbenches/characters/useCharacters'
@@ -179,43 +181,21 @@ import {
   imageReferenceUrlForApi as storyboardImageReferenceUrlForApi,
 } from '@/features/filmCreate/workbenches/storyboards/storyboardReferenceUtils'
 import { useVideoWorkbench } from '@/features/filmCreate/workbenches/video/useVideoWorkbench'
-import { getCurrentUser, isAdmin } from '@/utils/auth'
 
 const route = useRoute()
 const router = useRouter()
 const store = useFilmStore()
 const genStore = useGenerationTaskStore()
 const { isDark, toggle: toggleTheme } = useTheme()
-const currentUser = ref(getCurrentUser())
-const isAdminUser = ref(isAdmin())
 let loadDrama = async () => {}
-const projectOwnerLabel = computed(() => {
-  const owner = store.drama?.owner_user || store.drama?.created_by_user || {}
-  return owner.display_name || owner.username || store.drama?.owner_user_id || '未知用户'
-})
-const isAdminViewingOtherProject = computed(() => {
-  const ownerId = store.drama?.owner_user_id
-  const userId = currentUser.value?.id
-  return !!(isAdminUser.value && ownerId && userId && String(ownerId) !== String(userId))
-})
-
-async function confirmAdminProjectOperation(action = '继续操作') {
-  if (!isAdminViewingOtherProject.value) return true
-  try {
-    await ElMessageBox.confirm(
-      `你正在操作「${projectOwnerLabel.value}」的项目。确认要${action}吗？`,
-      '管理员操作确认',
-      { type: 'warning', confirmButtonText: '确认操作', cancelButtonText: '取消' }
-    )
-    return true
-  } catch {
-    return false
-  }
-}
-
-function canManageLibrary(item) {
-  return !!item?.can_manage || isAdminUser.value || (!!item?.created_by_user_id && String(item.created_by_user_id) === String(currentUser.value?.id))
-}
+const {
+  canManageLibrary,
+  confirmAdminProjectOperation,
+  currentUser,
+  isAdminUser,
+  isAdminViewingOtherProject,
+  projectOwnerLabel,
+} = useAdminProjectGuard({ store })
 
 // ── Composable: Navigation ─────────────────────────────
 const filmWorkbenchTab = ref('script')
@@ -313,11 +293,10 @@ const {
   storyboardImageAiPayload,
   videoAiPayload,
   ttsAiPayload,
-  applyRuntimeRoutingPolicies,
   loadRuntimeAiConfigs,
   toggleAiRoutesExpanded,
   onAiRouteSelectVisible,
-} = useAiRouteSelection({ pipelineConcurrency, pipelineVideoConcurrency })
+} = useAiRouteSelection({ pipelineConcurrency, pipelineVideoConcurrency, setPipelineConcurrencyFallback })
 const {
   DEFAULT_GENERATION_STYLE,
   IMAGE_TIER_AREAS,
@@ -918,15 +897,6 @@ const storyboardGenerating = computed(() =>
 /** 分镜批量生成结束后，按镜序逐个润色全能片段（仅勾选全能模式且各镜为 universal 且有正文时） */
 const universalOmniPolishRunning = ref(false)
 const universalOmniPolishProgress = ref({ current: 0, total: 0, label: '' })
-async function loadPipelineConcurrency() {
-  try {
-    const res = await aiAPI.runtimeRoutes()
-    applyRuntimeRoutingPolicies(res?.routing_policies || {})
-  } catch (_) {
-    setPipelineConcurrencyFallback()
-  }
-}
-
 function hasAssetImage(item) {
   if (!item) return false
   return !!(item.image_url || item.local_path)
@@ -1094,77 +1064,38 @@ const {
   workflowPresetPayload,
 })
 
-// 资源管理大面板及子区块折叠状态
-const resourcePanelCollapsed = ref(false)
+// 资源工作台子区块折叠状态
 const charactersBlockCollapsed = ref(false)
 const propsBlockCollapsed = ref(false)
 const scenesBlockCollapsed = ref(false)
 
-// 分镜行内编辑状态（按 storyboard id 存储）
-// navCollapsed/storyboardMenuExpanded/toggleNav → 已移至 useNavigation composable
-
-/** 左侧导航各步骤状态 */
-const navSteps = computed(() => {
-  const epRunning = genStore.getRunningForEpisode(dramaId.value, currentEpisodeId.value)
-  // 剧本
-  const hasScript = !!(scriptContent?.value?.trim())
-  const scriptStatus = (storyGenerating.value || scriptGenerating.value)
-    ? 'generating'
-    : hasScript ? 'done' : 'pending'
-
-  // 角色
-  const charList = characters.value || []
-  const charDone = charList.length > 0 && charList.every(c => hasAssetImage(c))
-  const charGen = charactersGenerating.value || generatingCharIds.size > 0
-    || epRunning.some((t) => t.resourceType === GEN_RESOURCE.CHAR_IMAGE || t.resourceType === GEN_RESOURCE.EXTRACT_CHARACTERS)
-  const charStatus = charGen ? 'generating' : charDone ? 'done' : charList.length > 0 ? 'partial' : 'pending'
-
-  // 道具
-  const propList = props.value || []
-  const propDone = propList.length > 0 && propList.every(p => hasAssetImage(p))
-  const propGen = propsExtracting.value || generatingPropIds.size > 0
-    || epRunning.some((t) => t.resourceType === GEN_RESOURCE.PROP_IMAGE || t.resourceType === GEN_RESOURCE.EXTRACT_PROPS)
-  const propStatus = propGen ? 'generating' : propDone ? 'done' : propList.length > 0 ? 'partial' : 'pending'
-
-  // 场景
-  const sceneList = scenes.value || []
-  const sceneDone = sceneList.length > 0 && sceneList.every(s => hasAssetImage(s))
-  const sceneGen = scenesExtracting.value || generatingSceneIds.size > 0
-    || epRunning.some((t) => t.resourceType === GEN_RESOURCE.SCENE_IMAGE || t.resourceType === GEN_RESOURCE.EXTRACT_SCENES)
-  const sceneStatus = sceneGen ? 'generating' : sceneDone ? 'done' : sceneList.length > 0 ? 'partial' : 'pending'
-
-  // 分镜脚本
-  const sbList = storyboards.value || []
-  const sbScriptDone = sbList.length > 0
-  const sbScriptGen = storyboardGenerating.value || universalOmniPolishRunning.value
-    || epRunning.some((t) => t.resourceType === GEN_RESOURCE.GENERATE_STORYBOARD)
-  const sbScriptStatus = sbScriptGen ? 'generating' : sbScriptDone ? 'done' : 'pending'
-
-  // 分镜图
-  const sbImgDone = sbList.length > 0 && sbList.every(sb => hasSbImage(sb))
-  const sbImgGen = generatingSbImageIds.size > 0 || batchImageRunning.value || epRunning.some((t) =>
-    t.resourceType === GEN_RESOURCE.SB_IMAGE
-    || t.resourceType === GEN_RESOURCE.SB_FIRST_IMAGE
-    || t.resourceType === GEN_RESOURCE.SB_LAST_IMAGE
-  )
-  const sbImgStatus = sbImgGen ? 'generating' : sbImgDone ? 'done' : sbList.length > 0 ? 'partial' : 'pending'
-
-  // 视频
-  const sbVideoAllDone = sbList.length > 0 && sbList.every(sb => getSbAllVideos(sb.id).length > 0)
-  const sbVideoSome = sbList.some(sb => getSbAllVideos(sb.id).length > 0)
-  const sbVideoGen = batchVideoRunning.value || generatingSbVideoIds.size > 0
-    || epRunning.some((t) => t.resourceType === GEN_RESOURCE.SB_VIDEO)
-  const videoStatus = sbVideoGen ? 'generating' : sbVideoAllDone ? 'done' : sbVideoSome ? 'partial' : 'pending'
-
-  return [
-    { key: 'script',   label: '故事剧本',   anchor: 'anchor-script',     status: scriptStatus,    count: hasScript ? 1 : 0 },
-    { key: 'chars',    label: '角色',        anchor: 'anchor-characters', status: charStatus,      count: charList.length },
-    { key: 'props',    label: '道具',        anchor: 'anchor-props',      status: propStatus,      count: propList.length },
-    { key: 'scenes',   label: '场景',        anchor: 'anchor-scenes',     status: sceneStatus,     count: sceneList.length },
-    { key: 'sb',       label: '分镜脚本',   anchor: 'anchor-storyboard', status: sbScriptStatus,  count: sbList.length },
-    { key: 'sbimg',    label: '分镜图',      anchor: 'anchor-storyboard', status: sbImgStatus,     count: sbList.length },
-    { key: 'video',    label: '分镜视频',   anchor: 'anchor-video',      status: videoStatus,     count: 0 },
-  ]
+const { navSteps } = useQuickNavProgress({
+  GEN_RESOURCE,
+  batchImageRunning,
+  batchVideoRunning,
+  characters,
+  charactersGenerating,
+  currentEpisodeId,
+  dramaId,
+  genStore,
+  generatingCharIds,
+  generatingPropIds,
+  generatingSbImageIds,
+  generatingSbVideoIds,
+  generatingSceneIds,
+  getSbAllVideos,
+  hasAssetImage,
+  hasSbImage,
+  props,
+  propsExtracting,
+  scenes,
+  scenesExtracting,
+  scriptContent,
+  scriptGenerating,
+  storyboards,
+  storyboardGenerating,
+  storyGenerating,
+  universalOmniPolishRunning,
 })
 
 const {
@@ -1658,7 +1589,6 @@ const filmCreateCtx = proxyRefs({
   addSceneRefFileInput,
   addSceneRefImage,
   AI_ROUTE_METADATA_KEY,
-  aiAPI,
   AIConfigContent,
   aiRouteLoading,
   aiRoutePayload,
@@ -1673,7 +1603,6 @@ const filmCreateCtx = proxyRefs({
   applyDefaultWorkflowSelections,
   applyProjectAiRouteSelection,
   applyRouteToStore,
-  applyRuntimeRoutingPolicies,
   applyScriptWorkbenchTab,
   applyStoryboardsWorkbenchTab,
   applyVideoComposeWorkbenchTab,
@@ -1841,7 +1770,6 @@ const filmCreateCtx = proxyRefs({
   editSceneSaving,
   effectiveStoryboardFrameCount,
   ElMessage,
-  ElMessageBox,
   estimateVideoDurationSecFromCharLen,
   Expand,
   exportingStoryboardSheet,
@@ -1875,7 +1803,6 @@ const filmCreateCtx = proxyRefs({
   genStore,
   getActiveVideoAiConfig,
   getCharAffectedStoryboards,
-  getCurrentUser,
   getFinalizeMergeOptions,
   getGeneratingSetsBag,
   getMainImageUrlForVideo,
@@ -1970,7 +1897,6 @@ const filmCreateCtx = proxyRefs({
   loadDramaPromise,
   Loading,
   loadInitialWorkbenchData,
-  loadPipelineConcurrency,
   loadPropLibraryList,
   loadRuntimeAiConfigs,
   loadSceneLibraryList,
@@ -2222,7 +2148,6 @@ const filmCreateCtx = proxyRefs({
   resolveVideoSpec,
   resourceElapsedLabel,
   resourceImageFileInput,
-  resourcePanelCollapsed,
   resourceUploadId,
   resourceUploadType,
   restoreSelectionsFromBackend,
@@ -2491,7 +2416,6 @@ const filmCreateCtx = proxyRefs({
 
 onMounted(async () => {
   window.addEventListener('keydown', onImagePreviewKeydown)
-  loadPipelineConcurrency()
   loadWorkflowPresets()
   loadRuntimeAiConfigs()
   applyRouteToStore()
