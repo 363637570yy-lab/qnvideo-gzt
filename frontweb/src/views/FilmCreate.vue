@@ -108,7 +108,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, nextTick, proxyRefs } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, proxyRefs } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, DataAnalysis } from '@element-plus/icons-vue'
@@ -213,7 +213,18 @@ function canManageLibrary(item) {
 }
 
 // ── Composable: Navigation ─────────────────────────────
-const { navCollapsed, storyboardMenuExpanded, toggleNav, scrollToTop, scrollToAnchor } = useNavigation()
+const filmWorkbenchTab = ref('script')
+const {
+  anchorTabMap,
+  goStoryboardAnchor,
+  goWorkbenchAnchor,
+  navCollapsed,
+  storyboardMenuExpanded,
+  switchWorkbenchTabForAnchor,
+  toggleNav,
+  scrollToTop,
+  scrollToAnchor,
+} = useNavigation({ filmWorkbenchTab })
 
 function goList() {
   router.push('/')
@@ -416,7 +427,6 @@ const {
   trackFilmCreateAction,
   onEpisodeSelect: (...args) => onEpisodeSelect(...args),
 })
-const filmWorkbenchTab = ref('script')
 const workbenchTabLoaded = reactive({
   script: false,
   characters: false,
@@ -425,33 +435,6 @@ const workbenchTabLoaded = reactive({
   storyboards: false,
   videoCompose: false,
 })
-const anchorTabMap = {
-  'anchor-script': 'script',
-  'anchor-characters': 'characters',
-  'anchor-scenes': 'scenes',
-  'anchor-props': 'props',
-  'anchor-storyboard': 'storyboards',
-  'anchor-video': 'videoCompose',
-}
-
-function switchWorkbenchTabForAnchor(anchor) {
-  const tab = anchorTabMap[anchor]
-  if (tab) filmWorkbenchTab.value = tab
-}
-
-async function goWorkbenchAnchor(stepOrAnchor) {
-  const anchor = typeof stepOrAnchor === 'string' ? stepOrAnchor : stepOrAnchor?.anchor
-  if (!anchor) return
-  switchWorkbenchTabForAnchor(anchor)
-  await nextTick()
-  scrollToAnchor(anchor)
-}
-
-async function goStoryboardAnchor(sbId) {
-  filmWorkbenchTab.value = 'storyboards'
-  await nextTick()
-  scrollToStoryboard(sbId)
-}
 
 const {
   clipSecondsForStoryboardEstimate,
@@ -2025,7 +2008,6 @@ const filmCreateCtx = proxyRefs({
   Moon,
   navCollapsed,
   navSteps,
-  nextTick,
   normalizeAiRouteId,
   normalizeAudioRelPath,
   normalizeImageSpec,
