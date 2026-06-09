@@ -129,7 +129,6 @@ import { uploadAPI } from '@/api/upload'
 import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
-import { parseScriptIntoEpisodes } from '@/utils/scriptEpisodes'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
@@ -166,7 +165,6 @@ import { usePipelineOrchestrator } from '@/features/filmCreate/shared/composable
 import { useResourceImageManager } from '@/features/filmCreate/shared/composables/useResourceImageManager'
 import { useAssetStoryboardLinks } from '@/features/filmCreate/shared/composables/useAssetStoryboardLinks'
 import { localPathToUrl as resourceLocalPathToUrl, parseExtraImages as parseResourceExtraImages } from '@/features/filmCreate/shared/utils/resourceImages'
-import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useScriptWorkbench } from '@/features/filmCreate/workbenches/script/useScriptWorkbench'
 import { useCharacters } from '@/features/filmCreate/workbenches/characters/useCharacters'
 import { useProps as usePropsComposable } from '@/features/filmCreate/workbenches/props/useProps'
@@ -373,6 +371,9 @@ const {
   novelImportReset,
   novelMaxChapters,
   novelText,
+  onAddEpisode,
+  onGenerateScript,
+  onGenerateStory,
   onImportNovel,
   onNovelFileChange,
   onPickScriptFromDialog,
@@ -389,6 +390,7 @@ const {
   selectScriptDramas,
   selectScriptImporting,
   selectScriptLoading,
+  saveScriptToBackend,
   showNovelImport,
   showSelectScriptDialog,
   storyEpisodeCount,
@@ -402,6 +404,17 @@ const {
   router,
   loadDrama: (...args) => loadDrama(...args),
   maxStoryEpisodeCount: MAX_STORY_EPISODE_COUNT,
+  generationStyle,
+  projectAspectRatio,
+  videoClipDuration,
+  scriptLanguage,
+  projectStylePromptMetadata,
+  projectMediaSpecMetadata,
+  projectAiRouteSelectionForSave,
+  aiRouteMetadataKey: AI_ROUTE_METADATA_KEY,
+  textAiPayload,
+  trackFilmCreateAction,
+  onEpisodeSelect: (...args) => onEpisodeSelect(...args),
 })
 const filmWorkbenchTab = ref('script')
 const workbenchTabLoaded = reactive({
@@ -1600,128 +1613,6 @@ function updateStoryboardDialogue(sbId) {
   // 可在此防抖后调用后端更新 dialogue
 }
 
-/** 将当前剧本内容保存到后端（创建/更新项目与集数），供「保存剧本」与「AI 生成」后自动保存共用 */
-async function saveScriptToBackend(content) {
-  const trimmed = (content ?? '').toString().trim()
-  if (!trimmed) return
-  const parsed = parseScriptIntoEpisodes(trimmed)
-  const multiFromMarkers = parsed.split && parsed.episodes.length >= 2
-  const toPayload = (list) =>
-    list.map((e, i) => ({
-      episode_number: i + 1,
-      title: (e.title && String(e.title).trim()) || '第' + (i + 1) + '集',
-      script_content: e.script_content ?? '',
-      description: null,
-      duration: 0,
-    }))
-
-  let dramaId = store.dramaId
-  const curEp = store.currentEpisode
-  if (!dramaId) {
-    const drama = await dramaAPI.create({
-      title: scriptTitle.value || '新故事',
-      description: storyInput.value?.trim() || trimmed.slice(0, 200),
-      genre: storyType.value || undefined,
-      style: generationStyle.value || undefined,
-      metadata: {
-        ...projectStylePromptMetadata(),
-        ...projectMediaSpecMetadata(),
-        [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
-        story_style: storyStyle.value || undefined,
-        aspect_ratio: projectAspectRatio.value || '16:9',
-        video_clip_duration: videoClipDuration.value || 10,
-        script_language: scriptLanguage.value || 'zh',
-      },
-    })
-    store.setDrama(drama)
-    dramaId = drama.id
-    savedCurrentEpisodeNumber.value = 1
-    const first = parsed.episodes[0] || { title: '', script_content: trimmed }
-    const episodes = multiFromMarkers
-      ? toPayload(parsed.episodes)
-      : [
-          {
-            episode_number: 1,
-            title: scriptTitle.value || first.title || '第1集',
-            script_content: first.script_content || trimmed,
-          },
-        ]
-    await dramaAPI.saveEpisodes(dramaId, episodes)
-    await loadDrama()
-    if (route.params.id === 'new') {
-      router.replace('/film/' + dramaId)
-    }
-    if (multiFromMarkers) {
-      ElMessage.success(`已按「第N集/章/节」拆分为 ${episodes.length} 集`)
-    }
-    return { created: true }
-  }
-  if (multiFromMarkers) {
-    savedCurrentEpisodeNumber.value = 1
-    const payload = toPayload(parsed.episodes)
-    await dramaAPI.saveEpisodes(dramaId, payload)
-    if (storyInput.value?.trim()) {
-      await dramaAPI.saveOutline(dramaId, {
-        summary: storyInput.value.trim(),
-        genre: storyType.value || undefined,
-        style: generationStyle.value || undefined,
-        metadata: {
-          ...projectStylePromptMetadata(),
-          ...projectMediaSpecMetadata(),
-          [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
-          story_style: storyStyle.value || undefined,
-          aspect_ratio: projectAspectRatio.value || '16:9',
-          video_clip_duration: videoClipDuration.value || 10,
-          script_language: scriptLanguage.value || 'zh',
-        },
-      }).catch(() => {})
-    }
-    await loadDrama()
-    ElMessage.success(`已按「第N集/章/节」拆分为 ${payload.length} 集`)
-    return { created: false, splitEpisodes: true }
-  }
-  const episodes = store.drama?.episodes || []
-  savedCurrentEpisodeNumber.value = curEp?.episode_number ?? 1
-  const updated = episodes.map((ep, i) => {
-    const num = ep.episode_number ?? i + 1
-    const isCurrent = curEp && Number(ep.id) === Number(curEp.id)
-    const first = parsed.episodes[0]
-    const singleBody = first?.script_content ?? trimmed
-    const singleTitle = first?.title && String(first.title).trim()
-    return {
-      episode_number: num,
-      title: isCurrent
-        ? scriptTitle.value || singleTitle || '第' + num + '集'
-        : ep.title || '',
-      script_content: isCurrent ? (parsed.episodes.length === 1 && singleTitle ? singleBody : trimmed) : (ep.script_content || ''),
-      description: ep.description,
-      duration: ep.duration,
-    }
-  })
-  if (updated.length === 0) {
-    updated.push({ episode_number: 1, title: scriptTitle.value || '第1集', script_content: trimmed })
-  }
-  await dramaAPI.saveEpisodes(dramaId, updated)
-  if (storyInput.value?.trim()) {
-    await dramaAPI.saveOutline(dramaId, {
-      summary: storyInput.value.trim(),
-      genre: storyType.value || undefined,
-      style: generationStyle.value || undefined,
-      metadata: {
-        ...projectStylePromptMetadata(),
-        ...projectMediaSpecMetadata(),
-        [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
-        story_style: storyStyle.value || undefined,
-        aspect_ratio: projectAspectRatio.value || '16:9',
-        video_clip_duration: videoClipDuration.value || 10,
-        script_language: scriptLanguage.value || 'zh',
-      },
-    }).catch(() => {})
-  }
-  await loadDrama()
-  return { created: false }
-}
-
 /**
  * @param {boolean} includeGenerationStyle - 仅在选择「画面风格」为 true：写入 dramas.style 与 style_prompt_*。
  * 其它项目设置改为 false，避免界面未刷新时仍用旧的 generationStyle 覆盖外部已更新的画风（如直接调 API PUT outline）。
@@ -1752,94 +1643,6 @@ async function saveProjectSettings(includeGenerationStyle = false) {
     payload.style = generationStyle.value || undefined
   }
   dramaAPI.saveOutline(store.dramaId, payload).catch(e => console.error('Settings auto-save failed', e))
-}
-
-async function onGenerateStory() {
-  trackFilmCreateAction('generate_script_click')
-  normalizeStoryEpisodeCount()
-  await runGenerateStoryFromPremise({
-    premise: storyInput.value,
-    storyStyle: storyStyle.value,
-    storyType: storyType.value,
-    storyEpisodeCount: storyEpisodeCount.value,
-    scriptTitle: scriptTitle.value,
-    generationStyle: generationStyle.value,
-    projectAspectRatio: projectAspectRatio.value,
-    videoClipDuration: videoClipDuration.value,
-    scriptLanguage: scriptLanguage.value,
-    store,
-    router,
-    route,
-    loadDrama,
-    savedCurrentEpisodeNumber,
-    selectedEpisodeId,
-    onEpisodeSelect,
-    storyGenerating,
-    scriptGenerating,
-    aiConfigPayload: textAiPayload(),
-    replaceRouteWhenNew: true,
-    skipPostLoad: false,
-    onComplete: ({ episodeCount }) => {
-      trackFilmCreateAction('generate_script_complete', {
-        extra: { episode_count: episodeCount },
-      })
-    },
-  })
-}
-
-async function onGenerateScript() {
-  trackFilmCreateAction('save_script_click')
-  const content = (scriptContent.value ?? store.scriptContent ?? '').toString().trim()
-  if (!content) {
-    ElMessage.warning('请先在「故事生成」中点击 AI 生成，或手动输入剧本内容')
-    return
-  }
-  scriptGenerating.value = true
-  try {
-    const result = await saveScriptToBackend(content)
-    if (result?.created) {
-      ElMessage.success('项目已创建，剧本已保存')
-    } else {
-      ElMessage.success('剧本已保存')
-    }
-    trackFilmCreateAction('save_script_complete', {
-      extra: { created_project: !!result?.created },
-    })
-  } catch (e) {
-    ElMessage.error(e.message || '保存失败')
-  } finally {
-    scriptGenerating.value = false
-  }
-}
-
-async function onAddEpisode() {
-  if (!store.dramaId) return
-  const list = store.drama?.episodes || []
-  const nextNum = list.length > 0
-    ? Math.max(...list.map((e) => Number(e.episode_number) || 0), 0) + 1
-    : 1
-  const updated = list.map((ep, i) => ({
-    episode_number: ep.episode_number ?? i + 1,
-    title: ep.title || '第' + (ep.episode_number ?? i + 1) + '集',
-    script_content: ep.script_content || '',
-    description: ep.description,
-    duration: ep.duration
-  }))
-  updated.push({
-    episode_number: nextNum,
-    title: '第' + nextNum + '集',
-    script_content: '',
-    description: null,
-    duration: 0
-  })
-  try {
-    await dramaAPI.saveEpisodes(store.dramaId, updated)
-    savedCurrentEpisodeNumber.value = nextNum
-    await loadDrama()
-    ElMessage.success('已添加第' + nextNum + '集')
-  } catch (e) {
-    ElMessage.error(e.message || '添加失败')
-  }
 }
 
 /** 将结构化视角三元组转为英文描述片段 + 中文标签（与 angleService.js 保持一致） */
@@ -2374,7 +2177,6 @@ const filmCreateCtx = proxyRefs({
   parseImageParamsJson,
   parseJsonObject,
   parseRatioValue,
-  parseScriptIntoEpisodes,
   pendingProjectStyleSave,
   Picture,
   PropWorkbench,
@@ -2462,7 +2264,6 @@ const filmCreateCtx = proxyRefs({
   routePrimaryConfig,
   router,
   runConcurrently,
-  runGenerateStoryFromPremise,
   runOneClickPipeline,
   runPipelineCountdown,
   runRepairPipeline,
