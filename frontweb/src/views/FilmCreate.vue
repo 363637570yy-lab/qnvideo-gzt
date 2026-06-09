@@ -709,6 +709,8 @@ const {
   applyScriptWorkbenchTab,
   applyAssetsWorkbenchTab,
   applyStoryboardsWorkbenchTab,
+  refreshStoryboardsForEpisode,
+  refreshStoryboardsOnly,
   applyVideoComposeWorkbenchTab,
   loadScriptWorkbenchTab,
   loadAssetWorkbenchTab,
@@ -718,6 +720,7 @@ const {
   loadInitialWorkbenchData,
 } = useWorkbenchLoader({
   store,
+  dramaAPI,
   workbenchTabLoaded,
   filmWorkbenchTab,
   selectedEpisodeId,
@@ -2298,28 +2301,6 @@ async function onSaveSbVideoPrompt(sb) {
   } catch (e) {
     ElMessage.error(e.message || '保存失败')
   }
-}
-
-/** 生成期间轻量刷新分镜列表（只更新指定集 storyboards，不重载整个 drama） */
-async function refreshStoryboardsForEpisode(episodeId) {
-  if (!episodeId) return
-  try {
-    const res = await dramaAPI.getStoryboards(episodeId)
-    const list = Array.isArray(res) ? res : (res?.storyboards ?? null)
-    if (!Array.isArray(list)) return
-    if (Number(store.currentEpisode?.id) === Number(episodeId)) {
-      store.currentEpisode.storyboards = list
-    }
-    const epInDrama = store.drama?.episodes?.find((e) => Number(e.id) === Number(episodeId))
-    if (epInDrama) {
-      epInDrama.storyboards = list
-    }
-  } catch (_) { /* 静默忽略，不影响主流程 */ }
-}
-
-/** @deprecated 使用 refreshStoryboardsForEpisode */
-async function refreshStoryboardsOnly() {
-  return refreshStoryboardsForEpisode(currentEpisodeId.value)
 }
 
 onBeforeUnmount(() => {

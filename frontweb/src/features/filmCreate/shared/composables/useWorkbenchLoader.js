@@ -13,6 +13,7 @@ function assetTypeForWorkbenchTab(tab) {
 export function useWorkbenchLoader(deps) {
   const {
     store,
+    dramaAPI,
     workbenchTabLoaded,
     filmWorkbenchTab,
     selectedEpisodeId,
@@ -174,6 +175,26 @@ export function useWorkbenchLoader(deps) {
     syncStoryboardStateFromEpisode(merged)
   }
 
+  async function refreshStoryboardsForEpisode(episodeId) {
+    if (!episodeId) return
+    try {
+      const res = await dramaAPI.getStoryboards(episodeId)
+      const list = Array.isArray(res) ? res : (res?.storyboards ?? null)
+      if (!Array.isArray(list)) return
+      if (Number(store.currentEpisode?.id) === Number(episodeId)) {
+        store.currentEpisode.storyboards = list
+      }
+      const epInDrama = store.drama?.episodes?.find((episode) => Number(episode.id) === Number(episodeId))
+      if (epInDrama) {
+        epInDrama.storyboards = list
+      }
+    } catch (_) { /* 生成期间的轻量刷新失败不阻断主流程 */ }
+  }
+
+  async function refreshStoryboardsOnly() {
+    return refreshStoryboardsForEpisode(currentEpisodeId.value)
+  }
+
   function applyVideoComposeWorkbenchTab(data) {
     const boards = Array.isArray(data?.storyboards) ? data.storyboards : []
     const latestMerge = data?.latest_merge || null
@@ -294,6 +315,8 @@ export function useWorkbenchLoader(deps) {
     applyScriptWorkbenchTab,
     applyAssetsWorkbenchTab,
     applyStoryboardsWorkbenchTab,
+    refreshStoryboardsForEpisode,
+    refreshStoryboardsOnly,
     applyVideoComposeWorkbenchTab,
     loadScriptWorkbenchTab,
     loadAssetWorkbenchTab,
