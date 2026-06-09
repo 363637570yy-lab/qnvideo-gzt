@@ -744,14 +744,25 @@ const {
 })
 
 const {
+  canSplitSbByAudio,
+  countDialogueLinesInSb,
   formatSrtTimestamp,
   normalizeAudioRelPath,
+  onBatchInferParams,
   onExportNarrationSrt,
   onExportStoryboardSheet,
+  onLinkTailFrameToNext,
+  onOpenVideoParamsDialog,
+  onRegenerateLayoutDescription,
   onSaveSbNarrationField,
+  onSaveSbVideoFields,
+  onSaveVideoParams,
+  onSplitSbByAudio,
   onTtsSbDialogue,
   onTtsSbNarration,
   onUpscaleSbImage,
+  onUsePrevTailAsFirst,
+  onVideoParamsDialogClosed,
   playSbDialogueTts,
   playSbNarrationTts,
   playSbTtsFromRel,
@@ -760,7 +771,9 @@ const {
   stopSbTtsPreview,
 } = useStoryboardAuxActions({
   store,
+  imagesAPI,
   storyboardsAPI,
+  dramaId,
   currentEpisodeId,
   storyboards,
   exportingStoryboardSheet,
@@ -777,12 +790,31 @@ const {
   sbDialogue,
   sbAction,
   sbResult,
+  sbAngle,
+  sbAngleH,
+  sbAngleV,
+  sbAngleS,
   sbAtmosphere,
+  sbLighting,
+  sbDof,
   sbShotType,
   sbMovement,
   sbLayoutDescription,
+  sbCreationMode,
+  sbSelectedImgId,
   sbUniversalSegmentText,
+  videoClipDuration,
+  showVideoParamsDialog,
+  videoParamsTarget,
+  videoParamsSaving,
+  splitByAudioLoading,
+  inferringParams,
+  regeneratingLayoutSbIds,
+  linkingTailFrameIds,
+  usingPrevTailAsFirstIds,
   storyboardUseFirstLastFrame,
+  loadDrama,
+  refreshStoryboardsOnly,
   loadSingleStoryboardMedia,
   ttsAiPayload,
   getSbFirstImage,
@@ -792,6 +824,10 @@ const {
   getSbSelectedScene,
   getSbSelectedCharacters,
   getSbSelectedProps,
+  getNextStoryboard,
+  getPrevStoryboard,
+  getSbVideo,
+  onSelectSbFrameImage,
   getMovementLabel,
 })
 
@@ -2227,43 +2263,6 @@ function angleToPromptFragment(h, v, s) {
   return { fragment, label }
 }
 
-async function onSaveSbVideoFields(sb) {
-  if (!sb?.id) return
-  try {
-    await storyboardsAPI.update(sb.id, {
-      title: (sbTitle.value[sb.id] || '').toString().trim() || null,
-      location: (sbLocation.value[sb.id] || '').toString().trim() || null,
-      time: (sbTime.value[sb.id] || '').toString().trim() || null,
-      duration: Number(sbDuration.value[sb.id]) || Number(videoClipDuration.value) || 10,
-      action: (sbAction.value[sb.id] || '').toString().trim() || null,
-      dialogue: (sbDialogue.value[sb.id] || '').toString().trim() || null,
-      narration: (sbNarration.value[sb.id] || '').toString().trim() || null,
-      atmosphere: (sbAtmosphere.value[sb.id] || '').toString().trim() || null,
-      result: (sbResult.value[sb.id] || '').toString().trim() || null,
-      angle: (sbAngle.value[sb.id] || '').toString().trim() || null,
-      angle_h: sbAngleH.value[sb.id] || null,
-      angle_v: sbAngleV.value[sb.id] || null,
-      angle_s: sbAngleS.value[sb.id] || null,
-      movement: (sbMovement.value[sb.id] || '').toString().trim() || null,
-      lighting_style: sbLighting.value[sb.id] || null,
-      depth_of_field: sbDof.value[sb.id] || null,
-      shot_type: (sbShotType.value[sb.id] || '').toString().trim() || null,
-      layout_description: (sbLayoutDescription.value[sb.id] || '').toString().trim() || null,
-      creation_mode: sbCreationMode.value[sb.id] === 'universal' ? 'universal' : 'classic',
-      universal_segment_text: (sbUniversalSegmentText.value[sb.id] || '').toString().trim() || null,
-    })
-    const rebuilt = await storyboardsAPI.rebuildVideoPrompt(sb.id)
-    const newVp = (rebuilt?.video_prompt && String(rebuilt.video_prompt).trim()) || ''
-    if (newVp) {
-      videoParamsTarget.value = { ...sb, video_prompt: newVp }
-    }
-    await loadDrama()
-    ElMessage.success('已保存，视频提示词已按最新规则自动生成')
-  } catch (e) {
-    ElMessage.error(e.message || '保存失败')
-  }
-}
-
 async function onSaveSbVideoPrompt(sb) {
   if (!sb?.id) return
   try {
@@ -2273,208 +2272,6 @@ async function onSaveSbVideoPrompt(sb) {
     ElMessage.success('视频提示词已保存')
   } catch (e) {
     ElMessage.error(e.message || '保存失败')
-  }
-}
-
-function onOpenVideoParamsDialog(sb) {
-  videoParamsTarget.value = sb
-  showVideoParamsDialog.value = true
-}
-
-/** 取消关闭弹窗时，将创作模式与片段描述与服务器状态对齐（避免仅改单选未保存导致本地漂移） */
-function onVideoParamsDialogClosed() {
-  const sb = videoParamsTarget.value
-  if (!sb?.id) return
-  const row = (storyboards.value || []).find((x) => Number(x.id) === Number(sb.id))
-  if (!row) return
-  sbCreationMode.value = { ...sbCreationMode.value, [sb.id]: row.creation_mode === 'universal' ? 'universal' : 'classic' }
-  sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: (row.universal_segment_text ?? '').toString() }
-}
-
-function countDialogueLinesInSb(sb) {
-  const raw = ((sbDialogue.value[sb.id] ?? sb.dialogue) || '').toString().trim()
-  if (!raw) return 0
-  const matches = raw.match(/[\u4e00-\u9fa5A-Za-z0-9·]{1,16}[：:]/g)
-  return matches?.length || (raw ? 1 : 0)
-}
-
-function canSplitSbByAudio(sb) {
-  if (!sb?.id) return false
-  const dialogueCount = countDialogueLinesInSb(sb)
-  const hasNarration = !!((sbNarration.value[sb.id] ?? sb.narration) || '').toString().trim()
-  return dialogueCount + (hasNarration ? 1 : 0) >= 2
-}
-
-async function onSplitSbByAudio(sb) {
-  if (!sb?.id) return
-  try {
-    await ElMessageBox.confirm(
-      '将把本镜按「每句对白一条 + 旁白单独一条」拆成多个分镜，原镜变为第一条。已生成的视频不会保留。是否继续？',
-      '按对白拆镜',
-      { type: 'warning', confirmButtonText: '拆镜', cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  splitByAudioLoading.value = true
-  try {
-    if (showVideoParamsDialog.value && videoParamsTarget.value?.id === sb.id) {
-      await onSaveSbVideoFields(sb)
-    }
-    const res = await storyboardsAPI.splitByAudio(sb.id)
-    const n = res?.storyboard_ids?.length ?? 0
-    const summary = res?.plans_summary || ''
-    showVideoParamsDialog.value = false
-    await loadDrama()
-    ElMessage.success(summary ? `已拆成 ${n} 条：${summary}` : `已拆成 ${n} 条分镜`)
-  } catch (e) {
-    ElMessage.error(e.message || '拆镜失败')
-  } finally {
-    splitByAudioLoading.value = false
-  }
-}
-
-async function onSaveVideoParams() {
-  const sb = videoParamsTarget.value
-  if (!sb?.id) return
-  videoParamsSaving.value = true
-  try {
-    await onSaveSbVideoFields(sb)
-    showVideoParamsDialog.value = false
-  } catch (e) {
-    ElMessage.error(e.message || '保存失败')
-  } finally {
-    videoParamsSaving.value = false
-  }
-}
-
-async function onBatchInferParams() {
-  if (!currentEpisodeId.value) return
-  inferringParams.value = true
-  try {
-    const res = await storyboardsAPI.batchInferParams(currentEpisodeId.value, false)
-    await loadDrama()
-    ElMessage.success(`摄影参数推断完成，更新了 ${res?.updated ?? 0} 条分镜`)
-  } catch (e) {
-    ElMessage.error(e.message || '推断失败')
-  } finally {
-    inferringParams.value = false
-  }
-}
-
-/** 一键用 AI 重新生成/优化本分镜的布局描述（自动参考上下分镜保证前后连贯） */
-async function onRegenerateLayoutDescription(sb) {
-  if (sb && typeof sb === 'object' && sb.__v_isRef) sb = sb.value
-  if (!sb?.id) return
-  regeneratingLayoutSbIds.add(sb.id)
-  try {
-    const res = await storyboardsAPI.regenerateLayoutDescription(sb.id)
-    const newText = res?.layout_description || res?.data?.layout_description
-    if (newText) {
-      // 直接用本次 AI 返回的结果更新本地编辑状态（响应里已包含新文本）
-      sbLayoutDescription.value = { ...sbLayoutDescription.value, [sb.id]: newText }
-
-      // 轻量刷新分镜列表（只更新 store 里的原始 storyboards，不触发 syncStoryboardStateFromEpisode，
-      // 避免覆盖我们刚刚写入的 sbLayoutDescription 等本地字段）
-      try { await refreshStoryboardsOnly() } catch (_) {}
-
-      ElMessage.success('布局描述已由 AI 重新优化并保存（已参考上下分镜连贯性）')
-      // 注意：不再调用 loadDrama()，因为它会全量重建所有 sbXxx 映射，可能用服务端旧数据覆盖本次结果。
-      // 等后端 rowToStoryboard 补全 layout_description 字段后，关闭再打开对话框即可看到持久化值。
-    } else {
-      ElMessage.warning('AI 未返回有效的布局描述')
-    }
-  } catch (e) {
-    ElMessage.error(e.message || '重新生成布局描述失败')
-  } finally {
-    regeneratingLayoutSbIds.delete(sb.id)
-  }
-}
-
-/** 尾帧衔接：提取当前视频最后一帧，设为下一个分镜的首帧 */
-async function onLinkTailFrameToNext(sb) {
-  if (!dramaId.value || !sb?.id) return
-  const nextSb = getNextStoryboard(sb.id)
-  if (!nextSb) {
-    ElMessage.warning('已是最后一个分镜，没有下一个分镜可衔接')
-    return
-  }
-  const video = getSbVideo(sb.id)
-  if (!video) {
-    ElMessage.warning('当前分镜没有视频')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      `确定将 #${sb.storyboard_number ?? sb.id} 视频的尾帧设为 #${nextSb.storyboard_number ?? nextSb.id} 的首帧？\n原首帧将自动进入历史。`,
-      '尾帧衔接',
-      { confirmButtonText: '确认执行', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  linkingTailFrameIds.add(sb.id)
-  try {
-    const data = await storyboardsAPI.linkTailFrame(sb.id, { drama_id: dramaId.value })
-    if (data?.error) {
-      throw new Error(data.error)
-    }
-    ElMessage.success(`已将尾帧设为 #${nextSb.storyboard_number ?? nextSb.id} 的首帧`)
-    // 刷新两个分镜的媒体
-    await Promise.all([
-      loadSingleStoryboardMedia(sb.id),
-      loadSingleStoryboardMedia(nextSb.id)
-    ])
-  } catch (e) {
-    ElMessage.error(e.message || '尾帧衔接失败')
-  } finally {
-    linkingTailFrameIds.delete(sb.id)
-  }
-}
-
-/** 上镜尾帧：直接把上一分镜的尾帧图片（高清原图）设为当前分镜的首帧，无需 ffmpeg 提取视频帧，画面更清晰 */
-async function onUsePrevTailAsFirst(sb) {
-  if (!dramaId.value || !sb?.id) return
-  const prevSb = getPrevStoryboard(sb.id)
-  if (!prevSb) {
-    ElMessage.warning('已是第一个分镜，没有上一分镜可取尾帧')
-    return
-  }
-  const prevLastImg = getSbLastImage(prevSb.id)
-  if (!prevLastImg) {
-    ElMessage.warning(`上一分镜 #${prevSb.storyboard_number ?? prevSb.id} 尚无尾帧图片`)
-    return
-  }
-
-  // 直接执行，不再弹确认框（用户已通过按钮 + tooltip 明确意图）
-  usingPrevTailAsFirstIds.add(sb.id)
-  try {
-    // 通过 upload 接口在“当前分镜”下创建一个 image 记录（复用上一镜尾帧的物理文件路径/URL），frame_type 触发后端自动 bind
-    const uploaded = await imagesAPI.upload({
-      storyboard_id: sb.id,
-      drama_id: dramaId.value,
-      image_url: prevLastImg.image_url || '',
-      local_path: prevLastImg.local_path || undefined,
-      prompt: `上镜尾帧（直接复用 #${prevSb.storyboard_number ?? prevSb.id} 尾帧高清原图）`,
-      frame_type: 'storyboard_first'
-    })
-    if (uploaded?.id) {
-      // 手动设置本地选中，确保显示立即切换；同时调用 onSelect 做一次 server patch（与 upload 里的 bind 互补）
-      onSelectSbFrameImage(sb, uploaded, 'first')
-    }
-    ElMessage.success(`已将 #${prevSb.storyboard_number ?? prevSb.id} 尾帧设为本分镜首帧（高清原图）`)
-
-    // 刷新分镜元数据（拿回服务器最新的 first_frame_image_id）+ 媒体列表
-    await Promise.all([
-      refreshStoryboardsOnly(),
-      loadSingleStoryboardMedia(sb.id)
-    ])
-    // 清除可能残留的手动选中（让服务器权威绑定 id 生效）
-    delete sbSelectedImgId.value[sb.id]
-  } catch (e) {
-    ElMessage.error(e.message || '上镜尾帧设置失败')
-  } finally {
-    usingPrevTailAsFirstIds.delete(sb.id)
   }
 }
 

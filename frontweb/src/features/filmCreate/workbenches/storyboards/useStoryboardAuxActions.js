@@ -1,10 +1,12 @@
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 
 export function useStoryboardAuxActions(deps = {}) {
   const {
     store,
+    imagesAPI,
     storyboardsAPI,
+    dramaId,
     currentEpisodeId,
     storyboards,
     exportingStoryboardSheet,
@@ -21,12 +23,31 @@ export function useStoryboardAuxActions(deps = {}) {
     sbDialogue,
     sbAction,
     sbResult,
+    sbAngle,
+    sbAngleH,
+    sbAngleV,
+    sbAngleS,
     sbAtmosphere,
+    sbLighting,
+    sbDof,
     sbShotType,
     sbMovement,
     sbLayoutDescription,
+    sbCreationMode,
+    sbSelectedImgId,
     sbUniversalSegmentText,
+    videoClipDuration,
+    showVideoParamsDialog,
+    videoParamsTarget,
+    videoParamsSaving,
+    splitByAudioLoading,
+    inferringParams,
+    regeneratingLayoutSbIds,
+    linkingTailFrameIds,
+    usingPrevTailAsFirstIds,
     storyboardUseFirstLastFrame,
+    loadDrama = async () => {},
+    refreshStoryboardsOnly = async () => {},
     loadSingleStoryboardMedia = async () => {},
     ttsAiPayload = () => ({}),
     getSbFirstImage = () => null,
@@ -36,6 +57,10 @@ export function useStoryboardAuxActions(deps = {}) {
     getSbSelectedScene = () => null,
     getSbSelectedCharacters = () => [],
     getSbSelectedProps = () => [],
+    getNextStoryboard = () => null,
+    getPrevStoryboard = () => null,
+    getSbVideo = () => null,
+    onSelectSbFrameImage = () => {},
     getMovementLabel = (value) => value || '',
   } = deps
 
@@ -322,6 +347,227 @@ export function useStoryboardAuxActions(deps = {}) {
     }
   }
 
+  async function onSaveSbVideoFields(sb) {
+    if (!sb?.id) return
+    try {
+      await storyboardsAPI.update(sb.id, {
+        title: (sbTitle.value[sb.id] || '').toString().trim() || null,
+        location: (sbLocation.value[sb.id] || '').toString().trim() || null,
+        time: (sbTime.value[sb.id] || '').toString().trim() || null,
+        duration: Number(sbDuration.value[sb.id]) || Number(videoClipDuration.value) || 10,
+        action: (sbAction.value[sb.id] || '').toString().trim() || null,
+        dialogue: (sbDialogue.value[sb.id] || '').toString().trim() || null,
+        narration: (sbNarration.value[sb.id] || '').toString().trim() || null,
+        atmosphere: (sbAtmosphere.value[sb.id] || '').toString().trim() || null,
+        result: (sbResult.value[sb.id] || '').toString().trim() || null,
+        angle: (sbAngle.value[sb.id] || '').toString().trim() || null,
+        angle_h: sbAngleH.value[sb.id] || null,
+        angle_v: sbAngleV.value[sb.id] || null,
+        angle_s: sbAngleS.value[sb.id] || null,
+        movement: (sbMovement.value[sb.id] || '').toString().trim() || null,
+        lighting_style: sbLighting.value[sb.id] || null,
+        depth_of_field: sbDof.value[sb.id] || null,
+        shot_type: (sbShotType.value[sb.id] || '').toString().trim() || null,
+        layout_description: (sbLayoutDescription.value[sb.id] || '').toString().trim() || null,
+        creation_mode: sbCreationMode.value[sb.id] === 'universal' ? 'universal' : 'classic',
+        universal_segment_text: (sbUniversalSegmentText.value[sb.id] || '').toString().trim() || null,
+      })
+      const rebuilt = await storyboardsAPI.rebuildVideoPrompt(sb.id)
+      const newVideoPrompt = (rebuilt?.video_prompt && String(rebuilt.video_prompt).trim()) || ''
+      if (newVideoPrompt) {
+        videoParamsTarget.value = { ...sb, video_prompt: newVideoPrompt }
+      }
+      await loadDrama()
+      ElMessage.success('已保存，视频提示词已按最新规则自动生成')
+    } catch (e) {
+      ElMessage.error(e.message || '保存失败')
+    }
+  }
+
+  function onOpenVideoParamsDialog(sb) {
+    videoParamsTarget.value = sb
+    showVideoParamsDialog.value = true
+  }
+
+  function onVideoParamsDialogClosed() {
+    const sb = videoParamsTarget.value
+    if (!sb?.id) return
+    const row = (storyboards.value || []).find((item) => Number(item.id) === Number(sb.id))
+    if (!row) return
+    sbCreationMode.value = { ...sbCreationMode.value, [sb.id]: row.creation_mode === 'universal' ? 'universal' : 'classic' }
+    sbUniversalSegmentText.value = { ...sbUniversalSegmentText.value, [sb.id]: (row.universal_segment_text ?? '').toString() }
+  }
+
+  function countDialogueLinesInSb(sb) {
+    const raw = ((sbDialogue.value[sb.id] ?? sb.dialogue) || '').toString().trim()
+    if (!raw) return 0
+    const matches = raw.match(/[\u4e00-\u9fa5A-Za-z0-9·]{1,16}[：:]/g)
+    return matches?.length || (raw ? 1 : 0)
+  }
+
+  function canSplitSbByAudio(sb) {
+    if (!sb?.id) return false
+    const dialogueCount = countDialogueLinesInSb(sb)
+    const hasNarration = !!((sbNarration.value[sb.id] ?? sb.narration) || '').toString().trim()
+    return dialogueCount + (hasNarration ? 1 : 0) >= 2
+  }
+
+  async function onSplitSbByAudio(sb) {
+    if (!sb?.id) return
+    try {
+      await ElMessageBox.confirm(
+        '将把本镜按「每句对白一条 + 旁白单独一条」拆成多个分镜，原镜变为第一条。已生成的视频不会保留。是否继续？',
+        '按对白拆镜',
+        { type: 'warning', confirmButtonText: '拆镜', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+    splitByAudioLoading.value = true
+    try {
+      if (showVideoParamsDialog.value && videoParamsTarget.value?.id === sb.id) {
+        await onSaveSbVideoFields(sb)
+      }
+      const res = await storyboardsAPI.splitByAudio(sb.id)
+      const count = res?.storyboard_ids?.length ?? 0
+      const summary = res?.plans_summary || ''
+      showVideoParamsDialog.value = false
+      await loadDrama()
+      ElMessage.success(summary ? `已拆成 ${count} 条：${summary}` : `已拆成 ${count} 条分镜`)
+    } catch (e) {
+      ElMessage.error(e.message || '拆镜失败')
+    } finally {
+      splitByAudioLoading.value = false
+    }
+  }
+
+  async function onSaveVideoParams() {
+    const sb = videoParamsTarget.value
+    if (!sb?.id) return
+    videoParamsSaving.value = true
+    try {
+      await onSaveSbVideoFields(sb)
+      showVideoParamsDialog.value = false
+    } catch (e) {
+      ElMessage.error(e.message || '保存失败')
+    } finally {
+      videoParamsSaving.value = false
+    }
+  }
+
+  async function onBatchInferParams() {
+    if (!currentEpisodeId.value) return
+    inferringParams.value = true
+    try {
+      const res = await storyboardsAPI.batchInferParams(currentEpisodeId.value, false)
+      await loadDrama()
+      ElMessage.success(`摄影参数推断完成，更新了 ${res?.updated ?? 0} 条分镜`)
+    } catch (e) {
+      ElMessage.error(e.message || '推断失败')
+    } finally {
+      inferringParams.value = false
+    }
+  }
+
+  async function onRegenerateLayoutDescription(sb) {
+    if (sb && typeof sb === 'object' && sb.__v_isRef) sb = sb.value
+    if (!sb?.id) return
+    regeneratingLayoutSbIds.add(sb.id)
+    try {
+      const res = await storyboardsAPI.regenerateLayoutDescription(sb.id)
+      const newText = res?.layout_description || res?.data?.layout_description
+      if (newText) {
+        sbLayoutDescription.value = { ...sbLayoutDescription.value, [sb.id]: newText }
+        try { await refreshStoryboardsOnly() } catch (_) {}
+        ElMessage.success('布局描述已由 AI 重新优化并保存（已参考上下分镜连贯性）')
+      } else {
+        ElMessage.warning('AI 未返回有效的布局描述')
+      }
+    } catch (e) {
+      ElMessage.error(e.message || '重新生成布局描述失败')
+    } finally {
+      regeneratingLayoutSbIds.delete(sb.id)
+    }
+  }
+
+  async function onLinkTailFrameToNext(sb) {
+    if (!dramaId.value || !sb?.id) return
+    const nextSb = getNextStoryboard(sb.id)
+    if (!nextSb) {
+      ElMessage.warning('已是最后一个分镜，没有下一个分镜可衔接')
+      return
+    }
+    const video = getSbVideo(sb.id)
+    if (!video) {
+      ElMessage.warning('当前分镜没有视频')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(
+        `确定将 #${sb.storyboard_number ?? sb.id} 视频的尾帧设为 #${nextSb.storyboard_number ?? nextSb.id} 的首帧？\n原首帧将自动进入历史。`,
+        '尾帧衔接',
+        { confirmButtonText: '确认执行', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    linkingTailFrameIds.add(sb.id)
+    try {
+      const data = await storyboardsAPI.linkTailFrame(sb.id, { drama_id: dramaId.value })
+      if (data?.error) {
+        throw new Error(data.error)
+      }
+      ElMessage.success(`已将尾帧设为 #${nextSb.storyboard_number ?? nextSb.id} 的首帧`)
+      await Promise.all([
+        loadSingleStoryboardMedia(sb.id),
+        loadSingleStoryboardMedia(nextSb.id),
+      ])
+    } catch (e) {
+      ElMessage.error(e.message || '尾帧衔接失败')
+    } finally {
+      linkingTailFrameIds.delete(sb.id)
+    }
+  }
+
+  async function onUsePrevTailAsFirst(sb) {
+    if (!dramaId.value || !sb?.id) return
+    const prevSb = getPrevStoryboard(sb.id)
+    if (!prevSb) {
+      ElMessage.warning('已是第一个分镜，没有上一分镜可取尾帧')
+      return
+    }
+    const prevLastImg = getSbLastImage(prevSb.id)
+    if (!prevLastImg) {
+      ElMessage.warning(`上一分镜 #${prevSb.storyboard_number ?? prevSb.id} 尚无尾帧图片`)
+      return
+    }
+
+    usingPrevTailAsFirstIds.add(sb.id)
+    try {
+      const uploaded = await imagesAPI.upload({
+        storyboard_id: sb.id,
+        drama_id: dramaId.value,
+        image_url: prevLastImg.image_url || '',
+        local_path: prevLastImg.local_path || undefined,
+        prompt: `上镜尾帧（直接复用 #${prevSb.storyboard_number ?? prevSb.id} 尾帧高清原图）`,
+        frame_type: 'storyboard_first',
+      })
+      if (uploaded?.id) {
+        onSelectSbFrameImage(sb, uploaded, 'first')
+      }
+      ElMessage.success(`已将 #${prevSb.storyboard_number ?? prevSb.id} 尾帧设为本分镜首帧（高清原图）`)
+      await Promise.all([
+        refreshStoryboardsOnly(),
+        loadSingleStoryboardMedia(sb.id),
+      ])
+      delete sbSelectedImgId.value[sb.id]
+    } catch (e) {
+      ElMessage.error(e.message || '上镜尾帧设置失败')
+    } finally {
+      usingPrevTailAsFirstIds.delete(sb.id)
+    }
+  }
+
   function stopSbTtsPreview() {
     if (!sbTtsPreviewAudio) return
     sbTtsPreviewAudio.pause()
@@ -329,14 +575,25 @@ export function useStoryboardAuxActions(deps = {}) {
   }
 
   return {
+    canSplitSbByAudio,
+    countDialogueLinesInSb,
     formatSrtTimestamp,
     normalizeAudioRelPath,
+    onBatchInferParams,
     onExportNarrationSrt,
     onExportStoryboardSheet,
+    onLinkTailFrameToNext,
+    onOpenVideoParamsDialog,
+    onRegenerateLayoutDescription,
     onSaveSbNarrationField,
+    onSaveSbVideoFields,
+    onSaveVideoParams,
+    onSplitSbByAudio,
     onTtsSbDialogue,
     onTtsSbNarration,
     onUpscaleSbImage,
+    onUsePrevTailAsFirst,
+    onVideoParamsDialogClosed,
     playSbDialogueTts,
     playSbNarrationTts,
     playSbTtsFromRel,
