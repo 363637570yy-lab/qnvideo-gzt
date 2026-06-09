@@ -117,7 +117,6 @@ import { useFilmStore } from '@/stores/film'
 import { useGenerationTaskStore, GEN_RESOURCE } from '@/stores/generationTaskStore'
 import { syncGeneratingSetsFromStore, buildEpisodeContext, buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/useGenerationTaskSync'
 import { dramaAPI } from '@/api/drama'
-import { workbenchAPI } from '@/api/workbench'
 import { generationAPI } from '@/api/generation'
 import { aiAPI } from '@/api/ai'
 import { characterAPI } from '@/api/characters'
@@ -174,6 +173,8 @@ import {
 import { useNavigation } from '@/composables/filmCreate/useNavigation'
 import { useAiRouteSelection } from '@/composables/filmCreate/useAiRouteSelection'
 import { useWorkflowPresets } from '@/composables/filmCreate/useWorkflowPresets'
+import { useWorkbenchLoader } from '@/composables/filmCreate/useWorkbenchLoader'
+import { useMediaPreview } from '@/composables/filmCreate/useMediaPreview'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useCharacters } from '@/composables/filmCreate/useCharacters'
 import { useProps as usePropsComposable } from '@/composables/filmCreate/useProps'
@@ -526,243 +527,69 @@ const videoWatermark = ref(false)
 /** 水印开启时烧录到成片右下角 */
 const videoWatermarkText = ref('')
 
-const dramaId = computed(() => store.dramaId)
-const workbenchSummary = ref(null)
-const workbenchSummaryLoading = ref(false)
-const projectTitle = computed(() => workbenchSummary.value?.project?.title || store.drama?.title || '项目')
-
-function applyWorkbenchSummarySettings(summary) {
-  const settings = summary?.settings || {}
-  if (!settings || !Object.keys(settings).length) return
-  projectSettingsHydrating = true
-  try {
-    generationStyle.value = settings.style || DEFAULT_GENERATION_STYLE
-    projectAspectRatio.value = settings.aspect_ratio || '16:9'
-    projectImageSpec.value = normalizeImageSpec(settings.image_spec || {})
-    projectVideoSpec.value = normalizeVideoSpec(settings.video_spec || {})
-    videoClipDuration.value = Number(settings.default_segment_duration) || 10
-    scriptLanguage.value = settings.language || 'zh'
-  } finally {
-    nextTick(() => {
-      projectSettingsHydrating = false
-    })
-  }
+function setProjectSettingsHydrating(value) {
+  projectSettingsHydrating = !!value
 }
 
-async function loadWorkbenchSummary({ applySettings = true, silent = true } = {}) {
-  const id = store.dramaId
-  if (!id) return null
-  workbenchSummaryLoading.value = true
-  try {
-    const summary = await workbenchAPI.summary(id)
-    workbenchSummary.value = summary || null
-    if (applySettings) applyWorkbenchSummarySettings(summary)
-    return summary
-  } catch (err) {
-    if (!silent) ElMessage.error(err.message || '加载制作工作台摘要失败')
-    workbenchSummary.value = null
-    return null
-  } finally {
-    workbenchSummaryLoading.value = false
-  }
+function getSbVideosRef() {
+  return sbVideos
 }
 
-function resetWorkbenchTabLoaded() {
-  Object.keys(workbenchTabLoaded).forEach((key) => {
-    workbenchTabLoaded[key] = false
-  })
-}
-
-function markAllWorkbenchTabsLoaded() {
-  Object.keys(workbenchTabLoaded).forEach((key) => {
-    workbenchTabLoaded[key] = true
-  })
-}
-
-function mergeCurrentEpisodePatch(patch = {}) {
-  const current = store.currentEpisode || {}
-  const merged = { ...current, ...patch }
-  store.setCurrentEpisode(merged)
-  const drama = store.drama
-  if (drama?.episodes?.length && merged.id != null) {
-    const episodes = drama.episodes.map((ep) => Number(ep.id) === Number(merged.id) ? { ...ep, ...patch } : ep)
-    store.setDrama({ ...drama, episodes })
-  }
-  return merged
-}
-
-function applyScriptWorkbenchTab(data) {
-  const project = data?.project || {}
-  const episodes = Array.isArray(data?.episodes) ? data.episodes : []
-  const prevDrama = store.drama || {}
-  store.setDrama({ ...prevDrama, ...project, episodes })
-  storyInput.value = (project.description || '').toString().trim()
-  storyStyle.value = project.metadata?.story_style || ''
-  storyType.value = project.genre || ''
-  applyProjectAiRouteSelection(project.metadata || {})
-
-  const currentId = selectedEpisodeId.value
-  let ep = currentId != null ? episodes.find((item) => Number(item.id) === Number(currentId)) : null
-  if (!ep) {
-    const wantNum = savedCurrentEpisodeNumber.value
-    ep = episodes.find((item) => Number(item.episode_number) === Number(wantNum)) || episodes[0] || null
-  }
-  if (ep) {
-    const existing = store.currentEpisode && Number(store.currentEpisode.id) === Number(ep.id) ? store.currentEpisode : {}
-    const merged = {
-      ...ep,
-      characters: existing.characters || [],
-      scenes: existing.scenes || [],
-      props: existing.props || [],
-      storyboards: existing.storyboards || [],
-    }
-    store.setCurrentEpisode(merged)
-    store.setScriptContent(ep.script_content || '')
-    scriptTitle.value = ep.title || '第' + (ep.episode_number || 0) + '集'
-    selectedEpisodeId.value = ep.id
-    syncStoryboardStateFromEpisode(merged)
-  } else {
-    store.setCurrentEpisode(null)
-    store.setScriptContent('')
-    scriptTitle.value = ''
-    selectedEpisodeId.value = null
-    syncStoryboardStateFromEpisode(null)
-  }
-}
-
-function applyAssetsWorkbenchTab(data) {
-  const type = data?.type
-  const items = Array.isArray(data?.items) ? data.items : []
-  if (type === 'character') mergeCurrentEpisodePatch({ characters: items })
-  if (type === 'scene') mergeCurrentEpisodePatch({ scenes: items })
-  if (type === 'prop') mergeCurrentEpisodePatch({ props: items })
-}
-
-function applyStoryboardsWorkbenchTab(data) {
-  const boards = Array.isArray(data?.storyboards) ? data.storyboards : []
-  const episodePatch = {
-    ...(data?.episode || {}),
-    storyboards: boards,
-  }
-  const merged = mergeCurrentEpisodePatch(episodePatch)
-  if (merged?.id) {
-    selectedEpisodeId.value = merged.id
-    store.setScriptContent(merged.script_content || store.scriptContent || '')
-    scriptTitle.value = merged.title || '第' + (merged.episode_number || 0) + '集'
-  }
-  syncStoryboardStateFromEpisode(merged)
-}
-
-function applyVideoComposeWorkbenchTab(data) {
-  const boards = Array.isArray(data?.storyboards) ? data.storyboards : []
-  const latestMerge = data?.latest_merge || null
-  const episode = data?.episode || {}
-  const episodePatch = {
-    ...episode,
-    storyboards: boards,
-    video_url: episode.video_url || latestMerge?.merged_url || null,
-    status: latestMerge?.status === 'completed' ? 'completed' : (episode.status || undefined),
-  }
-  const merged = mergeCurrentEpisodePatch(episodePatch)
-  if (merged?.id) {
-    selectedEpisodeId.value = merged.id
-    store.setScriptContent(merged.script_content || store.scriptContent || '')
-    scriptTitle.value = merged.title || '第' + (merged.episode_number || 0) + '集'
-  }
-  syncStoryboardStateFromEpisode(merged)
-
-  const ids = boards.map((sb) => Number(sb.id)).filter((id) => Number.isFinite(id) && id > 0)
-  if (Array.isArray(data?.videos)) {
-    const videoMap = groupByStoryboardId(data.videos)
-    const nextVideos = {}
-    for (const id of ids) nextVideos[id] = videoMap[id] || []
-    sbVideos.value = { ...sbVideos.value, ...nextVideos }
-    restoreSelectionsFromBackend()
-  }
-  if (merged?.id && latestMerge?.status === 'completed' && latestMerge.merged_url) {
-    store.setVideoStatus('done', dramaId.value, merged.id)
-    store.setVideoProgress(100, dramaId.value, merged.id)
-  } else if (merged?.id && (latestMerge?.status === 'processing' || latestMerge?.status === 'pending')) {
-    store.setVideoStatus('generating', dramaId.value, merged.id)
-  }
-}
-
-function assetTypeForWorkbenchTab(tab) {
-  if (tab === 'characters') return 'character'
-  if (tab === 'scenes') return 'scene'
-  if (tab === 'props') return 'prop'
-  return ''
-}
-
-async function loadScriptWorkbenchTab({ force = false, recoverTasks = false } = {}) {
-  if (!store.dramaId || (!force && workbenchTabLoaded.script)) return
-  const data = await workbenchAPI.scriptTab(store.dramaId)
-  applyScriptWorkbenchTab(data)
-  workbenchTabLoaded.script = true
-  if (recoverTasks) await recoverAndSyncEpisodeTasks(currentEpisodeId.value)
-}
-
-async function loadAssetWorkbenchTab(tab, { force = false } = {}) {
-  const type = assetTypeForWorkbenchTab(tab)
-  if (!store.dramaId || !type || (!force && workbenchTabLoaded[tab])) return
-  if (!workbenchTabLoaded.script) {
-    await loadScriptWorkbenchTab({ force: false })
-  }
-  const data = await workbenchAPI.assetsTab(store.dramaId, {
-    type,
-    episode_id: currentEpisodeId.value || undefined,
-  })
-  applyAssetsWorkbenchTab(data)
-  workbenchTabLoaded[tab] = true
-}
-
-async function loadStoryboardsWorkbenchTab({ force = false, recoverTasks = false } = {}) {
-  if (!store.dramaId || (!force && workbenchTabLoaded.storyboards)) return
-  if (!workbenchTabLoaded.script) {
-    await loadScriptWorkbenchTab({ force: false })
-  }
-  const data = await workbenchAPI.storyboardsTab(store.dramaId, {
-    episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
-  })
-  applyStoryboardsWorkbenchTab(data)
-  workbenchTabLoaded.storyboards = true
-  await loadStoryboardMedia({ force: true })
-  if (recoverTasks) await recoverAndSyncEpisodeTasks(currentEpisodeId.value)
-}
-
-async function loadVideoComposeWorkbenchTab({ force = false, recoverTasks = false } = {}) {
-  if (!store.dramaId || (!force && workbenchTabLoaded.videoCompose)) return
-  if (!workbenchTabLoaded.script) {
-    await loadScriptWorkbenchTab({ force: false })
-  }
-  const data = await workbenchAPI.videoComposeTab(store.dramaId, {
-    episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
-  })
-  applyVideoComposeWorkbenchTab(data)
-  workbenchTabLoaded.videoCompose = true
-  if (recoverTasks) await recoverAndSyncEpisodeTasks(currentEpisodeId.value)
-}
-
-async function loadWorkbenchTab(tab = filmWorkbenchTab.value, options = {}) {
-  if (tab === 'script') return loadScriptWorkbenchTab(options)
-  if (['characters', 'scenes', 'props'].includes(tab)) return loadAssetWorkbenchTab(tab, options)
-  if (tab === 'storyboards') return loadStoryboardsWorkbenchTab(options)
-  if (tab === 'videoCompose') return loadVideoComposeWorkbenchTab(options)
-}
-
-async function loadInitialWorkbenchData({ recoverTasks = false } = {}) {
-  await loadWorkbenchSummary({ applySettings: true })
-  await loadWorkbenchTab(filmWorkbenchTab.value || 'script', { force: true, recoverTasks })
-}
-
-const characters = computed(() => store.characters)
-const scenes = computed(() => store.scenes)
-const props = computed(() => store.props)
-const storyboards = computed(() => store.storyboards)
-const currentEpisode = computed(() => store.currentEpisode)
-const currentEpisodeId = computed(() => store.currentEpisode?.id ?? null)
-const videoProgress = computed(() => store.videoProgress)
-const videoStatus = computed(() => store.videoStatus)
+const {
+  dramaId,
+  workbenchSummary,
+  workbenchSummaryLoading,
+  projectTitle,
+  characters,
+  scenes,
+  props,
+  storyboards,
+  currentEpisode,
+  currentEpisodeId,
+  videoProgress,
+  videoStatus,
+  assetTypeForWorkbenchTab,
+  applyWorkbenchSummarySettings,
+  loadWorkbenchSummary,
+  resetWorkbenchTabLoaded,
+  markAllWorkbenchTabsLoaded,
+  mergeCurrentEpisodePatch,
+  applyScriptWorkbenchTab,
+  applyAssetsWorkbenchTab,
+  applyStoryboardsWorkbenchTab,
+  applyVideoComposeWorkbenchTab,
+  loadScriptWorkbenchTab,
+  loadAssetWorkbenchTab,
+  loadStoryboardsWorkbenchTab,
+  loadVideoComposeWorkbenchTab,
+  loadWorkbenchTab,
+  loadInitialWorkbenchData,
+} = useWorkbenchLoader({
+  store,
+  workbenchTabLoaded,
+  filmWorkbenchTab,
+  selectedEpisodeId,
+  savedCurrentEpisodeNumber,
+  storyInput,
+  storyStyle,
+  storyType,
+  scriptTitle,
+  generationStyle,
+  projectAspectRatio,
+  projectImageSpec,
+  projectVideoSpec,
+  videoClipDuration,
+  scriptLanguage,
+  defaultGenerationStyle: DEFAULT_GENERATION_STYLE,
+  setProjectSettingsHydrating,
+  applyProjectAiRouteSelection,
+  syncStoryboardStateFromEpisode,
+  loadStoryboardMedia,
+  recoverAndSyncEpisodeTasks,
+  groupByStoryboardId,
+  getSbVideosRef,
+  restoreSelectionsFromBackend,
+})
 
 function trackFilmCreateAction(_action, _payload = {}) {
   // 单机版：无埋点上报
@@ -844,6 +671,42 @@ async function runConcurrently(items, concurrency, fn, options = {}) {
   await Promise.allSettled(workers)
   return { paused: anyPaused }
 }
+
+const {
+  baseUrl,
+  previewImageUrl,
+  previewGallery,
+  previewImageIndex,
+  imageUrl,
+  staticThumbUrlFromRel,
+  thumbImageUrl,
+  assetImageUrl,
+  assetThumbUrl,
+  hasAssetImage,
+  collectImagePreviewGallery,
+  openImagePreview,
+  closeImagePreview,
+  showPreviewImage,
+  onImagePreviewKeydown,
+  assetVideoUrl,
+  isHttpVideoUrl,
+  recordHasPlayableVideoUrl,
+} = useMediaPreview({
+  getCharacters: () => characters.value || [],
+  getProps: () => props.value || [],
+  getScenes: () => scenes.value || [],
+  getStoryboardImagesMap: () => sbImages.value || {},
+  getStoryboards: () => store.storyboards || [],
+  getCharLibraryList: () => charLibraryList.value || [],
+  getDramaAllCharList: () => dramaAllCharList.value || [],
+  getPropLibraryList: () => propLibraryList.value || [],
+  getDramaAllPropList: () => dramaAllPropList.value || [],
+  getSceneLibraryList: () => sceneLibraryList.value || [],
+  getDramaAllSceneList: () => dramaAllSceneList.value || [],
+  parseExtraImages,
+  localPathToUrl,
+})
+
 // ── Composable: Characters ────────────────────────────
 const {
   showEditCharacter, editCharacterForm, editCharacterSaving, editCharacterPromptGenerating,
@@ -1562,160 +1425,8 @@ function onSbImageDrop(e, sb) {
   if (file && sb?.id) doUploadSbImage(sb.id, file)
 }
 
-const baseUrl = ref('')
-const previewImageUrl = ref(null)
-const previewGallery = ref([])
-const previewImageIndex = ref(0)
-function imageUrl(url) {
-  if (!url) return ''
-  if (url.startsWith('http')) return url
-  const base = (baseUrl.value || '').replace(/\/$/, '')
-  return base ? base + '/' + url.replace(/^\//, '') : url
-}
-
-function staticThumbUrlFromRel(rel, width = 320) {
-  const clean = String(rel || '').replace(/^\/+/, '')
-  if (!clean) return ''
-  return `/static-thumb/${width}/` + clean.split('/').map(encodeURIComponent).join('/')
-}
-
-function thumbImageUrl(url, width = 320) {
-  if (!url) return ''
-  const raw = String(url)
-  if (raw.startsWith('/static/')) return staticThumbUrlFromRel(raw.slice('/static/'.length), width)
-  if (raw.startsWith('static/')) return staticThumbUrlFromRel(raw.slice('static/'.length), width)
-  if (!raw.startsWith('http')) return imageUrl(raw)
-  try {
-    const u = new URL(raw, window.location.origin)
-    const marker = '/static/'
-    const idx = u.pathname.indexOf(marker)
-    if (u.origin === window.location.origin && idx >= 0) {
-      return staticThumbUrlFromRel(decodeURIComponent(u.pathname.slice(idx + marker.length)), width)
-    }
-  } catch (_) {}
-  return imageUrl(raw)
-}
-
-/** 优先使用本地地址，避免远程图失效。item 为 { image_url, local_path } 或字符串 url */
-function assetImageUrl(item) {
-  if (!item) return ''
-  if (typeof item === 'string') return imageUrl(item)
-  const localPath = item.local_path && String(item.local_path).trim()
-  if (localPath) {
-    const p = localPath.replace(/^\//, '')
-    return '/static/' + p
-  }
-  if (item.image_url) return imageUrl(item.image_url)
-  return ''
-}
-function assetThumbUrl(item, width = 320) {
-  if (!item) return ''
-  if (typeof item === 'string') return thumbImageUrl(item, width)
-  const localPath = item.local_path && String(item.local_path).trim()
-  if (localPath) return staticThumbUrlFromRel(localPath.replace(/^\//, ''), width)
-  if (item.thumbnail_url) return imageUrl(item.thumbnail_url)
-  if (item.image_url) return thumbImageUrl(item.image_url, width)
-  return ''
-}
-function hasAssetImage(item) {
-  if (!item) return false
-  return !!(item.image_url || item.local_path)
-}
 function getSelectedStyle() {
   return getSelectedStylePrompt()
-}
-function collectImagePreviewGallery() {
-  const out = []
-  const seen = new Set()
-  const add = (url) => {
-    const u = imageUrl(url)
-    if (!u || seen.has(u)) return
-    seen.add(u)
-    out.push({ url: u })
-  }
-  const addAsset = (item) => add(assetImageUrl(item))
-
-  ;(characters.value || []).forEach((item) => {
-    addAsset(item)
-    parseExtraImages(item).forEach((p) => add(localPathToUrl(p)))
-  })
-  ;(props.value || []).forEach((item) => {
-    addAsset(item)
-    parseExtraImages(item).forEach((p) => add(localPathToUrl(p)))
-  })
-  ;(scenes.value || []).forEach((item) => {
-    addAsset(item)
-    parseExtraImages(item).forEach((p) => add(localPathToUrl(p)))
-  })
-  Object.values(sbImages.value || {}).forEach((list) => {
-    ;(Array.isArray(list) ? list : []).forEach(addAsset)
-  })
-  ;(store.storyboards || []).forEach((sb) => {
-    if (sb?.composed_image || sb?.image_url) add(imageUrl(sb.composed_image || sb.image_url))
-    if (sb?.last_frame_image_url || sb?.last_frame_local_path) {
-      add(assetImageUrl({ image_url: sb.last_frame_image_url, local_path: sb.last_frame_local_path }))
-    }
-  })
-  ;(charLibraryList.value || []).forEach(addAsset)
-  ;(dramaAllCharList.value || []).forEach(addAsset)
-  ;(propLibraryList.value || []).forEach(addAsset)
-  ;(dramaAllPropList.value || []).forEach(addAsset)
-  ;(sceneLibraryList.value || []).forEach(addAsset)
-  ;(dramaAllSceneList.value || []).forEach(addAsset)
-  return out
-}
-
-function openImagePreview(url, gallery = null) {
-  const target = imageUrl(url)
-  if (!target) return
-  const list = Array.isArray(gallery) && gallery.length ? gallery : collectImagePreviewGallery()
-  let idx = list.findIndex((item) => item?.url === target)
-  if (idx < 0) {
-    previewGallery.value = [{ url: target }, ...list.filter((item) => item?.url !== target)]
-    idx = 0
-  } else {
-    previewGallery.value = list
-  }
-  previewImageIndex.value = idx
-  previewImageUrl.value = previewGallery.value[idx]?.url || target
-}
-function closeImagePreview() {
-  previewImageUrl.value = null
-  previewGallery.value = []
-  previewImageIndex.value = 0
-}
-function showPreviewImage(offset) {
-  if (!previewGallery.value.length) return
-  const total = previewGallery.value.length
-  previewImageIndex.value = (previewImageIndex.value + offset + total) % total
-  previewImageUrl.value = previewGallery.value[previewImageIndex.value]?.url || null
-}
-function onImagePreviewKeydown(e) {
-  if (!previewImageUrl.value) return
-  if (e.key === 'Escape') closeImagePreview()
-  else if (e.key === 'ArrowLeft') showPreviewImage(-1)
-  else if (e.key === 'ArrowRight') showPreviewImage(1)
-}
-/** 视频地址：优先 local_path（/static/），否则 video_url */
-function assetVideoUrl(item) {
-  if (!item) return ''
-  const localPath = item.local_path && String(item.local_path).trim()
-  if (localPath) return '/static/' + localPath.replace(/^\//, '')
-  if (item.video_url) return imageUrl(item.video_url)
-  return ''
-}
-/** 远程视频须为 http(s)，避免上游 FAILURE 时把错误文案写入 video_url */
-function isHttpVideoUrl(url) {
-  if (!url || typeof url !== 'string') return false
-  const t = url.trim()
-  return t.startsWith('http://') || t.startsWith('https://')
-}
-/** 列表项是否具备可播放地址（避免仅有空白 local_path 时外层有卡片、内层无 <video>） */
-function recordHasPlayableVideoUrl(i) {
-  if (!i) return false
-  const lp = i.local_path && String(i.local_path).trim()
-  if (lp) return true
-  return isHttpVideoUrl(i.video_url)
 }
 /** 主播放器强制随记录/地址重建，避免重新生成后 <video> 仍缓存旧 src */
 function sbMainVideoPlayerKey(sbId) {
