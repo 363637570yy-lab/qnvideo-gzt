@@ -131,22 +131,6 @@ import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
-import {
-  IMAGE_TIER_AREAS,
-  VIDEO_TIER_AREAS,
-  defaultImageSpec,
-  defaultVideoSpec,
-  dimensionsForArea as mediaDimensionsForArea,
-  imageRatioOptions,
-  imageTierOptions,
-  normalizeImageSpec,
-  normalizeVideoSpec,
-  parseRatioValue as parseMediaRatioValue,
-  resolveImageSpec as resolveMediaImageSpec,
-  resolveVideoSpec as resolveMediaVideoSpec,
-  roundToMultiple,
-  videoTierOptions,
-} from '@/utils/filmCreate/mediaSpec'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
@@ -162,15 +146,10 @@ import SceneWorkbench from '@/components/filmCreate/workbenches/scenes/SceneWork
 import StoryboardWorkbench from '@/components/filmCreate/workbenches/storyboards/StoryboardWorkbench.vue'
 import VideoWorkbench from '@/components/filmCreate/workbenches/video/VideoWorkbench.vue'
 import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEditor.vue'
-import {
-  generationStyleOptions,
-  getStylePromptEn,
-  getStylePromptZh,
-  stylePromptMetadataForSave,
-  backfillDramaStylePromptMetadataIfNeeded,
-} from '@/constants/styleOptions'
+import { backfillDramaStylePromptMetadataIfNeeded } from '@/constants/styleOptions'
 import { useNavigation } from '@/composables/filmCreate/shared/useNavigation'
 import { useAiRouteSelection } from '@/composables/filmCreate/shared/useAiRouteSelection'
+import { useProjectSettings } from '@/composables/filmCreate/shared/useProjectSettings'
 import { useWorkflowPresets } from '@/composables/filmCreate/shared/useWorkflowPresets'
 import { useWorkbenchLoader } from '@/composables/filmCreate/shared/useWorkbenchLoader'
 import { useMediaPreview } from '@/composables/filmCreate/shared/useMediaPreview'
@@ -307,30 +286,63 @@ const {
   toggleAiRoutesExpanded,
   onAiRouteSelectVisible,
 } = useAiRouteSelection({ pipelineConcurrency, pipelineVideoConcurrency })
-const PROJECT_SETTINGS_SAVE_DELAY_MS = 500
-let projectSettingsHydrating = false
-let projectSettingsSaveTimer = null
-let pendingProjectStyleSave = false
-
-function scheduleProjectSettingsSave(includeGenerationStyle = false) {
-  if (projectSettingsHydrating || !store.dramaId) return
-  pendingProjectStyleSave = pendingProjectStyleSave || !!includeGenerationStyle
-  if (projectSettingsSaveTimer) clearTimeout(projectSettingsSaveTimer)
-  projectSettingsSaveTimer = setTimeout(() => {
-    projectSettingsSaveTimer = null
-    const shouldSaveStyle = pendingProjectStyleSave
-    pendingProjectStyleSave = false
-    saveProjectSettings(shouldSaveStyle)
-  }, PROJECT_SETTINGS_SAVE_DELAY_MS)
-}
-
-function clearPendingProjectSettingsSave() {
-  if (projectSettingsSaveTimer) {
-    clearTimeout(projectSettingsSaveTimer)
-    projectSettingsSaveTimer = null
-  }
-  pendingProjectStyleSave = false
-}
+const {
+  DEFAULT_GENERATION_STYLE,
+  IMAGE_TIER_AREAS,
+  PROJECT_SETTINGS_SAVE_DELAY_MS,
+  VIDEO_TIER_AREAS,
+  cloneSpec,
+  clearPendingProjectSettingsSave,
+  confirmImageSpec,
+  defaultImageSpec,
+  defaultVideoSpec,
+  dimensionsForArea,
+  generationStyle,
+  generationStyleOptions,
+  getSelectedStyle,
+  getSelectedStylePrompt,
+  getSelectedStylePromptZh,
+  getStylePromptEn,
+  getStylePromptZh,
+  hydrateProjectSettingsFromDrama,
+  imageRatioOptions,
+  imageSpecDialogVisible,
+  imageSpecDraft,
+  imageSpecPreview,
+  imageSpecSummary,
+  imageTierOptions,
+  normalizeImageSpec,
+  normalizeVideoSpec,
+  onProjectVideoResolutionChange,
+  openImageSpecDialog,
+  parseRatioValue,
+  pendingProjectStyleSave,
+  projectAspectRatio,
+  projectImageSpec,
+  projectMediaSpecMetadata,
+  projectSettingsHydrating,
+  projectSettingsSaveTimer,
+  projectStylePromptMetadata,
+  projectVideoResolution,
+  projectVideoSpec,
+  resetProjectSettings,
+  resolvedProjectImageSpec,
+  resolvedProjectVideoSpec,
+  resolveImageSpec,
+  resolveVideoSpec,
+  roundToMultiple,
+  scheduleProjectSettingsSave,
+  scriptLanguage,
+  scriptStoryboardStyle,
+  setProjectSettingsHydrating,
+  stylePromptMetadataForSave,
+  videoClipDuration,
+  videoResolution,
+  videoTierOptions,
+} = useProjectSettings({
+  store,
+  saveProjectSettings: (includeGenerationStyle) => saveProjectSettings(includeGenerationStyle),
+})
 
 const storyInput = ref('')
 const storyStyle = ref('')
@@ -410,108 +422,7 @@ const scriptTitle = ref('')
 const selectedEpisodeId = ref(null)
 /** 保存剧本后用于恢复选中集（后端重插后 id 会变，用 episode_number 匹配） */
 const savedCurrentEpisodeNumber = ref(1)
-const DEFAULT_GENERATION_STYLE = 'xianxia 3d'
-const scriptLanguage = ref('zh')
-const scriptStoryboardStyle = ref('')
 const scriptGenerating = ref(false)
-const generationStyle = ref(DEFAULT_GENERATION_STYLE)
-const projectAspectRatio = ref('16:9')
-const videoClipDuration = ref(10)
-const imageSpecDialogVisible = ref(false)
-
-const projectImageSpec = ref(defaultImageSpec())
-const projectVideoSpec = ref(defaultVideoSpec())
-const imageSpecDraft = ref(defaultImageSpec())
-
-function parseRatioValue(value, fallback = '16:9') {
-  return parseMediaRatioValue(value, fallback, projectAspectRatio.value)
-}
-
-function dimensionsForArea(area, ratioValue) {
-  return mediaDimensionsForArea(area, ratioValue, projectAspectRatio.value)
-}
-
-function resolveImageSpec(spec) {
-  return resolveMediaImageSpec(spec, projectAspectRatio.value)
-}
-
-function resolveVideoSpec(spec) {
-  return resolveMediaVideoSpec(spec, projectAspectRatio.value)
-}
-
-const imageSpecPreview = computed(() => resolveImageSpec(imageSpecDraft.value))
-const resolvedProjectImageSpec = computed(() => resolveImageSpec(projectImageSpec.value))
-const resolvedProjectVideoSpec = computed(() => resolveVideoSpec(projectVideoSpec.value))
-const imageSpecSummary = computed(() => {
-  const r = resolvedProjectImageSpec.value
-  return `${r.tier} · ${r.aspect_ratio} · ${r.width}x${r.height}`
-})
-const projectVideoResolution = computed({
-  get: () => normalizeVideoSpec(projectVideoSpec.value).tier,
-  set: (tier) => {
-    projectVideoSpec.value = normalizeVideoSpec({ tier })
-  },
-})
-const videoResolution = computed(() => resolvedProjectVideoSpec.value.resolution || '720p')
-
-function cloneSpec(spec) {
-  return JSON.parse(JSON.stringify(spec || {}))
-}
-
-function openImageSpecDialog() {
-  imageSpecDraft.value = normalizeImageSpec(cloneSpec(projectImageSpec.value))
-  imageSpecDialogVisible.value = true
-}
-
-function confirmImageSpec() {
-  projectImageSpec.value = normalizeImageSpec(imageSpecDraft.value)
-  imageSpecDialogVisible.value = false
-  scheduleProjectSettingsSave(false)
-}
-
-function onProjectVideoResolutionChange() {
-  projectVideoSpec.value = normalizeVideoSpec(projectVideoSpec.value)
-  scheduleProjectSettingsSave(false)
-}
-
-function projectMediaSpecMetadata() {
-  return {
-    image_spec: normalizeImageSpec(projectImageSpec.value),
-    video_spec: normalizeVideoSpec(projectVideoSpec.value),
-  }
-}
-
-/** 根据 value 查找样式选项对象 */
-function _findStyleOption(val) {
-  for (const group of generationStyleOptions) {
-    const found = group.options.find(o => o.value === val)
-    if (found) return found
-  }
-  return null
-}
-
-/** 传给图像/视频 AI 用的英文 prompt（效果最好）；
- *  找不到 promptEn 时降级到 prompt，再降级到原始值 */
-function getSelectedStylePrompt() {
-  const val = (generationStyle.value || '').toString().trim()
-  if (!val) return undefined
-  const opt = _findStyleOption(val)
-  if (opt) return opt.promptEn || opt.prompt || val
-  return val
-}
-
-/** 中文风格描述（用于界面展示或中文场景提示词拼接） */
-function getSelectedStylePromptZh() {
-  const val = (generationStyle.value || '').toString().trim()
-  if (!val) return undefined
-  const opt = _findStyleOption(val)
-  if (opt) return opt.prompt || opt.promptEn || val
-  return val
-}
-
-function projectStylePromptMetadata() {
-  return stylePromptMetadataForSave(generationStyle.value)
-}
 
 const scriptContent = computed({
   get: () => store.scriptContent,
@@ -526,10 +437,6 @@ const videoBurnDialogue = ref(false)
 const videoWatermark = ref(false)
 /** 水印开启时烧录到成片右下角 */
 const videoWatermarkText = ref('')
-
-function setProjectSettingsHydrating(value) {
-  projectSettingsHydrating = !!value
-}
 
 function getSbVideosRef() {
   return sbVideos
@@ -1363,9 +1270,6 @@ function onSbImageDrop(e, sb) {
   if (file && sb?.id) doUploadSbImage(sb.id, file)
 }
 
-function getSelectedStyle() {
-  return getSelectedStylePrompt()
-}
 /** 主播放器强制随记录/地址重建，避免重新生成后 <video> 仍缓存旧 src */
 function sbMainVideoPlayerKey(sbId) {
   const v = getSbVideo(sbId)
@@ -2925,18 +2829,13 @@ async function loadDrama({ force = false, recoverTasks = false } = {}) {
     let d = await dramaAPI.get(store.dramaId)
     d = await backfillDramaStylePromptMetadataIfNeeded(dramaAPI, store.dramaId, d)
     store.setDrama(d)
-    projectSettingsHydrating = true
+    setProjectSettingsHydrating(true)
     try {
       // 恢复「故事生成」框的梗概（项目 description 存的是故事梗概）和项目级生成设置
       storyInput.value = (d.description || '').toString().trim()
       storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
       storyType.value = d.genre || ''
-      generationStyle.value = d.style || DEFAULT_GENERATION_STYLE
-      projectAspectRatio.value = (d.metadata && d.metadata.aspect_ratio) ? d.metadata.aspect_ratio : '16:9'
-      projectImageSpec.value = normalizeImageSpec(d.metadata?.image_spec || {})
-      projectVideoSpec.value = normalizeVideoSpec(d.metadata?.video_spec || {})
-      videoClipDuration.value = (d.metadata && d.metadata.video_clip_duration) ? Number(d.metadata.video_clip_duration) : 10
-      scriptLanguage.value = (d.metadata && d.metadata.script_language) ? d.metadata.script_language : 'zh'
+      hydrateProjectSettingsFromDrama(d)
       storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
       storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
       storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
@@ -2946,7 +2845,7 @@ async function loadDrama({ force = false, recoverTasks = false } = {}) {
       if (storyboardUseFirstLastFrame.value) storyboardFrameCount.value = 2
     } finally {
       nextTick(() => {
-        projectSettingsHydrating = false
+        setProjectSettingsHydrating(false)
       })
     }
     const list = d.episodes || []
@@ -6526,13 +6425,7 @@ function applyRouteToStore() {
     savedCurrentEpisodeNumber.value = 1
     storyStyle.value = ''
     storyType.value = ''
-    scriptLanguage.value = 'zh'
-    scriptStoryboardStyle.value = ''
-    generationStyle.value = DEFAULT_GENERATION_STYLE
-    projectAspectRatio.value = '16:9'
-    videoClipDuration.value = 10
-    projectImageSpec.value = defaultImageSpec()
-    projectVideoSpec.value = defaultVideoSpec()
+    resetProjectSettings()
     applyProjectAiRouteSelection({})
   }
 }
