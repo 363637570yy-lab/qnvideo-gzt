@@ -1867,7 +1867,6 @@ const filmCreateCtx = proxyRefs({
   inferringParams,
   InfoFilled,
   invalidateActiveVideoAiConfigCache,
-  isAdmin,
   isAdminUser,
   isAdminViewingOtherProject,
   isAuxStoryboardImage,
