@@ -677,6 +677,52 @@ function hasAssetImage(item) {
   return !!(item.image_url || item.local_path)
 }
 
+const {
+  allActiveTasks,
+  taskClockNow,
+  buildResourceTaskMeta,
+  getRunningResourceTask,
+  isResourceGenerating,
+  formatElapsed,
+  resourceElapsedLabel,
+  clearLocalGeneratingState,
+  stopResourceGeneration,
+  stopSbFramePair,
+  stopEpisodeTask,
+  pollUntilResourceHasImage,
+  pollTask,
+  pollTaskWithPause,
+} = useTaskRuntime({
+  genStore,
+  store,
+  dramaId,
+  currentEpisodeId,
+  loadDrama,
+  confirmAdminProjectOperation,
+  getLocalGeneratingSets: () => ({
+    generatingCharIds,
+    generatingPropIds,
+    generatingSceneIds,
+    generatingSbImageIds,
+    generatingSbFirstImageIds,
+    generatingSbLastImageIds,
+    generatingSbVideoIds,
+  }),
+  getPipelineState: () => ({
+    pipelineRunning,
+    pipelineCurrentStep,
+    pipelinePaused,
+  }),
+  getGlobalGenerationState: () => ({
+    storyGenerating,
+    scriptGenerating,
+    universalOmniPolishRunning,
+    universalOmniPolishProgress,
+    batchImageRunning,
+    batchVideoRunning,
+  }),
+})
+
 // ── Composable: Characters ────────────────────────────
 const {
   showEditCharacter, editCharacterForm, editCharacterSaving, editCharacterPromptGenerating,
@@ -902,51 +948,6 @@ const navSteps = computed(() => {
   ]
 })
 
-const {
-  allActiveTasks,
-  taskClockNow,
-  buildResourceTaskMeta,
-  getRunningResourceTask,
-  isResourceGenerating,
-  formatElapsed,
-  resourceElapsedLabel,
-  clearLocalGeneratingState,
-  stopResourceGeneration,
-  stopSbFramePair,
-  stopEpisodeTask,
-  pollUntilResourceHasImage,
-  pollTask,
-  pollTaskWithPause,
-} = useTaskRuntime({
-  genStore,
-  store,
-  dramaId,
-  currentEpisodeId,
-  loadDrama,
-  confirmAdminProjectOperation,
-  getLocalGeneratingSets: () => ({
-    generatingCharIds,
-    generatingPropIds,
-    generatingSceneIds,
-    generatingSbImageIds,
-    generatingSbFirstImageIds,
-    generatingSbLastImageIds,
-    generatingSbVideoIds,
-  }),
-  getPipelineState: () => ({
-    pipelineRunning,
-    pipelineCurrentStep,
-    pipelinePaused,
-  }),
-  getGlobalGenerationState: () => ({
-    storyGenerating,
-    scriptGenerating,
-    universalOmniPolishRunning,
-    universalOmniPolishProgress,
-    batchImageRunning,
-    batchVideoRunning,
-  }),
-})
 const sbCharacterIds = ref({})  // sbId -> number[]，当前仅保留 0/1 个主角色，保持后端数组接口兼容
 const sbPropIds = ref({})       // sbId -> number[]，当前仅保留 0/1 个主道具，保持后端数组接口兼容
 const sbSceneId = ref({})
