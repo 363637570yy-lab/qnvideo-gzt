@@ -2,6 +2,7 @@ import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { storyboardsAPI } from '@/api/storyboards'
 import { useStoryboardFieldState } from './useStoryboardFieldState'
+import { useStoryboardImageUpload } from './useStoryboardImageUpload'
 import { storyboardAuxRoleOptions, useStoryboardMediaSelectors } from './useStoryboardMediaSelectors'
 import { useStoryboardMediaLoader } from './useStoryboardMediaLoader'
 
@@ -147,13 +148,6 @@ export function useStoryboardWorkbench(deps = {}) {
   const editingFramePromptSaving = ref(false)
   const editingFramePromptRegenerating = ref(false)
 
-  const uploadingSbImageId = ref(null)
-  const sbImageFileInput = ref(null)
-  const sbImageUploadForId = ref(null)
-  const dragOverSbId = ref(null)
-
-  let sbImageUploadPreconfirm = null
-
   function defaultStoryboardDuration() {
     return Number(videoClipDuration?.value ?? videoClipDuration) || 10
   }
@@ -174,26 +168,6 @@ export function useStoryboardWorkbench(deps = {}) {
 
   function getRefValue(source, fallback = undefined) {
     return source?.value ?? source ?? fallback
-  }
-
-  function isFreshUploadPreconfirm(marker) {
-    return !!(marker && Number(marker.expiresAt) > Date.now())
-  }
-
-  function consumeSbImageUploadPreconfirm(storyboardId, slot) {
-    const marker = sbImageUploadPreconfirm
-    sbImageUploadPreconfirm = null
-    return !!(
-      isFreshUploadPreconfirm(marker) &&
-      String(marker.storyboardId) === String(storyboardId) &&
-      String(marker.slot) === String(slot)
-    )
-  }
-
-  function getFirstImageFile(dataTransfer) {
-    if (!dataTransfer?.files?.length) return null
-    const file = Array.from(dataTransfer.files).find((item) => item.type.startsWith('image/'))
-    return file || null
   }
 
   const {
@@ -268,6 +242,32 @@ export function useStoryboardWorkbench(deps = {}) {
     sbSelectedLastImgId,
     groupByStoryboardId,
     getSbAllImages,
+  })
+
+  const {
+    dragOverSbId,
+    doUploadSbImage,
+    onSbImageDragLeave,
+    onSbImageDragOver,
+    onSbImageDrop,
+    onSbImageFileChange,
+    onUploadSbImageClick,
+    sbImageFileInput,
+    sbImageUploadForId,
+    uploadingSbImageId,
+  } = useStoryboardImageUpload({
+    store,
+    imagesAPI,
+    uploadAPI,
+    sbImageUploadSlotById,
+    sbSelectedImgId,
+    getDramaIdValue,
+    isFirstLastFrameMode,
+    frameTypeForSlot,
+    confirmAdminProjectOperation,
+    loadSingleStoryboardMedia,
+    restoreSelectionsFromBackend,
+    onSelectSbFrameImage,
   })
 
   async function onEditKeyframeDescription(storyboard, item) {
@@ -1078,114 +1078,6 @@ export function useStoryboardWorkbench(deps = {}) {
   async function stopBatchImageGeneration() {
     if (!(await confirmAdminProjectOperation('停止批量生成分镜图'))) return
     batchImageStopping.value = true
-  }
-
-  async function onUploadSbImageClick(storyboard, slot = 'first') {
-    if (!storyboard?.id) return
-    const useSlot = isFirstLastFrameMode() ? slot : 'first'
-    if (!(await confirmAdminProjectOperation(useSlot === 'last' ? '上传尾帧图片' : '上传分镜图片'))) return
-    sbImageUploadPreconfirm = {
-      storyboardId: String(storyboard.id),
-      slot: String(useSlot),
-      expiresAt: Date.now() + 60000,
-    }
-    sbImageUploadForId.value = storyboard.id
-    sbImageUploadSlotById.value = { ...sbImageUploadSlotById.value, [storyboard.id]: slot }
-    if (!isFirstLastFrameMode()) {
-      uploadingSbImageId.value = storyboard.id
-    }
-    if (sbImageFileInput.value) {
-      sbImageFileInput.value.value = ''
-      sbImageFileInput.value.click()
-    }
-  }
-
-  async function doUploadSbImage(storyboardId, file, slot = 'first') {
-    const dramaIdValue = getDramaIdValue()
-    if (!file || !storyboardId || !dramaIdValue) return
-    const useSlot = isFirstLastFrameMode() ? slot : 'first'
-    if (
-      !consumeSbImageUploadPreconfirm(storyboardId, useSlot) &&
-      !(await confirmAdminProjectOperation(useSlot === 'last' ? '上传尾帧图片' : '上传分镜图片'))
-    ) {
-      return
-    }
-    if (isFirstLastFrameMode()) {
-      sbImageUploadSlotById.value = { ...sbImageUploadSlotById.value, [storyboardId]: useSlot }
-    } else {
-      uploadingSbImageId.value = storyboardId
-    }
-    try {
-      if (!uploadAPI?.uploadImage) throw new Error('上传接口不可用')
-      const res = await uploadAPI.uploadImage(file, { dramaId: dramaIdValue })
-      const url = res?.url || res?.path
-      const localPath = res?.local_path
-      if (!url && !localPath) {
-        ElMessage.error('上传未返回地址')
-        return
-      }
-      const uploaded = await imagesAPI.upload({
-        storyboard_id: storyboardId,
-        drama_id: dramaIdValue,
-        image_url: url || '',
-        local_path: localPath || undefined,
-        frame_type: isFirstLastFrameMode() ? frameTypeForSlot(useSlot) : undefined,
-      })
-      ElMessage.success(useSlot === 'last' ? '尾帧上传成功' : '首帧上传成功')
-      if (uploaded?.id) {
-        const storyboard = (store?.storyboards || []).find((item) => item.id === storyboardId)
-        if (storyboard) onSelectSbFrameImage(storyboard, uploaded, useSlot)
-      } else if (!isFirstLastFrameMode()) {
-        const { [storyboardId]: _removed, ...rest } = sbSelectedImgId.value
-        sbSelectedImgId.value = rest
-      }
-      await loadSingleStoryboardMedia(storyboardId)
-      restoreSelectionsFromBackend()
-    } catch (error) {
-      ElMessage.error(error.message || '上传失败')
-    } finally {
-      uploadingSbImageId.value = null
-      const nextSlots = { ...sbImageUploadSlotById.value }
-      delete nextSlots[storyboardId]
-      sbImageUploadSlotById.value = nextSlots
-    }
-  }
-
-  function onSbImageFileChange(event) {
-    const file = event.target?.files?.[0]
-    const storyboardId = sbImageUploadForId.value
-    if (!file || !storyboardId) {
-      sbImageUploadPreconfirm = null
-      event.target.value = ''
-      return
-    }
-    const slot = sbImageUploadSlotById.value[storyboardId] || 'first'
-    doUploadSbImage(storyboardId, file, slot).finally(() => {
-      sbImageUploadForId.value = null
-      event.target.value = ''
-    })
-  }
-
-  function onSbImageDragOver(event, storyboardId) {
-    event.preventDefault()
-    event.stopPropagation()
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
-    dragOverSbId.value = storyboardId
-  }
-
-  function onSbImageDragLeave(event, storyboardId) {
-    event.preventDefault()
-    if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget)) return
-    if (storyboardId != null && dragOverSbId.value !== storyboardId) return
-    dragOverSbId.value = null
-  }
-
-  function onSbImageDrop(event, storyboard) {
-    event.preventDefault()
-    event.stopPropagation()
-    dragOverSbId.value = null
-    const file = getFirstImageFile(event.dataTransfer)
-    if (file && storyboard?.id) doUploadSbImage(storyboard.id, file)
   }
 
   function onSelectSbMainVideo(storyboard, video) {
