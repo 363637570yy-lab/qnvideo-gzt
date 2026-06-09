@@ -131,9 +131,24 @@ import { uploadAPI } from '@/api/upload'
 import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
-import { workflowPresetAPI } from '@/api/workflowPresets'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
+import {
+  IMAGE_TIER_AREAS,
+  VIDEO_TIER_AREAS,
+  defaultImageSpec,
+  defaultVideoSpec,
+  dimensionsForArea as mediaDimensionsForArea,
+  imageRatioOptions,
+  imageTierOptions,
+  normalizeImageSpec,
+  normalizeVideoSpec,
+  parseRatioValue as parseMediaRatioValue,
+  resolveImageSpec as resolveMediaImageSpec,
+  resolveVideoSpec as resolveMediaVideoSpec,
+  roundToMultiple,
+  videoTierOptions,
+} from '@/utils/filmCreate/mediaSpec'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
@@ -157,6 +172,8 @@ import {
   backfillDramaStylePromptMetadataIfNeeded,
 } from '@/constants/styleOptions'
 import { useNavigation } from '@/composables/filmCreate/useNavigation'
+import { useAiRouteSelection } from '@/composables/filmCreate/useAiRouteSelection'
+import { useWorkflowPresets } from '@/composables/filmCreate/useWorkflowPresets'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useCharacters } from '@/composables/filmCreate/useCharacters'
 import { useProps as usePropsComposable } from '@/composables/filmCreate/useProps'
@@ -235,63 +252,16 @@ function goList() {
 const showAiConfigDialog = ref(false)
 const showUsageCenterDialog = ref(false)
 const showWorkflowConfigDialog = ref(false)
-const workflowPresetLoading = ref(false)
-const workflowPresetOptions = reactive({
-  character: [],
-  scene: [],
-  prop: [],
-  storyboard: [],
-})
-const selectedWorkflowPresetIds = reactive({
-  character: '',
-  scene: '',
-  prop: '',
-  storyboard: '',
-})
-
-function workflowPresetLabel(preset) {
-  return preset?.is_default ? `${preset.name}（默认）` : preset?.name || '未命名规范'
-}
-
-function selectedWorkflowPreset(type) {
-  const id = String(selectedWorkflowPresetIds[type] || '')
-  return (workflowPresetOptions[type] || []).find((item) => String(item.id) === id) || null
-}
-
-function selectedWorkflowPresetName(type) {
-  return selectedWorkflowPreset(type)?.name || '默认生成规范'
-}
-
-function workflowPresetPayload(type) {
-  const id = Number(selectedWorkflowPresetIds[type])
-  return Number.isFinite(id) && id > 0 ? { workflow_preset_id: id } : {}
-}
-
-function applyDefaultWorkflowSelections() {
-  for (const type of Object.keys(workflowPresetOptions)) {
-    const list = workflowPresetOptions[type] || []
-    const selected = String(selectedWorkflowPresetIds[type] || '')
-    if (selected && list.some((item) => String(item.id) === selected)) continue
-    const next = list.find((item) => item.is_default) || list[0]
-    selectedWorkflowPresetIds[type] = next ? String(next.id) : ''
-  }
-}
-
-async function loadWorkflowPresets() {
-  workflowPresetLoading.value = true
-  try {
-    const res = await workflowPresetAPI.list({ active: 1 })
-    const items = res?.items || []
-    for (const type of Object.keys(workflowPresetOptions)) {
-      workflowPresetOptions[type] = items.filter((item) => item.preset_type === type)
-    }
-    applyDefaultWorkflowSelections()
-  } catch (err) {
-    ElMessage.error(err.message || '加载工作流规范失败')
-  } finally {
-    workflowPresetLoading.value = false
-  }
-}
+const {
+  workflowPresetLoading,
+  workflowPresetOptions,
+  selectedWorkflowPresetIds,
+  workflowPresetLabel,
+  selectedWorkflowPreset,
+  selectedWorkflowPresetName,
+  workflowPresetPayload,
+  loadWorkflowPresets,
+} = useWorkflowPresets()
 watch(showAiConfigDialog, (open) => {
   if (!open) {
     invalidateActiveVideoAiConfigCache()
@@ -304,65 +274,41 @@ watch(showWorkflowConfigDialog, (open) => {
   if (!open) loadWorkflowPresets()
 })
 const MAX_STORY_EPISODE_COUNT = 100
-const aiRouteLoading = ref(false)
-const aiRoutesLoaded = ref(false)
-const aiRoutesExpanded = ref(false)
-const aiRouteTypes = [
-  { key: 'text', label: '文本' },
-  { key: 'image', label: '图像' },
-  { key: 'video', label: '视频' },
-  { key: 'tts', label: '音频' },
-]
-const pipelineModelStrategyTypes = [
-  { key: 'text', label: '文本' },
-  { key: 'image', label: '图像' },
-  { key: 'video', label: '视频' },
-]
-const runtimeAiConfigs = reactive({
-  text: [],
-  image: [],
-  video: [],
-  tts: [],
-})
-const runtimeRoutingPolicies = reactive({
-  text: null,
-  image: null,
-  video: null,
-  tts: null,
-})
-const selectedAiConfigIds = reactive({
-  text: '',
-  image: '',
-  video: '',
-  tts: '',
-})
-const AI_ROUTE_METADATA_KEY = 'ai_route_config_ids'
+const pipelineConcurrency = ref(8)
+const pipelineVideoConcurrency = ref(3)
+const {
+  AI_ROUTE_METADATA_KEY,
+  aiRouteLoading,
+  aiRoutesLoaded,
+  aiRoutesExpanded,
+  aiRouteTypes,
+  pipelineModelStrategyTypes,
+  runtimeAiConfigs,
+  runtimeRoutingPolicies,
+  selectedAiConfigIds,
+  normalizeAiRouteId,
+  normalizeRuntimeConcurrency,
+  projectAiRouteSelectionForSave,
+  applyProjectAiRouteSelection,
+  configOptionLabel,
+  aiRouteSummary,
+  routePrimaryConfig,
+  pipelineModelStrategyItems,
+  aiRoutePayload,
+  textAiPayload,
+  imageAiPayload,
+  storyboardImageAiPayload,
+  videoAiPayload,
+  ttsAiPayload,
+  applyRuntimeRoutingPolicies,
+  loadRuntimeAiConfigs,
+  toggleAiRoutesExpanded,
+  onAiRouteSelectVisible,
+} = useAiRouteSelection({ pipelineConcurrency, pipelineVideoConcurrency })
 const PROJECT_SETTINGS_SAVE_DELAY_MS = 500
 let projectSettingsHydrating = false
 let projectSettingsSaveTimer = null
 let pendingProjectStyleSave = false
-
-function normalizeAiRouteId(value) {
-  const n = Number(value)
-  return Number.isFinite(n) && n > 0 ? String(Math.trunc(n)) : ''
-}
-
-function projectAiRouteSelectionForSave() {
-  return Object.fromEntries(
-    aiRouteTypes.map(({ key }) => [key, normalizeAiRouteId(selectedAiConfigIds[key])])
-  )
-}
-
-function applyProjectAiRouteSelection(metadata = {}) {
-  const saved =
-    metadata?.[AI_ROUTE_METADATA_KEY] ||
-    metadata?.ai_routes ||
-    metadata?.ai_config_ids ||
-    {}
-  aiRouteTypes.forEach(({ key }) => {
-    selectedAiConfigIds[key] = normalizeAiRouteId(saved?.[key])
-  })
-}
 
 function scheduleProjectSettingsSave(includeGenerationStyle = false) {
   if (projectSettingsHydrating || !store.dramaId) return
@@ -382,121 +328,6 @@ function clearPendingProjectSettingsSave() {
     projectSettingsSaveTimer = null
   }
   pendingProjectStyleSave = false
-}
-
-function configOptionLabel(cfg) {
-  const name = cfg?.name || cfg?.provider || '未命名配置'
-  const model = cfg?.default_model || (Array.isArray(cfg?.model) ? cfg.model[0] : '')
-  const status = cfg?.health_status && cfg.health_status !== 'ok' ? ` · ${cfg.health_status}` : ''
-  return `${name}${model ? ' · ' + model : ''}${status}`
-}
-
-const aiRouteSummary = computed(() => {
-  const selected = aiRouteTypes.filter(({ key }) => selectedAiConfigIds[key]).length
-  return selected > 0 ? `${selected}项指定` : '自动'
-})
-
-function routePrimaryConfig(type) {
-  const selectedId = normalizeAiRouteId(selectedAiConfigIds[type])
-  if (selectedId) {
-    return (runtimeAiConfigs[type] || []).find((cfg) => String(cfg.id) === selectedId) || null
-  }
-  return (runtimeAiConfigs[type] || [])[0] || null
-}
-
-const pipelineModelStrategyItems = computed(() => {
-  return pipelineModelStrategyTypes.map(({ key, label }) => {
-    const selectedId = normalizeAiRouteId(selectedAiConfigIds[key])
-    const cfg = routePrimaryConfig(key)
-    const model = cfg?.default_model || (Array.isArray(cfg?.model) ? cfg.model[0] : '')
-    const name = cfg?.name || cfg?.provider || ''
-    const strategy = selectedId ? '指定' : '自动'
-    const summary = cfg ? `${strategy} · ${name || model || '未命名'}` : '未配置'
-    const tooltip = cfg
-      ? `${label} ${strategy}使用：${configOptionLabel(cfg)}`
-      : `${label} 暂无可用配置`
-    return {
-      key,
-      label,
-      summary,
-      tooltip,
-      specified: !!selectedId,
-      empty: !cfg,
-    }
-  })
-})
-
-function aiRoutePayload(type, field = 'ai_config_id') {
-  const id = Number(selectedAiConfigIds[type])
-  if (!Number.isFinite(id) || id <= 0) return {}
-  return { [field]: id }
-}
-
-function textAiPayload() {
-  return aiRoutePayload('text', 'text_config_id')
-}
-
-function imageAiPayload() {
-  return aiRoutePayload('image', 'image_config_id')
-}
-
-function storyboardImageAiPayload() {
-  return imageAiPayload()
-}
-
-function videoAiPayload() {
-  return aiRoutePayload('video', 'video_config_id')
-}
-
-function ttsAiPayload() {
-  return aiRoutePayload('tts', 'tts_config_id')
-}
-
-function normalizeRuntimeConcurrency(value, fallback, max = 500) {
-  const n = Number(value)
-  if (!Number.isFinite(n) || n <= 0) return fallback
-  return Math.min(max, Math.max(1, Math.trunc(n)))
-}
-
-function applyRuntimeRoutingPolicies(policies = {}) {
-  aiRouteTypes.forEach(({ key }) => {
-    runtimeRoutingPolicies[key] = policies?.[key] || null
-  })
-  pipelineConcurrency.value = normalizeRuntimeConcurrency(runtimeRoutingPolicies.image?.concurrency_limit, 4, 8)
-  pipelineVideoConcurrency.value = normalizeRuntimeConcurrency(runtimeRoutingPolicies.video?.concurrency_limit, 3)
-}
-
-async function loadRuntimeAiConfigs(force = false) {
-  if (aiRoutesLoaded.value && !force) return
-  aiRouteLoading.value = true
-  try {
-    const res = await aiAPI.runtimeRoutes()
-    const groups = res?.options || res?.items || {}
-    aiRouteTypes.forEach(({ key }) => {
-      const rows = Array.isArray(groups[key]) ? groups[key] : []
-      runtimeAiConfigs[key] = rows
-      if (selectedAiConfigIds[key] && !rows.some((cfg) => String(cfg.id) === String(selectedAiConfigIds[key]))) {
-        selectedAiConfigIds[key] = ''
-      }
-    })
-    applyRuntimeRoutingPolicies(res?.routing_policies || {})
-    aiRoutesLoaded.value = true
-  } catch (_) {
-    aiRouteTypes.forEach(({ key }) => {
-      runtimeAiConfigs[key] = []
-    })
-  } finally {
-    aiRouteLoading.value = false
-  }
-}
-
-function toggleAiRoutesExpanded() {
-  aiRoutesExpanded.value = !aiRoutesExpanded.value
-  if (aiRoutesExpanded.value) loadRuntimeAiConfigs()
-}
-
-function onAiRouteSelectVisible(visible) {
-  if (visible) loadRuntimeAiConfigs()
 }
 
 const storyInput = ref('')
@@ -586,106 +417,24 @@ const projectAspectRatio = ref('16:9')
 const videoClipDuration = ref(10)
 const imageSpecDialogVisible = ref(false)
 
-const imageTierOptions = [
-  { value: '1K', label: '1K' },
-  { value: '2K', label: '2K' },
-  { value: '4K', label: '4K' },
-]
-const videoTierOptions = [
-  { value: '480p', label: '480P' },
-  { value: '720p', label: '720P' },
-  { value: '1080p', label: '1080P' },
-]
-const imageRatioOptions = [
-  { value: 'follow_project', label: '跟随项目', aspect: '16 / 9' },
-  { value: '1:1', label: '1:1', aspect: '1 / 1' },
-  { value: '3:2', label: '3:2', aspect: '3 / 2' },
-  { value: '2:3', label: '2:3', aspect: '2 / 3' },
-  { value: '16:9', label: '16:9', aspect: '16 / 9' },
-  { value: '9:16', label: '9:16', aspect: '9 / 16' },
-  { value: '4:3', label: '4:3', aspect: '4 / 3' },
-  { value: '3:4', label: '3:4', aspect: '3 / 4' },
-  { value: '21:9', label: '21:9', aspect: '21 / 9' },
-]
-const IMAGE_TIER_AREAS = {
-  '1K': 1280 * 720,
-  '2K': 1920 * 1080,
-  '4K': 3840 * 2160,
-}
-const VIDEO_TIER_AREAS = {
-  '480p': 854 * 480,
-  '720p': 1280 * 720,
-  '1080p': 1920 * 1080,
-}
-
-function defaultImageSpec() {
-  return { mode: 'ratio', tier: '4K', ratio: 'follow_project', width: 3840, height: 2160 }
-}
-
-function defaultVideoSpec() {
-  return { mode: 'ratio', tier: '720p', ratio: 'follow_project' }
-}
-
 const projectImageSpec = ref(defaultImageSpec())
 const projectVideoSpec = ref(defaultVideoSpec())
 const imageSpecDraft = ref(defaultImageSpec())
 
 function parseRatioValue(value, fallback = '16:9') {
-  const raw = value === 'follow_project' ? projectAspectRatio.value : value
-  const s = String(raw || fallback || '16:9').trim()
-  const m = s.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/)
-  if (!m) return parseRatioValue(fallback === s ? '16:9' : fallback, '16:9')
-  const w = Number(m[1])
-  const h = Number(m[2])
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return { ratio: '16:9', w: 16, h: 9 }
-  return { ratio: `${m[1]}:${m[2]}`, w, h }
-}
-
-function roundToMultiple(value, multiple = 8) {
-  return Math.max(multiple, Math.round(value / multiple) * multiple)
+  return parseMediaRatioValue(value, fallback, projectAspectRatio.value)
 }
 
 function dimensionsForArea(area, ratioValue) {
-  const parsed = parseRatioValue(ratioValue)
-  const ratio = parsed.w / parsed.h
-  const width = roundToMultiple(Math.sqrt(area * ratio))
-  const height = roundToMultiple(width / ratio)
-  return { width, height, aspect_ratio: parsed.ratio }
-}
-
-function normalizeImageSpec(spec = {}) {
-  const base = defaultImageSpec()
-  const mode = ['auto', 'ratio', 'custom'].includes(spec.mode) ? spec.mode : base.mode
-  const tier = IMAGE_TIER_AREAS[spec.tier] ? spec.tier : base.tier
-  const ratioValues = new Set(imageRatioOptions.map((item) => item.value))
-  const ratio = ratioValues.has(spec.ratio) ? spec.ratio : base.ratio
-  const width = Math.max(256, Math.min(8192, Number(spec.width) || base.width))
-  const height = Math.max(256, Math.min(8192, Number(spec.height) || base.height))
-  return { mode, tier, ratio, width: Math.round(width), height: Math.round(height) }
-}
-
-function normalizeVideoSpec(spec = {}) {
-  const base = defaultVideoSpec()
-  const rawTier = String(spec.tier || spec.resolution || base.tier).trim().toLowerCase()
-  const tier = VIDEO_TIER_AREAS[rawTier] ? rawTier : base.tier
-  return { mode: 'ratio', tier, ratio: 'follow_project' }
+  return mediaDimensionsForArea(area, ratioValue, projectAspectRatio.value)
 }
 
 function resolveImageSpec(spec) {
-  const normalized = normalizeImageSpec(spec)
-  if (normalized.mode === 'custom') {
-    return { ...normalized, aspect_ratio: `${normalized.width}:${normalized.height}` }
-  }
-  const tier = normalized.mode === 'auto' ? '4K' : normalized.tier
-  const ratio = normalized.mode === 'auto' ? 'follow_project' : normalized.ratio
-  return { ...normalized, tier, ratio, ...dimensionsForArea(IMAGE_TIER_AREAS[tier], ratio) }
+  return resolveMediaImageSpec(spec, projectAspectRatio.value)
 }
 
 function resolveVideoSpec(spec) {
-  const normalized = normalizeVideoSpec(spec)
-  const tier = normalized.tier
-  const ratio = 'follow_project'
-  return { ...normalized, tier, ratio, resolution: tier, ...dimensionsForArea(VIDEO_TIER_AREAS[tier], ratio) }
+  return resolveMediaVideoSpec(spec, projectAspectRatio.value)
 }
 
 const imageSpecPreview = computed(() => resolveImageSpec(imageSpecDraft.value))
@@ -1047,8 +796,6 @@ let pipelineResolveResume = null
 // 倒计时（两个生成阶段之间的确认窗口）
 const pipelineCountdown = ref(0)      // 剩余秒数，0 表示不在倒计时
 const pipelineCountdownMsg = ref('')  // 倒计时说明文字
-const pipelineConcurrency = ref(8)
-const pipelineVideoConcurrency = ref(3)
 const pipelineActiveTasks = reactive(new Set())
 
 async function loadPipelineConcurrency() {
@@ -8102,7 +7849,6 @@ const filmCreateCtx = proxyRefs({
   workbenchSummary,
   workbenchSummaryLoading,
   workbenchTabLoaded,
-  workflowPresetAPI,
   WorkflowPresetConfigDialog,
   workflowPresetLabel,
   workflowPresetLoading,
