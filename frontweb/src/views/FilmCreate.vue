@@ -161,6 +161,7 @@ import { useWorkflowPresets } from '@/features/filmCreate/shared/composables/use
 import { useWorkbenchLoader } from '@/features/filmCreate/shared/composables/useWorkbenchLoader'
 import { useMediaPreview } from '@/features/filmCreate/shared/composables/useMediaPreview'
 import { useTaskRuntime } from '@/features/filmCreate/shared/composables/useTaskRuntime'
+import { usePipelineRunner } from '@/features/filmCreate/shared/composables/usePipelineRunner'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useCharacters } from '@/features/filmCreate/workbenches/characters/useCharacters'
 import { useProps as usePropsComposable } from '@/features/filmCreate/workbenches/props/useProps'
@@ -263,8 +264,32 @@ watch(showWorkflowConfigDialog, (open) => {
   if (!open) loadWorkflowPresets()
 })
 const MAX_STORY_EPISODE_COUNT = 100
-const pipelineConcurrency = ref(8)
-const pipelineVideoConcurrency = ref(3)
+const {
+  addPipelineError,
+  checkPause,
+  finishPipeline,
+  onPipelineResume,
+  pipelineActiveTasks,
+  pipelineConcurrency,
+  pipelineCountdown,
+  pipelineCountdownMsg,
+  pipelineCurrentStep,
+  pipelineErrorLog,
+  pipelinePaused,
+  pipelineRest,
+  pipelineRunning,
+  pipelineStepIndex,
+  pipelineStepTotal,
+  pipelineVideoConcurrency,
+  pipelineWithRetry,
+  runConcurrently,
+  runPipelineCountdown,
+  setPipelineConcurrencyFallback,
+  setPipelineStep,
+  skipPipelineCountdown,
+  startPipeline,
+  waitForResume,
+} = usePipelineRunner()
 const {
   AI_ROUTE_METADATA_KEY,
   aiRouteLoading,
@@ -560,64 +585,13 @@ const universalOmniPolishProgress = ref({ current: 0, total: 0, label: '' })
 const sbTruncatedWarning = ref(false)
 const sbTruncatedDismissed = ref(false)
 const videoErrorMsg = ref('')
-// 一键全流程流水线
-const pipelineRunning = ref(false)
-const pipelinePaused = ref(false)
-const pipelineErrorLog = ref([])
-const pipelineCurrentStep = ref('')
-const pipelineStepIndex = ref(0)    // 当前步骤序号（1-based）
-/** 全流程 10 步；仅文本框架为前 4 步 */
-const pipelineStepTotal = ref(10)
-let pipelineResolveResume = null
-// 倒计时（两个生成阶段之间的确认窗口）
-const pipelineCountdown = ref(0)      // 剩余秒数，0 表示不在倒计时
-const pipelineCountdownMsg = ref('')  // 倒计时说明文字
-const pipelineActiveTasks = reactive(new Set())
-
 async function loadPipelineConcurrency() {
   try {
     const res = await aiAPI.runtimeRoutes()
     applyRuntimeRoutingPolicies(res?.routing_policies || {})
   } catch (_) {
-    pipelineConcurrency.value = 4
-    pipelineVideoConcurrency.value = 3
+    setPipelineConcurrencyFallback()
   }
-}
-
-/**
- * 带并发度的批量执行器。
- * @param {Array} items - 需要处理的项目列表
- * @param {number} concurrency - 最大并发数
- * @param {Function} fn - async (item, index) => void，内部可 throw 或 return {paused}
- * @param {{ getLabel?: (item) => string }} options
- * @returns {Promise<{paused: boolean}>}
- */
-async function runConcurrently(items, concurrency, fn, options = {}) {
-  let index = 0
-  let anyPaused = false
-  const getLabel = options.getLabel || (() => null)
-
-  async function worker() {
-    while (index < items.length) {
-      const i = index++
-      const item = items[i]
-      const label = getLabel(item)
-      if (label) pipelineActiveTasks.add(label)
-      try {
-        const result = await fn(item, i)
-        if (result && typeof result === 'object' && result.paused) {
-          anyPaused = true
-          return
-        }
-      } finally {
-        if (label) pipelineActiveTasks.delete(label)
-      }
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
-  await Promise.allSettled(workers)
-  return { paused: anyPaused }
 }
 
 function hasAssetImage(item) {
@@ -5441,114 +5415,27 @@ async function onGenerateVideo() {
   }
 }
 
-function waitForResume() {
-  return new Promise((resolve) => {
-    pipelineResolveResume = resolve
-  })
-}
-
-function onPipelineResume() {
-  pipelinePaused.value = false
-  if (pipelineResolveResume) {
-    pipelineResolveResume()
-    pipelineResolveResume = null
-  }
-}
-
-function addPipelineError(step, message) {
-  const time = new Date().toLocaleTimeString('zh-CN')
-  pipelineErrorLog.value = [...pipelineErrorLog.value, { time, step, message }]
-}
-
-async function checkPause() {
-  while (pipelinePaused.value) {
-    await waitForResume()
-  }
-}
-
-/** 每生成好一个图片或内容后休息，防止任务队列过紧 */
-function pipelineRest() {
-  return new Promise((r) => setTimeout(r, 1000))
-}
-
-/** 跳过倒计时，立即进入下一阶段 */
-function skipPipelineCountdown() {
-  pipelineCountdown.value = 0
-}
-
-/** 阶段间倒计时，支持暂停冻结 + 立即跳过 */
-async function runPipelineCountdown(totalSeconds, msg) {
-  pipelineCountdown.value = totalSeconds
-  pipelineCountdownMsg.value = msg
-  try {
-    while (pipelineCountdown.value > 0) {
-      await checkPause()                              // 暂停时冻结在此
-      await new Promise((r) => setTimeout(r, 1000))  // 等 1 秒
-      if (pipelineCountdown.value > 0) pipelineCountdown.value--
-    }
-  } finally {
-    pipelineCountdown.value = 0
-    pipelineCountdownMsg.value = ''
-  }
-}
-
-/** 执行可失败步骤，失败时重试最多 maxRetries 次；fn 返回 { paused: true } 表示暂停不重试；返回 true 表示成功；抛错会触发重试 */
-async function pipelineWithRetry(stepName, fn, maxRetries = 3) {
-  let lastErr
-  for (let r = 0; r < maxRetries; r++) {
-    try {
-      const result = await fn()
-      if (result && result.paused === true) return result
-      return true
-    } catch (e) {
-      lastErr = e
-      if (r < maxRetries - 1) await pipelineRest()
-    }
-  }
-  addPipelineError(stepName, '重试3次均失败: ' + (lastErr?.message || String(lastErr)))
-  return false
-}
-
 async function startOneClickPipeline() {
   if (!currentEpisodeId.value || pipelineRunning.value) return
   if (!(await confirmAdminProjectOperation('一键成片（测试中慎用！）'))) return
   trackFilmCreateAction('one_click_generate_start')
-  pipelineErrorLog.value = []
-  pipelineCurrentStep.value = ''
-  pipelineStepIndex.value = 0
-  pipelineActiveTasks.clear()
-  pipelineStepTotal.value = 10
-  pipelineRunning.value = true
-  pipelinePaused.value = false
+  startPipeline(10)
   try {
     await runOneClickPipeline(false)
   } finally {
-    pipelineRunning.value = false
-    pipelineActiveTasks.clear()
+    finishPipeline()
   }
 }
 
 async function startTextFrameworkPipeline() {
   if (!currentEpisodeId.value || pipelineRunning.value) return
   if (!(await confirmAdminProjectOperation('一键生成素材及分镜文本'))) return
-  pipelineErrorLog.value = []
-  pipelineCurrentStep.value = ''
-  pipelineStepIndex.value = 0
-  pipelineActiveTasks.clear()
-  pipelineStepTotal.value = 4
-  pipelineRunning.value = true
-  pipelinePaused.value = false
+  startPipeline(4)
   try {
     await runOneClickPipeline(true)
   } finally {
-    pipelineRunning.value = false
-    pipelineActiveTasks.clear()
+    finishPipeline()
   }
-}
-
-function setPipelineStep(idx, text) {
-  pipelineStepIndex.value = idx
-  pipelineCurrentStep.value = `[步骤 ${idx}/${pipelineStepTotal.value}] ${text}`
 }
 
 async function runOneClickPipeline(textOnly = false) {
@@ -5978,16 +5865,11 @@ async function runOneClickPipeline(textOnly = false) {
 async function startRepairPipeline() {
   if (!currentEpisodeId.value || pipelineRunning.value) return
   if (!(await confirmAdminProjectOperation('修复缺失内容'))) return
-  pipelineErrorLog.value = []
-  pipelineCurrentStep.value = ''
-  pipelineActiveTasks.clear()
-  pipelineRunning.value = true
-  pipelinePaused.value = false
+  startPipeline(10)
   try {
     await runRepairPipeline()
   } finally {
-    pipelineRunning.value = false
-    pipelineActiveTasks.clear()
+    finishPipeline()
   }
 }
 
@@ -6887,7 +6769,6 @@ const filmCreateCtx = proxyRefs({
   pipelineModelStrategyItems,
   pipelineModelStrategyTypes,
   pipelinePaused,
-  pipelineResolveResume,
   pipelineRest,
   pipelineRunning,
   pipelineStepIndex,
