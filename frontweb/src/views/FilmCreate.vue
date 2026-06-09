@@ -169,16 +169,16 @@ import {
   stylePromptMetadataForSave,
   backfillDramaStylePromptMetadataIfNeeded,
 } from '@/constants/styleOptions'
-import { useNavigation } from '@/composables/filmCreate/useNavigation'
-import { useAiRouteSelection } from '@/composables/filmCreate/useAiRouteSelection'
-import { useWorkflowPresets } from '@/composables/filmCreate/useWorkflowPresets'
-import { useWorkbenchLoader } from '@/composables/filmCreate/useWorkbenchLoader'
-import { useMediaPreview } from '@/composables/filmCreate/useMediaPreview'
-import { useTaskRuntime } from '@/composables/filmCreate/useTaskRuntime'
+import { useNavigation } from '@/composables/filmCreate/shared/useNavigation'
+import { useAiRouteSelection } from '@/composables/filmCreate/shared/useAiRouteSelection'
+import { useWorkflowPresets } from '@/composables/filmCreate/shared/useWorkflowPresets'
+import { useWorkbenchLoader } from '@/composables/filmCreate/shared/useWorkbenchLoader'
+import { useMediaPreview } from '@/composables/filmCreate/shared/useMediaPreview'
+import { useTaskRuntime } from '@/composables/filmCreate/shared/useTaskRuntime'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
-import { useCharacters } from '@/composables/filmCreate/useCharacters'
-import { useProps as usePropsComposable } from '@/composables/filmCreate/useProps'
-import { useScenes } from '@/composables/filmCreate/useScenes'
+import { useCharacters } from '@/composables/filmCreate/workbenches/characters/useCharacters'
+import { useProps as usePropsComposable } from '@/composables/filmCreate/workbenches/props/useProps'
+import { useScenes } from '@/composables/filmCreate/workbenches/scenes/useScenes'
 import { getCurrentUser, isAdmin } from '@/utils/auth'
 
 const route = useRoute()
