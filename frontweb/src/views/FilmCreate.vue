@@ -896,11 +896,15 @@ const {
   generatingSbLastImageIds,
   generatingSbVideoIds,
   generatingUniversalSegmentIds,
+  groupByStoryboardId,
   inferringParams,
   linkingTailFrameIds,
+  loadSingleStoryboardMedia,
+  loadStoryboardMedia,
   regeneratingLayoutSbIds,
   regenSbImagesForAsset,
   regenSbImagesProgress,
+  restoreSelectionsFromBackend,
   sbAction,
   sbAngle,
   sbAngleH,
@@ -953,7 +957,12 @@ const {
   videoFrameContiguity,
   videoParamsSaving,
   videoParamsTarget,
-} = useStoryboardWorkbench()
+} = useStoryboardWorkbench({
+  store,
+  imagesAPI,
+  videosAPI,
+  getSbAllImages: (...args) => getSbAllImages(...args),
+})
 const {
   baseUrl,
   previewImageUrl,
@@ -1358,63 +1367,6 @@ function getSbVideoError(storyboardId) {
   return failed[0].error_msg
 }
 
-let storyboardMediaPromise = null
-let storyboardMediaKey = ''
-
-function groupByStoryboardId(items) {
-  const map = {}
-  for (const item of items || []) {
-    const sid = item?.storyboard_id
-    if (sid == null) continue
-    if (!map[sid]) map[sid] = []
-    map[sid].push(item)
-  }
-  return map
-}
-
-async function loadStoryboardMedia({ force = false } = {}) {
-  const boards = store.storyboards || []
-  if (boards.length === 0) {
-    sbImages.value = {}
-    sbVideos.value = {}
-    return
-  }
-  const ids = boards.map((sb) => Number(sb.id)).filter((id) => Number.isFinite(id) && id > 0)
-  const key = ids.join(',')
-  if (!force && storyboardMediaPromise && storyboardMediaKey === key) return storyboardMediaPromise
-  storyboardMediaKey = key
-  storyboardMediaPromise = (async () => {
-    const nextImages = {}
-    const nextVideos = {}
-    for (const id of ids) {
-      nextImages[id] = []
-      nextVideos[id] = []
-    }
-    try {
-      const [imgRes, vidRes] = await Promise.all([
-        imagesAPI.list({ storyboard_ids: key, page: 1, page_size: 500 }),
-        videosAPI.list({ storyboard_ids: key, page: 1, page_size: 500 })
-      ])
-      const imgMap = groupByStoryboardId(imgRes?.items || [])
-      const vidMap = groupByStoryboardId(vidRes?.items || [])
-      for (const id of ids) {
-        nextImages[id] = imgMap[id] || []
-        nextVideos[id] = vidMap[id] || []
-      }
-    } catch (_) {
-      // 保留空数组，避免单次媒体加载失败时旧数据误显示到新剧集。
-    }
-    if (storyboardMediaKey === key) {
-      sbImages.value = nextImages
-      sbVideos.value = nextVideos
-      restoreSelectionsFromBackend()
-    }
-  })()
-  return storyboardMediaPromise.finally(() => {
-    if (storyboardMediaKey === key) storyboardMediaPromise = null
-  })
-}
-
 function getGeneratingSetsBag() {
   return {
     generatingCharIds,
@@ -1482,64 +1434,7 @@ async function recoverAndSyncEpisodeTasks(epId) {
   }
 }
 
-/** 只刷新单条分镜的图片/视频，避免每次单图操作都全量请求所有分镜 */
-async function loadSingleStoryboardMedia(sbId) {
-  if (!sbId) return
-  try {
-    const [imgRes, vidRes] = await Promise.all([
-      imagesAPI.list({ storyboard_id: sbId, page: 1, page_size: 100 }),
-      videosAPI.list({ storyboard_id: sbId, page: 1, page_size: 50 })
-    ])
-    sbImages.value = {
-      ...sbImages.value,
-      [sbId]: (imgRes && imgRes.items) ? imgRes.items : []
-    }
-    sbVideos.value = {
-      ...sbVideos.value,
-      [sbId]: (vidRes && vidRes.items) ? vidRes.items : []
-    }
-    restoreSelectionsFromBackend()
-  } catch (_) {
-    // 静默忽略，不影响其他分镜的显示
-  }
-}
-
 // ── 主图选择 ─────────────────────────────────────────────────────────
-
-/**
- * 从后端 storyboard.image_url / local_path 恢复主图选择状态。
- * 与 image_generation 记录比对，找到匹配的记录并恢复 sbSelectedImgId。
- */
-function restoreSelectionsFromBackend() {
-  const boards = store.storyboards || []
-  for (const sb of boards) {
-    const images = getSbAllImages(sb.id)
-    if (sbSelectedImgId.value[sb.id] == null) {
-      const confirmed = images.find((img) => img.selected && img.frame_type === 'storyboard_keyframe')
-      if (confirmed) {
-        sbSelectedImgId.value = { ...sbSelectedImgId.value, [sb.id]: confirmed.id }
-      } else if (sb.first_frame_image_id != null) {
-        sbSelectedImgId.value = { ...sbSelectedImgId.value, [sb.id]: sb.first_frame_image_id }
-      } else {
-        const sbPath = (sb.local_path || '').trim()
-        const sbUrl = (sb.image_url || '').trim()
-        if (sbPath || sbUrl) {
-          const matched = images.find(
-            (img) =>
-              (sbPath && img.local_path && img.local_path === sbPath) ||
-              (sbUrl && img.image_url && img.image_url === sbUrl)
-          )
-          if (matched) {
-            sbSelectedImgId.value = { ...sbSelectedImgId.value, [sb.id]: matched.id }
-          }
-        }
-      }
-    }
-    if (sbSelectedLastImgId.value[sb.id] == null && sb.last_frame_image_id != null) {
-      sbSelectedLastImgId.value = { ...sbSelectedLastImgId.value, [sb.id]: sb.last_frame_image_id }
-    }
-  }
-}
 
 /** 获取缩略图条数据：已绑定首尾帧以外的历史图 */
 function getStripItems(storyboardId) {
@@ -6710,8 +6605,6 @@ const filmCreateCtx = proxyRefs({
   storyboardImageAiPayload,
   storyboardImageTimeValue,
   storyboardIncludeNarration,
-  storyboardMediaKey,
-  storyboardMediaPromise,
   storyboardMenuExpanded,
   storyboardRefName,
   storyboards,
