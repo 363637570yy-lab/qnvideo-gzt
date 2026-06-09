@@ -1,56 +1,6 @@
 <template>
   <div class="film-create" :class="{ 'sidebar-collapsed': navCollapsed }">
-    <!-- 顶部 -->
-    <header class="header">
-      <div class="header-inner">
-        <h1 class="logo" @click="goList">
-          <span class="logo-main">芊柠AI视频工作台</span>
-          <span class="logo-sub">QN AI Video</span>
-        </h1>
-        <span class="breadcrumb-sep">›</span>
-        <span class="page-title">{{ dramaId ? (store.drama?.title || '项目') : '新建故事' }}</span>
-        <el-select
-          v-if="dramaId"
-          v-model="selectedEpisodeId"
-          class="header-episode-select"
-          placeholder="选择集数"
-          clearable
-          size="small"
-          style="width: 130px"
-          @change="onEpisodeSelect"
-        >
-          <el-option
-            v-for="ep in (store.drama?.episodes || [])"
-            :key="ep.id"
-            :label="ep.title || '第' + (ep.episode_number || 0) + '集'"
-            :value="ep.id"
-          />
-        </el-select>
-        <el-button v-if="dramaId" class="btn-back-drama" title="打开项目详情与剧集管理" @click="router.push('/drama/' + dramaId)">
-          <el-icon><Document /></el-icon>
-          剧集管理
-        </el-button>
-        <div class="header-actions">
-          <el-button class="btn-theme" :title="isDark ? '切换到浅色模式' : '切换到暗色模式'" @click="toggleTheme">
-            <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
-            {{ isDark ? '浅色' : '暗色' }}
-          </el-button>
-          <el-button class="btn-ai-config" @click="showUsageCenterDialog = true">
-            <el-icon><DataAnalysis /></el-icon>
-            用量中心
-          </el-button>
-          <el-button v-if="isAdminUser" class="btn-ai-config" @click="showAiConfigDialog = true">
-            <el-icon><Setting /></el-icon>
-            AI配置
-          </el-button>
-          <el-button v-if="isAdminUser" class="btn-ai-config" @click="showWorkflowConfigDialog = true">
-            <el-icon><Setting /></el-icon>
-            工作流配置
-          </el-button>
-          <AccountMenu :user="currentUser" />
-        </div>
-      </div>
-    </header>
+    <FilmCreateHeader :ctx="filmCreateCtx" />
 
     <div v-if="isAdminViewingOtherProject" class="admin-project-notice">
       <div>
@@ -60,154 +10,7 @@
       <span>生成、停止、上传、删除等操作会先二次确认。</span>
     </div>
 
-    <!-- 左侧固定侧边栏 -->
-    <nav class="quick-nav" :class="{ collapsed: navCollapsed }" aria-label="快捷导航">
-      <div class="nav-sidebar-header">
-        <span v-if="!navCollapsed" class="nav-sidebar-title">导航</span>
-        <div class="nav-toggle" :title="navCollapsed ? '展开导航' : '收起导航'" @click="toggleNav()">
-          <el-icon><Expand v-if="navCollapsed" /><Fold v-else /></el-icon>
-        </div>
-      </div>
-
-      <!-- 步骤列表 -->
-      <div class="nav-steps">
-        <div
-          v-for="(step, idx) in navSteps"
-          :key="step.key"
-          class="nav-step"
-          :class="['status-' + step.status]"
-          @click="scrollToAnchor(step.anchor)"
-        >
-          <!-- 左侧连接线 -->
-          <div class="step-connector-wrap">
-            <div v-if="idx > 0" class="step-line step-line-top" :class="{ filled: navSteps[idx - 1].status === 'done' }" />
-            <div
-              class="step-dot"
-              :class="['dot-' + step.status]"
-            >
-              <el-icon v-if="step.status === 'done'" class="dot-icon"><Check /></el-icon>
-              <el-icon v-else-if="step.status === 'generating'" class="dot-icon spin"><Loading /></el-icon>
-              <span v-else class="dot-num">{{ idx + 1 }}</span>
-            </div>
-            <div v-if="idx < navSteps.length - 1" class="step-line step-line-bottom" :class="{ filled: step.status === 'done' }" />
-          </div>
-
-          <!-- 右侧文字 + 状态徽章 -->
-          <div class="step-body">
-            <span class="step-label">{{ step.label }}</span>
-            <span v-if="step.count > 0 && step.status !== 'done'" class="step-count">{{ step.count }}</span>
-            <span v-if="step.status === 'partial'" class="step-badge partial-badge" title="部分完成">
-              <el-icon><WarningFilled /></el-icon>
-            </span>
-            <span v-else-if="step.status === 'generating'" class="step-badge gen-badge" title="生成中">
-              <el-icon class="spin"><Loading /></el-icon>
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="!navCollapsed" class="nav-ai-routes" :class="{ collapsed: !aiRoutesExpanded }">
-        <button type="button" class="nav-ai-routes-head" @click="toggleAiRoutesExpanded">
-          <span class="nav-ai-routes-title">本次生成模型</span>
-          <span class="nav-ai-routes-summary">{{ aiRouteSummary }}</span>
-        </button>
-        <div v-show="aiRoutesExpanded" class="nav-ai-routes-body" v-loading="aiRouteLoading">
-          <div
-            v-for="routeItem in aiRouteTypes"
-            :key="routeItem.key"
-            class="nav-ai-route-row"
-          >
-            <span class="nav-ai-route-label">{{ routeItem.label }}</span>
-            <el-select
-              v-model="selectedAiConfigIds[routeItem.key]"
-              placeholder="自动"
-              filterable
-              size="small"
-              class="nav-ai-route-select"
-              @change="() => scheduleProjectSettingsSave(false)"
-              @visible-change="(visible) => onAiRouteSelectVisible(visible)"
-            >
-              <el-option label="自动" value="" />
-              <el-option
-                v-for="cfg in runtimeAiConfigs[routeItem.key]"
-                :key="cfg.id"
-                :label="configOptionLabel(cfg)"
-                :value="String(cfg.id)"
-              />
-            </el-select>
-          </div>
-        </div>
-      </div>
-
-      <!-- 分镜子列表 -->
-      <div v-if="!navCollapsed && storyboards.length > 0" class="nav-group">
-        <div class="nav-sub-toggle" @click="storyboardMenuExpanded = !storyboardMenuExpanded">
-          <el-icon><Minus v-if="storyboardMenuExpanded" /><Plus v-else /></el-icon>
-          <span>分镜列表</span>
-        </div>
-        <div v-show="storyboardMenuExpanded" class="nav-sub-list">
-          <template v-for="(sb, i) in storyboards" :key="sb.id">
-            <!-- 段落标题行 -->
-            <div
-              v-if="sb.segment_title && (i === 0 || sb.segment_index !== storyboards[i - 1].segment_index)"
-              class="nav-segment-label"
-            >
-              <span class="nav-segment-dot" />
-              {{ sb.segment_title }}
-            </div>
-            <div
-              class="nav-sub-item"
-              :title="sb.title || '分镜 ' + (i + 1)"
-              @click="scrollToAnchor('sb-' + sb.id)"
-            >
-              {{ i + 1 }}. {{ sb.title || '分镜' }}
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <!-- 当前任务面板 -->
-      <div v-if="allActiveTasks.length > 0" class="atp-panel">
-        <!-- 折叠态：只显示旋转点和数量 -->
-        <div v-if="navCollapsed" class="atp-collapsed-badge" :title="allActiveTasks.join('\n')">
-          <span class="atp-spin-dot" />
-          <span class="atp-collapsed-count">{{ allActiveTasks.length }}</span>
-        </div>
-        <!-- 展开态：标题 + 任务列表 -->
-        <template v-else>
-          <div class="atp-header">
-            <span class="atp-spin-dot" />
-            <span class="atp-title">进行中</span>
-            <span class="atp-count-badge">{{ allActiveTasks.length }}</span>
-          </div>
-          <div class="atp-list">
-            <el-tooltip
-              v-for="(label, i) in allActiveTasks.slice(0, 8)"
-              :key="i"
-              :content="label"
-              placement="right"
-              :show-after="200"
-              :enterable="false"
-            >
-              <div class="atp-item">
-                <span class="atp-item-dot" />
-                <span class="atp-item-label">{{ label }}</span>
-              </div>
-            </el-tooltip>
-            <el-tooltip
-              v-if="allActiveTasks.length > 8"
-              :content="allActiveTasks.slice(8).join('\n')"
-              placement="right"
-              :show-after="200"
-            >
-              <div class="atp-more">
-                还有 {{ allActiveTasks.length - 8 }} 个任务...
-              </div>
-            </el-tooltip>
-          </div>
-        </template>
-      </div>
-    </nav>
+    <QuickNav :ctx="filmCreateCtx" />
 
     <main class="main">
       <!-- 角色/道具/场景上传图片用，单例放在外层避免 v-for 导致 ref 为数组 -->
@@ -226,153 +29,33 @@
         style="display: none"
         @change="onSbImageFileChange"
       />
-      <!-- 剧本工作台：单卡片 + 选项卡（创作 / 选择） -->
-      <section class="section card script-workbench-unified">
-        <el-tabs v-model="scriptWorkbenchMode" class="script-workbench-tabs">
-          <el-tab-pane label="创作剧本" name="create">
-            <div class="script-pane-inner">
-              <div class="script-sub-block">
-                <h2 class="section-title">故事生成</h2>
-                <p class="section-desc">输入一段故事梗概，AI 帮你扩写成完整剧本，或直接导入小说章节</p>
-                <el-input
-                  v-model="storyInput"
-                  type="textarea"
-                  :rows="4"
-                  placeholder="例如：一个少女在森林里遇见会说话的狐狸，一起寻找失落的宝石..."
-                  class="story-textarea"
-                />
-                <div class="row gap" style="margin-top: 10px; flex-wrap: wrap;">
-                  <el-select v-model="storyStyle" placeholder="故事风格" clearable style="width: 120px" @change="() => scheduleProjectSettingsSave(false)">
-                    <el-option label="现代" value="modern" />
-                    <el-option label="古风" value="ancient" />
-                    <el-option label="奇幻" value="fantasy" />
-                    <el-option label="日常" value="daily" />
-                  </el-select>
-                  <el-select v-model="storyType" placeholder="剧本类型" clearable style="width: 120px" @change="() => scheduleProjectSettingsSave(false)">
-                    <el-option label="剧情" value="drama" />
-                    <el-option label="喜剧" value="comedy" />
-                    <el-option label="冒险" value="adventure" />
-                  </el-select>
-                  <div class="story-episode-count">
-                    <span>生成</span>
-                    <el-input-number
-                      v-model="storyEpisodeCount"
-                      :min="1"
-                      :max="MAX_STORY_EPISODE_COUNT"
-                      :step="1"
-                      :precision="0"
-                      controls-position="right"
-                      aria-label="生成集数"
-                      @change="normalizeStoryEpisodeCount"
-                    />
-                    <span>集</span>
-                  </div>
-                  <el-button type="primary" :loading="storyGenerating" @click="onGenerateStory">
-                    生成剧本
-                  </el-button>
-                  <el-button plain @click="showNovelImport = true">
-                    <el-icon><DocumentAdd /></el-icon>
-                    导入小说
-                  </el-button>
-                </div>
-              </div>
-              <div class="script-sub-divider" />
-              <div id="anchor-script" class="script-sub-block">
-                <h2 class="section-title">剧本</h2>
-                <div class="row gap" style="margin-bottom: 10px; flex-wrap: wrap;">
-                  <el-select
-                    v-model="selectedEpisodeId"
-                    placeholder="选择集数"
-                    clearable
-                    style="width: 130px"
-                    :disabled="!dramaId"
-                    @change="onEpisodeSelect"
-                  >
-                    <el-option
-                      v-for="ep in (store.drama?.episodes || [])"
-                      :key="ep.id"
-                      :label="ep.title || '第' + (ep.episode_number || 0) + '集'"
-                      :value="ep.id"
-                    />
-                  </el-select>
-                  <el-input v-model="scriptTitle" placeholder="集标题" style="width: 150px" />
-                  <el-button v-if="dramaId" style="margin-left: auto" @click="onAddEpisode">
-                    <el-icon><Plus /></el-icon>添加一集
-                  </el-button>
-                </div>
-                <el-input
-                  v-model="scriptContent"
-                  type="textarea"
-                  :rows="8"
-                  placeholder="剧本内容将显示在这里，可直接编辑..."
-                  class="story-textarea"
-                />
-                <div class="row gap" style="margin-top: 8px; flex-wrap: wrap;">
-                  <el-button
-                    :loading="scriptGenerating"
-                    :disabled="!!dramaId && (store.drama?.episodes?.length > 0) && !currentEpisodeId"
-                    @click="onGenerateScript"
-                  >
-                    保存当前集
-                  </el-button>
-                </div>
-              </div>
-            </div>
-          </el-tab-pane>
-          <el-tab-pane label="选择剧本" name="select">
-            <p class="section-desc script-mode-hint">
-              从剧本库选择后，仅把「故事梗概」与「各集剧本正文」写入当前工程，不会导入角色、分镜、图片或视频。
-            </p>
-            <el-button type="primary" @click="openSelectScriptDialog">
-              <el-icon><Document /></el-icon>
-              从已有剧本中选择…
-            </el-button>
-            <div v-if="dramaId && (store.drama?.episodes?.length || storyInput)" class="script-preview-wrap">
-              <h3 class="preview-block-title">故事梗概</h3>
-              <el-input
-                :model-value="storyInput"
-                type="textarea"
-                :rows="3"
-                readonly
-                class="story-textarea"
-              />
-              <template v-if="(store.drama?.episodes || []).length > 1">
-                <h3 class="preview-block-title">分集剧本</h3>
-                <el-tabs v-model="selectPreviewEpisodeId" class="preview-ep-tabs">
-                  <el-tab-pane
-                    v-for="ep in (store.drama?.episodes || [])"
-                    :key="ep.id"
-                    :label="ep.title || ('第' + (ep.episode_number || 0) + '集')"
-                    :name="String(ep.id)"
-                  >
-                    <el-input
-                      :model-value="ep.script_content || ''"
-                      type="textarea"
-                      :rows="12"
-                      readonly
-                      class="story-textarea"
-                    />
-                  </el-tab-pane>
-                </el-tabs>
-              </template>
-              <template v-else>
-                <h3 class="preview-block-title">剧本正文</h3>
-                <el-input
-                  :model-value="scriptContent"
-                  type="textarea"
-                  :rows="12"
-                  readonly
-                  class="story-textarea"
-                />
-              </template>
-              <div class="preview-actions">
-                <el-button type="primary" plain @click="scriptWorkbenchMode = 'create'">切换到创作剧本以编辑</el-button>
-              </div>
-            </div>
-            <p v-else class="script-select-empty">尚未选择剧本，请点击上方按钮</p>
-          </el-tab-pane>
-        </el-tabs>
-      </section>
+      <FilmWorkbenchTabs v-model="filmWorkbenchTab" />
+      <ScriptWorkbench
+        v-show="filmWorkbenchTab === 'script'"
+        v-model:mode="scriptWorkbenchMode"
+        v-model:story-input="storyInput"
+        v-model:story-style="storyStyle"
+        v-model:story-type="storyType"
+        v-model:story-episode-count="storyEpisodeCount"
+        v-model:selected-episode-id="selectedEpisodeId"
+        v-model:script-title="scriptTitle"
+        v-model:script-content="scriptContent"
+        v-model:select-preview-episode-id="selectPreviewEpisodeId"
+        :max-episode-count="MAX_STORY_EPISODE_COUNT"
+        :story-generating="storyGenerating"
+        :script-generating="scriptGenerating"
+        :drama-id="dramaId"
+        :current-episode-id="currentEpisodeId"
+        :episodes="store.drama?.episodes || []"
+        @save-project-settings="scheduleProjectSettingsSave(false)"
+        @normalize-story-episode-count="normalizeStoryEpisodeCount"
+        @generate-story="onGenerateStory"
+        @open-novel-import="showNovelImport = true"
+        @episode-select="onEpisodeSelect"
+        @add-episode="onAddEpisode"
+        @generate-script="onGenerateScript"
+        @open-select-script="openSelectScriptDialog"
+      />
 
       <el-dialog
         v-model="showSelectScriptDialog"
@@ -397,1599 +80,44 @@
         </div>
       </el-dialog>
 
-      <!-- 项目整体设置与一键全流程 -->
-      <section class="section card pipeline-section">
-        <div class="project-settings-block">
-          <span class="settings-block-title">项目整体设置</span>
-          <label class="project-setting-field">
-            <span>项目画幅</span>
-            <el-select v-model="projectAspectRatio" style="width: 130px" @change="() => scheduleProjectSettingsSave(false)">
-              <el-option label="16:9 横屏" value="16:9" />
-              <el-option label="9:16 竖屏" value="9:16" />
-              <el-option label="3:4 竖版" value="3:4" />
-              <el-option label="1:1 方形" value="1:1" />
-              <el-option label="4:3" value="4:3" />
-              <el-option label="21:9 宽银幕" value="21:9" />
-            </el-select>
-          </label>
-          <label class="project-setting-field">
-            <span>图像规格</span>
-            <el-button class="media-spec-button" @click="openImageSpecDialog">
-              {{ imageSpecSummary }}
-            </el-button>
-          </label>
-          <label class="project-setting-field">
-            <span>视频清晰度</span>
-            <el-select v-model="projectVideoResolution" style="width: 120px" @change="onProjectVideoResolutionChange">
-              <el-option
-                v-for="tier in videoTierOptions"
-                :key="tier.value"
-                :label="tier.label"
-                :value="tier.value"
-              />
-            </el-select>
-          </label>
-          <label class="project-setting-field">
-            <span>默认每段时长</span>
-            <el-select v-model="videoClipDuration" style="width: 110px" @change="() => scheduleProjectSettingsSave(false)">
-              <el-option label="4秒/段" :value="4" />
-              <el-option label="5秒/段" :value="5" />
-              <el-option label="8秒/段" :value="8" />
-              <el-option label="10秒/段" :value="10" />
-              <el-option label="12秒/段" :value="12" />
-              <el-option label="15秒/段" :value="15" />
-            </el-select>
-          </label>
-          <div class="project-setting-inline-group">
-            <label class="project-setting-field">
-              <span>默认语言</span>
-              <el-select v-model="scriptLanguage" placeholder="默认语言" style="width: 105px" @change="() => scheduleProjectSettingsSave(false)">
-                <el-option label="中文" value="zh" />
-                <el-option label="英文" value="en" />
-              </el-select>
-            </label>
-            <label class="project-setting-field project-setting-field--style">
-              <span>主画风</span>
-              <StylePickerButton
-                v-model="generationStyle"
-                :options="generationStyleOptions"
-                @change="() => scheduleProjectSettingsSave(true)"
-              />
-            </label>
-          </div>
-        </div>
-        <div class="one-click-actions">
-          <span class="one-click-label">🚀 一键动作</span>
-          <el-button
-            type="primary"
-            :loading="pipelineRunning && !pipelinePaused"
-            :disabled="!currentEpisodeId || pipelineRunning"
-            title="仅提取角色、场景、道具与生成分镜文本，不生成图片与视频"
-            @click="startTextFrameworkPipeline"
-          >
-            一键生成素材及分镜文本
-          </el-button>
-          <el-button
-            :loading="pipelineRunning && !pipelinePaused"
-            :disabled="!currentEpisodeId || pipelineRunning"
-            @click="startOneClickPipeline"
-          >
-            一键成片（测试中慎用！）
-          </el-button>
-          <template v-if="pipelineRunning">
-            <el-button v-if="!pipelinePaused" type="warning" @click="pipelinePaused = true">⏸ 暂停</el-button>
-            <el-button v-else type="success" @click="onPipelineResume">▶ 继续</el-button>
-          </template>
-        </div>
-        <div class="pipeline-model-strategy" v-loading="aiRouteLoading">
-          <span class="pipeline-model-strategy-title">模型策略</span>
-          <el-tooltip
-            v-for="item in pipelineModelStrategyItems"
-            :key="item.key"
-            :content="item.tooltip"
-            placement="top"
-          >
-            <span class="pipeline-model-chip" :class="{ specified: item.specified, empty: item.empty }">
-              <span class="pipeline-model-chip-label">{{ item.label }}</span>
-              <strong>{{ item.summary }}</strong>
-            </span>
-          </el-tooltip>
-          <el-button size="small" text @click="loadRuntimeAiConfigs(true)">刷新</el-button>
-        </div>
-        <div v-if="pipelineRunning || pipelineErrorLog.length > 0" class="pipeline-status">
-          <div v-if="pipelineCurrentStep" class="pipeline-current-step">
-            <span v-if="pipelineStepIndex > 0" class="pipeline-step-badge">{{ pipelineStepIndex }}/{{ pipelineStepTotal }}</span>
-            {{ pipelineCurrentStep.replace(/^\[步骤 \d+\/\d+\] /, '') }}
-          </div>
-          <!-- 阶段间倒计时 -->
-          <div v-if="pipelineCountdown > 0" class="pipeline-countdown">
-            <div class="pipeline-countdown-ring">
-              <span class="pipeline-countdown-num">{{ pipelineCountdown }}</span>
-              <span class="pipeline-countdown-unit">秒</span>
-            </div>
-            <div class="pipeline-countdown-body">
-              <p class="pipeline-countdown-msg">{{ pipelineCountdownMsg }}</p>
-              <div class="pipeline-countdown-actions">
-                <el-button size="small" type="success" @click="skipPipelineCountdown">⚡ 立即开始下一阶段</el-button>
-                <el-button v-if="!pipelinePaused" size="small" type="warning" @click="pipelinePaused = true">⏸ 暂停倒计时</el-button>
-                <span v-else class="pipeline-countdown-paused">已暂停 — 点击右上角"继续"恢复</span>
-              </div>
-            </div>
-          </div>
-          <div v-if="pipelineActiveTasks.size > 0" class="pipeline-active-tasks">
-            <span
-              v-for="label in Array.from(pipelineActiveTasks)"
-              :key="label"
-              class="pipeline-task-chip"
-            >
-              <span class="pipeline-task-dot" />{{ label }}
-            </span>
-          </div>
-          <div v-if="pipelineErrorLog.length > 0" class="pipeline-error-log">
-            <div class="pipeline-error-title">执行过程中的错误：</div>
-            <div v-for="(entry, idx) in pipelineErrorLog" :key="idx" class="pipeline-error-line">
-              [{{ entry.step }}] {{ entry.message }}
-            </div>
-          </div>
-        </div>
-      </section>
+      <ProjectPipelinePanel :ctx="filmCreateCtx" />
 
-      <!-- 资源管理：角色 / 道具 / 场景 -->
-      <section class="section card resource-panel">
-        <div class="collapse-header" @click="resourcePanelCollapsed = !resourcePanelCollapsed">
-          <h2 class="section-title">资源管理</h2>
-          <el-icon class="collapse-icon"><ArrowUp v-if="!resourcePanelCollapsed" /><ArrowDown v-else /></el-icon>
-        </div>
-        <div v-if="!resourcePanelCollapsed" class="resource-panel-body">
-          <!-- 角色生成 -->
-          <div id="anchor-characters" class="resource-block card">
-            <div class="collapse-header resource-block-header" @click="charactersBlockCollapsed = !charactersBlockCollapsed">
-              <h3 class="resource-block-title">角色生成</h3>
-              <el-icon class="collapse-icon"><ArrowUp v-if="!charactersBlockCollapsed" /><ArrowDown v-else /></el-icon>
-            </div>
-            <div v-if="!charactersBlockCollapsed" class="resource-block-body">
-              <div class="asset-actions">
-                <el-button
-                  :type="charactersGenerating ? 'warning' : 'primary'"
-                  size="small"
-                  :disabled="!charactersGenerating && !dramaId"
-                  @click="charactersGenerating ? stopEpisodeTask(GEN_RESOURCE.EXTRACT_CHARACTERS, '已停止角色提取') : onGenerateCharacters()"
-                >
-                  <el-icon v-if="charactersGenerating" class="is-loading"><Loading /></el-icon>
-                  {{ charactersGenerating ? '停止' : '剧本自动提取角色' }}
-                </el-button>
-                <el-button size="small" :disabled="!dramaId" @click="openAddCharacter">添加角色</el-button>
-                <el-button size="small" @click="showCharLibrary = true">本剧角色库</el-button>
-                <span class="workflow-preset-label">生成规范</span>
-                <el-select
-                  v-model="selectedWorkflowPresetIds.character"
-                  size="small"
-                  filterable
-                  class="workflow-preset-select"
-                  :loading="workflowPresetLoading"
-                >
-                  <el-option
-                    v-for="preset in workflowPresetOptions.character"
-                    :key="preset.id"
-                    :label="workflowPresetLabel(preset)"
-                    :value="String(preset.id)"
-                  />
-                </el-select>
-                <el-button v-if="isAdminUser" size="small" @click="showWorkflowConfigDialog = true">配置</el-button>
-              </div>
-              <div class="asset-list asset-list-two">
-                <div v-for="char in characters" :key="char.id" class="asset-item asset-item-left-right">
-                  <div class="asset-info">
-                    <div class="asset-name">
-                      <span style="display:inline-flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:hidden">
-                        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ char.name }}</span>
-                        <el-tag v-if="char.role" size="small" effect="plain" :type="char.role === 'main' ? 'danger' : char.role === 'supporting' ? 'warning' : 'info'" style="flex-shrink:0;padding:0 5px;font-size:11px;height:18px;line-height:18px">{{ charRoleLabel(char.role) }}</el-tag>
-                      </span>
-                      <el-button type="danger" text size="small" class="btn-delete-icon" title="删除" @click="onDeleteCharacter(char)">
-                        <el-icon><Delete /></el-icon>
-                      </el-button>
-                    </div>
-                    <div class="asset-desc-full">{{ char.appearance || char.description || '暂无描述' }}</div>
-                    <div class="asset-btns">
-                      <el-button size="small" @click="editCharacter(char)">编辑</el-button>
-                      <el-button size="small" :loading="addingCharToLibraryId === char.id" :disabled="!hasAssetImage(char)" @click="onAddCharacterToLibrary(char)">
-                        加入本剧库
-                      </el-button>
-                      <el-button size="small" :loading="addingCharToMaterialId === char.id" :disabled="!hasAssetImage(char)" @click="onAddCharacterToMaterialLibrary(char)">
-                        加入素材库
-                      </el-button><el-button
-                        size="small"
-                        :type="char.seedance2_asset?.status === 'active' ? 'success' : 'warning'"
-                        plain
-                        :loading="sd2CertifyingId === char.id"
-                        :disabled="!hasAssetImage(char)"
-                        @click="onSd2PrimaryAction(char)"
-                      >
-                        {{ sd2ActionLabel(char) }}
-                      </el-button>
-                    </div>
+      <CharacterWorkbench
+        v-show="filmWorkbenchTab === 'characters'"
+        :ctx="filmCreateCtx"
+      />
 
-                    <!-- Seedance 2.0 音色参考（仅该模型有效，其他模型不生效） -->
-                    <div class="sd2-voice-row" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                      <template v-if="char.seedance2_voice_asset?.status === 'active'">
-                        <!-- 音色参考已设置：显示试听 + 更换 -->
-                        <el-button
-                          size="small"
-                          type="success"
-                          plain
-                          @click="playSd2Voice(char)"
-                        >
-                          <el-icon><VideoPlay /></el-icon>
-                          <span style="margin-left:4px">试听</span>
-                        </el-button>
-                        <el-button
-                          size="small"
-                          type="primary"
-                          plain
-                          :loading="sd2VoiceUploadingId === char.id"
-                          @click="onSd2VoiceReplace(char)"
-                        >
-                          更换
-                        </el-button>
-                        <span style="font-size:11px;color:#67c23a">音色已设置</span>
-                      </template>
-                      <template v-else>
-                        <el-button
-                          size="small"
-                          :type="char.seedance2_voice_asset?.status === 'stale' ? 'warning' : 'info'"
-                          plain
-                          :loading="sd2VoiceUploadingId === char.id"
-                          @click="onSd2VoicePrimaryAction(char)"
-                        >
-                          {{ sd2VoiceActionLabel(char) }}
-                        </el-button>
-                        <span v-if="char.seedance2_voice_asset?.status === 'stale'" style="font-size:11px;color:#e6a23c">需刷新</span>
-                      </template>
-                      <span style="font-size:10px;color:#909399">仅 Seedance 2.0 模型生效</span>
-                    </div>
-                    <div v-if="getCharAffectedStoryboards(char.id).length" class="asset-storyboard-link">
-                      <span class="asl-label">影响的分镜：</span>
-                      <span
-                        v-for="sb in getCharAffectedStoryboards(char.id)"
-                        :key="sb.id"
-                        class="asl-chip"
-                        title="点击跳转到该分镜"
-                        @click="scrollToStoryboard(sb.id)"
-                      >#{{ sb.storyboard_number }}</span>
-                      <span v-if="regenSbImagesForAsset.has('char-' + char.id) && regenSbImagesProgress['char-' + char.id]" class="asl-progress">
-                        {{ regenSbImagesProgress['char-' + char.id].current }}/{{ regenSbImagesProgress['char-' + char.id].total }}
-                      </span>
-                      <el-button
-                        size="small"
-                        class="asl-regen-btn"
-                        :loading="regenSbImagesForAsset.has('char-' + char.id)"
-                        @click="onRegenAffectedSbImages('char-' + char.id, getCharAffectedStoryboards(char.id))"
-                      >
-                        <span v-if="!regenSbImagesForAsset.has('char-' + char.id)">↻ 重新生成分镜图</span>
-                      </el-button>
-                    </div>
-                  </div>
-                  <div class="asset-cover-wrap">
-                    <div
-                      class="asset-cover"
-                      :class="{ 'asset-cover--clickable': hasAssetImage(char), 'asset-cover--dragover': dragOverResourceKey === 'char-' + char.id }"
-                      role="button"
-                      tabindex="0"
-                      @click="hasAssetImage(char) && openImagePreview(assetImageUrl(char))"
-                      @dragover="onResourceDragOver($event, 'character', char.id)"
-                      @dragleave="onResourceDragLeave($event, 'char-' + char.id)"
-                      @drop="onResourceDrop($event, 'character', char.id)"
-                    >
-                      <img v-if="hasAssetImage(char)" :src="assetThumbUrl(char, 320)" class="cover-img" alt="" loading="lazy" decoding="async" />
-                      <div v-if="hasAssetImage(char)" class="asset-primary-badge">当前主图</div>
-                      <div v-else-if="char.error_msg || char.errorMsg" class="cover-placeholder error" :title="char.error_msg || char.errorMsg">{{ char.error_msg || char.errorMsg }}</div>
-                      <div v-else class="cover-placeholder">暂无图</div>
-                      <div v-if="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id)" class="ai-generating-overlay">
-                        <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.CHAR_IMAGE, char.id) }}</span>
-                        <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
-                        <span class="ai-generating-text">生成中...</span>
-                      </div>
-                      <div v-if="dragOverResourceKey === 'char-' + char.id" class="asset-cover-drop-hint">松开上传</div>
-                    </div>
-                    <!-- 额外参考图条 -->
-                    <div v-if="parseExtraImages(char).length" class="extra-images-strip">
-                      <div v-for="ep in parseExtraImages(char)" :key="ep" class="extra-thumb" :title="'点击设为主图（悬停左上角可放大预览）'">
-                        <img :src="localPathToThumbUrl(ep, 160)" alt="" loading="lazy" decoding="async" @click="onSetPrimaryImage('character', char, ep)" />
-                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep))">
-                          <el-icon :size="10"><ZoomIn /></el-icon>
-                        </button>
-                        <button class="extra-thumb-remove" title="移除" @click.stop="onRemoveExtraImage('character', char, ep)">×</button>
-                      </div>
-                    </div>
-                    <div class="asset-cover-actions">
-                      <el-button
-                        :type="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id) ? 'warning' : 'primary'"
-                        size="small"
-                        @click="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id) ? stopResourceGeneration(GEN_RESOURCE.CHAR_IMAGE, char.id) : onGenerateCharacterImage(char)"
-                      >
-                        <el-icon v-if="isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id)" class="is-loading"><Loading /></el-icon>
-                        <el-icon v-else><MagicStick /></el-icon>
-                        {{ isResourceGenerating(GEN_RESOURCE.CHAR_IMAGE, char.id) ? '停止' : 'AI 生成' }}
-                      </el-button>
-                      <el-button type="success" size="small" :loading="uploadingResourceId === 'char-' + char.id" @click="onUploadResourceClick('character', char.id)">
-                        <el-icon v-if="uploadingResourceId !== 'char-' + char.id"><Upload /></el-icon>
-                        上传
-                      </el-button>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="characters.length === 0" class="empty-tip">暂无角色，请先「AI 生成角色」或在上一步保存剧本后提取</div>
-              </div>
-            </div>
-          </div>
+      <PropWorkbench
+        v-show="filmWorkbenchTab === 'props'"
+        :ctx="filmCreateCtx"
+      />
 
-          <!-- 道具生成 -->
-          <div id="anchor-props" class="resource-block card">
-            <div class="collapse-header resource-block-header" @click="propsBlockCollapsed = !propsBlockCollapsed">
-              <h3 class="resource-block-title">道具生成</h3>
-              <el-icon class="collapse-icon"><ArrowUp v-if="!propsBlockCollapsed" /><ArrowDown v-else /></el-icon>
-            </div>
-            <div v-if="!propsBlockCollapsed" class="resource-block-body">
-              <div class="asset-actions">
-                <el-button
-                  :type="propsExtracting ? 'warning' : 'primary'"
-                  size="small"
-                  :disabled="!propsExtracting && !currentEpisodeId"
-                  @click="propsExtracting ? stopEpisodeTask(GEN_RESOURCE.EXTRACT_PROPS, '已停止道具提取') : onExtractProps()"
-                >
-                  <el-icon v-if="propsExtracting" class="is-loading"><Loading /></el-icon>
-                  {{ propsExtracting ? '停止' : '从剧本提取道具' }}
-                </el-button>
-                <el-button size="small" :disabled="!dramaId" @click="showAddProp = true">添加道具</el-button>
-                <el-button size="small" @click="showPropLibrary = true">本剧道具库</el-button>
-                <span class="workflow-preset-label">生成规范</span>
-                <el-select
-                  v-model="selectedWorkflowPresetIds.prop"
-                  size="small"
-                  filterable
-                  class="workflow-preset-select"
-                  :loading="workflowPresetLoading"
-                >
-                  <el-option
-                    v-for="preset in workflowPresetOptions.prop"
-                    :key="preset.id"
-                    :label="workflowPresetLabel(preset)"
-                    :value="String(preset.id)"
-                  />
-                </el-select>
-                <el-button v-if="isAdminUser" size="small" @click="showWorkflowConfigDialog = true">配置</el-button>
-              </div>
-              <div class="asset-list asset-list-two">
-                <div v-for="prop in props" :key="prop.id" class="asset-item asset-item-left-right">
-                  <div class="asset-info">
-                    <div class="asset-name">
-                      <span>{{ prop.name }}</span>
-                      <el-button type="danger" text size="small" class="btn-delete-icon" title="删除" @click="onDeleteProp(prop)">
-                        <el-icon><Delete /></el-icon>
-                      </el-button>
-                    </div>
-                    <div class="asset-desc-full">{{ prop.description || prop.prompt || '暂无描述' }}</div>
-                    <div class="asset-btns">
-                      <el-button size="small" @click="editProp(prop)">编辑</el-button>
-                      <el-button size="small" :loading="addingPropToLibraryId === prop.id" :disabled="!hasAssetImage(prop)" @click="onAddPropToLibrary(prop)">
-                        加入本剧库
-                      </el-button>
-                      <el-button size="small" :loading="addingPropToMaterialId === prop.id" :disabled="!hasAssetImage(prop)" @click="onAddPropToMaterialLibrary(prop)">
-                        加入素材库
-                      </el-button></div>
-                    <div v-if="getPropAffectedStoryboards(prop.id).length" class="asset-storyboard-link">
-                      <span class="asl-label">影响的分镜：</span>
-                      <span
-                        v-for="sb in getPropAffectedStoryboards(prop.id)"
-                        :key="sb.id"
-                        class="asl-chip"
-                        title="点击跳转到该分镜"
-                        @click="scrollToStoryboard(sb.id)"
-                      >#{{ sb.storyboard_number }}</span>
-                      <span v-if="regenSbImagesForAsset.has('prop-' + prop.id) && regenSbImagesProgress['prop-' + prop.id]" class="asl-progress">
-                        {{ regenSbImagesProgress['prop-' + prop.id].current }}/{{ regenSbImagesProgress['prop-' + prop.id].total }}
-                      </span>
-                      <el-button
-                        size="small"
-                        class="asl-regen-btn"
-                        :loading="regenSbImagesForAsset.has('prop-' + prop.id)"
-                        @click="onRegenAffectedSbImages('prop-' + prop.id, getPropAffectedStoryboards(prop.id))"
-                      >
-                        <span v-if="!regenSbImagesForAsset.has('prop-' + prop.id)">↻ 重新生成分镜图</span>
-                      </el-button>
-                    </div>
-                  </div>
-                  <div class="asset-cover-wrap">
-                    <div
-                      class="asset-cover"
-                      :class="{ 'asset-cover--clickable': hasAssetImage(prop), 'asset-cover--dragover': dragOverResourceKey === 'prop-' + prop.id }"
-                      role="button"
-                      tabindex="0"
-                      @click="hasAssetImage(prop) && openImagePreview(assetImageUrl(prop))"
-                      @dragover="onResourceDragOver($event, 'prop', prop.id)"
-                      @dragleave="onResourceDragLeave($event, 'prop-' + prop.id)"
-                      @drop="onResourceDrop($event, 'prop', prop.id)"
-                    >
-                      <img v-if="hasAssetImage(prop)" :src="assetThumbUrl(prop, 320)" class="cover-img" alt="" loading="lazy" decoding="async" />
-                      <div v-if="hasAssetImage(prop)" class="asset-primary-badge">当前主图</div>
-                      <div v-else-if="prop.error_msg || prop.errorMsg" class="cover-placeholder error" :title="prop.error_msg || prop.errorMsg">{{ prop.error_msg || prop.errorMsg }}</div>
-                      <div v-else class="cover-placeholder">暂无图</div>
-                      <div v-if="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id)" class="ai-generating-overlay">
-                        <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.PROP_IMAGE, prop.id) }}</span>
-                        <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
-                        <span class="ai-generating-text">生成中...</span>
-                      </div>
-                      <div v-if="dragOverResourceKey === 'prop-' + prop.id" class="asset-cover-drop-hint">松开上传</div>
-                    </div>
-                    <div v-if="parseExtraImages(prop).length" class="extra-images-strip">
-                      <div v-for="ep in parseExtraImages(prop)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
-                        <img :src="localPathToThumbUrl(ep, 160)" alt="" loading="lazy" decoding="async" @click="onSetPrimaryImage('prop', prop, ep)" />
-                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep))">
-                          <el-icon :size="10"><ZoomIn /></el-icon>
-                        </button>
-                        <button class="extra-thumb-remove" title="移除" @click.stop="onRemoveExtraImage('prop', prop, ep)">×</button>
-                      </div>
-                    </div>
-                    <div class="asset-cover-actions">
-                      <el-tooltip :content="selectedWorkflowPresetName('prop')" placement="top">
-                        <el-button
-                          :type="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? 'warning' : 'primary'"
-                          size="small"
-                          @click="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? stopResourceGeneration(GEN_RESOURCE.PROP_IMAGE, prop.id) : onGeneratePropImage(prop)"
-                        >
-                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id)" class="is-loading"><Loading /></el-icon>
-                          <el-icon v-else><MagicStick /></el-icon>
-                          {{ isResourceGenerating(GEN_RESOURCE.PROP_IMAGE, prop.id) ? '停止' : 'AI 生成' }}
-                        </el-button>
-                      </el-tooltip>
-                      <el-button type="success" size="small" :loading="uploadingResourceId === 'prop-' + prop.id" @click="onUploadResourceClick('prop', prop.id)">
-                        <el-icon v-if="uploadingResourceId !== 'prop-' + prop.id"><Upload /></el-icon>
-                        上传
-                      </el-button>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="props.length === 0" class="empty-tip">暂无道具，可从剧本提取或添加</div>
-              </div>
-            </div>
-          </div>
+      <SceneWorkbench
+        v-show="filmWorkbenchTab === 'scenes'"
+        :ctx="filmCreateCtx"
+      />
 
-          <!-- 场景生成 -->
-          <div id="anchor-scenes" class="resource-block card">
-            <div class="collapse-header resource-block-header" @click="scenesBlockCollapsed = !scenesBlockCollapsed">
-              <h3 class="resource-block-title">场景生成</h3>
-              <el-icon class="collapse-icon"><ArrowUp v-if="!scenesBlockCollapsed" /><ArrowDown v-else /></el-icon>
-            </div>
-            <div v-if="!scenesBlockCollapsed" class="resource-block-body">
-              <div class="asset-actions">
-                <el-button
-                  :type="scenesExtracting ? 'warning' : 'primary'"
-                  size="small"
-                  :disabled="!scenesExtracting && !currentEpisodeId"
-                  @click="scenesExtracting ? stopEpisodeTask(GEN_RESOURCE.EXTRACT_SCENES, '已停止场景提取') : onExtractScenes()"
-                >
-                  <el-icon v-if="scenesExtracting" class="is-loading"><Loading /></el-icon>
-                  {{ scenesExtracting ? '停止' : '从剧本提取场景' }}
-                </el-button>
-                <el-button size="small" :disabled="!dramaId" @click="openAddScene">添加场景</el-button>
-                <el-button size="small" @click="showSceneLibrary = true">本剧场景库</el-button>
-                <span class="workflow-preset-label">生成规范</span>
-                <el-select
-                  v-model="selectedWorkflowPresetIds.scene"
-                  size="small"
-                  filterable
-                  class="workflow-preset-select"
-                  :loading="workflowPresetLoading"
-                >
-                  <el-option
-                    v-for="preset in workflowPresetOptions.scene"
-                    :key="preset.id"
-                    :label="workflowPresetLabel(preset)"
-                    :value="String(preset.id)"
-                  />
-                </el-select>
-                <el-button v-if="isAdminUser" size="small" @click="showWorkflowConfigDialog = true">配置</el-button>
-              </div>
-              <div class="asset-list asset-list-two">
-                <div v-for="scene in scenes" :key="scene.id" class="asset-item asset-item-left-right">
-                  <div class="asset-info">
-                    <div class="asset-name">
-                      <span>{{ scene.location }}</span>
-                      <el-button type="danger" text size="small" class="btn-delete-icon" title="删除" @click="onDeleteScene(scene)">
-                        <el-icon><Delete /></el-icon>
-                      </el-button>
-                    </div>
-                    <div class="asset-desc-full">{{ scene.description || scene.prompt || scene.time || '暂无描述' }}</div>
-                    <div class="asset-btns">
-                      <el-button size="small" @click="editScene(scene)">编辑</el-button>
-                      <el-button size="small" :loading="addingSceneToLibraryId === scene.id" :disabled="!hasAssetImage(scene)" @click="onAddSceneToLibrary(scene)">
-                        加入本剧库
-                      </el-button>
-                      <el-button size="small" :loading="addingSceneToMaterialId === scene.id" :disabled="!hasAssetImage(scene)" @click="onAddSceneToMaterialLibrary(scene)">
-                        加入素材库
-                      </el-button></div>
-                    <div v-if="getSceneAffectedStoryboards(scene.id).length" class="asset-storyboard-link">
-                      <span class="asl-label">影响的分镜：</span>
-                      <span
-                        v-for="sb in getSceneAffectedStoryboards(scene.id)"
-                        :key="sb.id"
-                        class="asl-chip"
-                        title="点击跳转到该分镜"
-                        @click="scrollToStoryboard(sb.id)"
-                      >#{{ sb.storyboard_number }}</span>
-                      <span v-if="regenSbImagesForAsset.has('scene-' + scene.id) && regenSbImagesProgress['scene-' + scene.id]" class="asl-progress">
-                        {{ regenSbImagesProgress['scene-' + scene.id].current }}/{{ regenSbImagesProgress['scene-' + scene.id].total }}
-                      </span>
-                      <el-button
-                        size="small"
-                        class="asl-regen-btn"
-                        :loading="regenSbImagesForAsset.has('scene-' + scene.id)"
-                        @click="onRegenAffectedSbImages('scene-' + scene.id, getSceneAffectedStoryboards(scene.id))"
-                      >
-                        <span v-if="!regenSbImagesForAsset.has('scene-' + scene.id)">↻ 重新生成分镜图</span>
-                      </el-button>
-                    </div>
-                  </div>
-                  <div class="asset-cover-wrap">
-                    <div
-                      class="asset-cover"
-                      :class="{ 'asset-cover--clickable': hasAssetImage(scene), 'asset-cover--dragover': dragOverResourceKey === 'scene-' + scene.id }"
-                      role="button"
-                      tabindex="0"
-                      @click="hasAssetImage(scene) && openImagePreview(assetImageUrl(scene))"
-                      @dragover="onResourceDragOver($event, 'scene', scene.id)"
-                      @dragleave="onResourceDragLeave($event, 'scene-' + scene.id)"
-                      @drop="onResourceDrop($event, 'scene', scene.id)"
-                    >
-                      <img v-if="hasAssetImage(scene)" :src="assetThumbUrl(scene, 320)" class="cover-img" alt="" loading="lazy" decoding="async" />
-                      <div v-if="hasAssetImage(scene)" class="asset-primary-badge">当前主图</div>
-                      <div v-else-if="scene.error_msg || scene.errorMsg" class="cover-placeholder error" :title="scene.error_msg || scene.errorMsg">{{ scene.error_msg || scene.errorMsg }}</div>
-                      <div v-else class="cover-placeholder">暂无图</div>
-                      <div v-if="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id)" class="ai-generating-overlay">
-                        <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SCENE_IMAGE, scene.id) }}</span>
-                        <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
-                        <span class="ai-generating-text">生成中...</span>
-                      </div>
-                      <div v-if="dragOverResourceKey === 'scene-' + scene.id" class="asset-cover-drop-hint">松开上传</div>
-                    </div>
-                    <div v-if="parseExtraImages(scene).length" class="extra-images-strip">
-                      <div v-for="ep in parseExtraImages(scene)" :key="ep" class="extra-thumb" title="点击设为主图（悬停左上角可放大预览）">
-                        <img :src="localPathToThumbUrl(ep, 160)" alt="" loading="lazy" decoding="async" @click="onSetPrimaryImage('scene', scene, ep)" />
-                        <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(localPathToUrl(ep))">
-                          <el-icon :size="10"><ZoomIn /></el-icon>
-                        </button>
-                        <button class="extra-thumb-remove" title="移除" @click.stop="onRemoveExtraImage('scene', scene, ep)">×</button>
-                      </div>
-                    </div>
-                    <div class="asset-cover-actions">
-                      <el-tooltip :content="selectedWorkflowPresetName('scene')" placement="top">
-                        <el-button
-                          :type="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? 'warning' : 'primary'"
-                          size="small"
-                          @click="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? stopResourceGeneration(GEN_RESOURCE.SCENE_IMAGE, scene.id) : onGenerateSceneImage(scene)"
-                        >
-                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id)" class="is-loading"><Loading /></el-icon>
-                          <el-icon v-else><MagicStick /></el-icon>
-                          {{ isResourceGenerating(GEN_RESOURCE.SCENE_IMAGE, scene.id) ? '停止' : 'AI 生成' }}
-                        </el-button>
-                      </el-tooltip>
-                      <el-button type="success" size="small" :loading="uploadingResourceId === 'scene-' + scene.id" @click="onUploadResourceClick('scene', scene.id)">
-                        <el-icon v-if="uploadingResourceId !== 'scene-' + scene.id"><Upload /></el-icon>
-                        上传
-                      </el-button>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="scenes.length === 0" class="empty-tip">暂无场景，请从剧本提取</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      <StoryboardWorkbench
+        v-show="filmWorkbenchTab === 'storyboards'"
+        :ctx="filmCreateCtx"
+      />
 
-      <!-- 6. 分镜生成 -->
-      <section id="anchor-storyboard" class="section card">
-        <h2 class="section-title">
-          <span>5. 分镜生成</span>
-          <span class="step-desc">根据剧本、角色、场景自动生成分镜头脚本</span>
-        </h2>
-        <div class="sb-setting-groups">
-          <div class="sb-setting-group">
-            <div class="sb-setting-group-title">分镜脚本设置</div>
-            <div class="sb-config-row">
-              <label class="sb-config-item">
-                <span class="sb-config-label">分镜规范</span>
-                <el-select
-                  v-model="selectedWorkflowPresetIds.storyboard"
-                  size="small"
-                  filterable
-                  class="sb-config-input"
-                  :loading="workflowPresetLoading"
-                >
-                  <el-option
-                    v-for="preset in workflowPresetOptions.storyboard"
-                    :key="preset.id"
-                    :label="workflowPresetLabel(preset)"
-                    :value="String(preset.id)"
-                  />
-                </el-select>
-              </label>
-              <label class="sb-config-item">
-                <span class="sb-config-label">本次镜数</span>
-                <el-input-number v-model="storyboardCount" :min="1" :max="200" :step="5" placeholder="自动" class="sb-config-input" />
-                <span class="sb-config-hint sb-config-hint--estimate" :title="scriptEstimateStoryboardTitle">自动{{ scriptEstimateStoryboardHint }}</span>
-              </label>
-              <label class="sb-config-item">
-                <span class="sb-config-label">本次总时长(秒)</span>
-                <el-input-number v-model="videoDuration" :min="10" :max="600" :step="5" placeholder="自动" class="sb-config-input" />
-                <span class="sb-config-hint sb-config-hint--estimate" :title="scriptEstimateVideoDurationTitle">自动{{ scriptEstimateVideoDurationHint }}</span>
-              </label>
-              <el-checkbox v-model="storyboardUniversalOmni" @change="() => scheduleProjectSettingsSave(false)">
-                全能分镜模式
-              </el-checkbox>
-              <el-checkbox v-model="storyboardIncludeNarration" @change="() => scheduleProjectSettingsSave(false)">
-                生成解说旁白
-              </el-checkbox>
-            </div>
-          </div>
-          <div class="sb-setting-group">
-            <div class="sb-setting-group-title">分镜图/视频设置</div>
-            <div class="sb-config-row">
-              <label class="sb-config-item">
-                <span class="sb-config-label">关键帧数量</span>
-                <el-select v-model="storyboardFrameCount" size="small" style="width:110px" :disabled="storyboardUseFirstLastFrame" @change="() => scheduleProjectSettingsSave(false)">
-                  <el-option
-                    v-for="count in storyboardFrameCountOptions"
-                    :key="count"
-                    :label="`${count} 张`"
-                    :value="count"
-                  />
-                </el-select>
-                <span class="sb-config-hint">独立关键帧，页面宫格展示</span>
-              </label>
-              <el-checkbox v-model="storyboardUseFirstLastFrame" @change="onStoryboardUseFirstLastFrameChange">
-                首尾帧参考图
-              </el-checkbox>
-            </div>
-          </div>
-          <div v-if="storyboards.length > 0" class="sb-export-actions">
-            <el-button
-              class="sb-export-srt-btn"
-              size="small"
-              plain
-              type="primary"
-              :disabled="!currentEpisodeId"
-              :loading="exportingStoryboardSheet"
-              @click="onExportStoryboardSheet"
-            >
-              导出分镜表 excel
-            </el-button>
-            <el-button
-              class="sb-export-srt-btn"
-              size="small"
-              plain
-              type="primary"
-              :disabled="!currentEpisodeId"
-              @click="onExportNarrationSrt"
-            >
-              导出解说 SRT
-            </el-button>
-          </div>
-        </div>
-        <div class="asset-actions sb-batch-actions">
-          <div class="flex">
-            <el-button
-              :type="storyboardGenerating ? 'warning' : 'primary'"
-              size="large"
-              :loading="universalOmniPolishRunning"
-              :disabled="!currentEpisodeId || universalOmniPolishRunning"
-              @click="storyboardGenerating ? stopEpisodeTask(GEN_RESOURCE.GENERATE_STORYBOARD, '已停止分镜生成') : onGenerateStoryboard()"
-            >
-              <el-icon v-if="storyboardGenerating" class="is-loading"><Loading /></el-icon>
-              {{ storyboardGenerating ? '停止' : (storyboards.length > 0 ? '重新生成分镜' : 'AI 生成分镜') }}
-            </el-button>
-            <ElButton type="info" plain size="large" @click="onAddSingleStoryboard">
-            添加一个分镜
-            </ElButton>
-          </div>
-          <template v-if="storyboards.length > 0">
-            <div class="sb-batch-right">
-              <el-button
-                type="success"
-                plain
-                size="large"
-                :loading="batchImageRunning"
-                :disabled="!currentEpisodeId || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating || universalOmniPolishRunning"
-                @click="startBatchImageGeneration"
-              >
-                批量生成分镜图
-              </el-button>
-              <el-button
-                type="warning"
-                plain
-                size="large"
-                :loading="batchVideoRunning"
-                :disabled="!currentEpisodeId || batchImageRunning || batchVideoRunning || pipelineRunning || storyboardGenerating || universalOmniPolishRunning"
-                @click="startBatchVideoGeneration"
-              >
-                批量生成分镜视频
-              </el-button>
-              <el-button v-if="batchImageRunning" size="large" type="danger" plain @click="stopBatchImageGeneration">停止图片</el-button>
-              <el-button v-if="batchVideoRunning" size="large" type="danger" plain @click="stopBatchVideoGeneration">停止视频</el-button>
-            </div>
-            <!-- 连贯帧模式 UI 暂时隐藏（保留变量与批量生成逻辑，后续可快速恢复） -->
-            <div v-if="false" class="batch-video-options" style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:13px;">
-              <el-checkbox v-model="videoFrameContiguity" size="small">
-                连贯帧模式（自动衔接相邻视频帧）
-              </el-checkbox>
-              <el-tooltip placement="top" :show-after="100">
-                <template #content>
-                  <div style="max-width:320px;line-height:1.7">
-                    <div style="font-weight:600;margin-bottom:4px">连贯帧模式说明</div>
-                    <div>启用后批量视频顺序生成，每条视频的<b>末帧</b>自动截取并作为下一条视频的<b>首帧参考图</b>，减少镜头切换的跳跃感。</div>
-                    <div style="margin-top:8px;font-weight:600">⚠️ 需要模型支持图生视频（i2v）</div>
-                    <div style="margin-top:4px">
-                      ✅ 支持：kling-video、kling-omni-video、wan2.2-kf2v-flash、wan2.6-i2v-flash<br/>
-                      ❌ 不支持（末帧将被忽略）：wan2.6-t2v、wan2.6-r2v-flash、wanx2.1-vace-plus 等纯文生视频模型
-                    </div>
-                    <div style="margin-top:8px;color:#faad14">如当前视频模型不支持 i2v，启用此选项不会报错，但末帧衔接不会生效。</div>
-                  </div>
-                </template>
-                <el-icon style="color:#9ca3af;cursor:help"><QuestionFilled /></el-icon>
-              </el-tooltip>
-            </div>
-          </template>
-        </div>
-        <!-- 批量生成进度 -->
-        <div v-if="batchImageRunning || batchVideoRunning || batchImageErrors.length || batchVideoErrors.length" class="batch-status">
-          <div v-if="batchImageRunning" class="batch-progress">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            <span>批量生成分镜图：{{ batchImageProgress.current }}/{{ batchImageProgress.total }}</span>
-            <span v-if="batchImageProgress.failed > 0" class="batch-failed">{{ batchImageProgress.failed }} 条失败</span>
-            <span v-if="batchImageStopping" class="batch-stopping">（正在停止...）</span>
-          </div>
-          <div v-if="batchVideoRunning" class="batch-progress">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            <span>批量生成分镜视频：{{ batchVideoProgress.current }}/{{ batchVideoProgress.total }}</span>
-            <span v-if="batchVideoProgress.failed > 0" class="batch-failed">{{ batchVideoProgress.failed }} 条失败</span>
-            <span v-if="batchVideoStopping" class="batch-stopping">（正在停止...）</span>
-          </div>
-          <div v-if="batchImageErrors.length > 0" class="batch-error-log">
-            <div class="batch-error-title">分镜图生成失败记录：</div>
-            <div v-for="(e, i) in batchImageErrors" :key="i" class="batch-error-line">{{ e }}</div>
-          </div>
-          <div v-if="batchVideoErrors.length > 0" class="batch-error-log">
-            <div class="batch-error-title">分镜视频生成失败记录：</div>
-            <div v-for="(e, i) in batchVideoErrors" :key="i" class="batch-error-line">{{ e }}</div>
-          </div>
-        </div>
-        <div v-if="storyboardGenerating || universalOmniPolishRunning" class="storyboard-generating-tip">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span v-if="universalOmniPolishRunning">
-            正在润色全能提示词：第 {{ universalOmniPolishProgress.current }} / {{ universalOmniPolishProgress.total }} 镜
-            <template v-if="universalOmniPolishProgress.label">（{{ universalOmniPolishProgress.label }}）</template>
-            …
-          </span>
-          <span v-else>正在分析剧本并拆解分镜，请稍候...</span>
-        </div>
-        <div v-if="sbTruncatedWarning && !sbTruncatedDismissed && storyboards.length > 0" class="sb-truncated-warning">
-          <el-icon><WarningFilled /></el-icon>
-          <span>检测到分镜可能不完整（AI 输出被截断），请确认分镜数量是否符合预期，必要时可重新生成。</span>
-          <el-button size="small" text @click="sbTruncatedDismissed = true">关闭</el-button>
-        </div>
-        <template v-if="storyboards.length > 0">
-          <template v-for="(sb, i) in storyboards" :key="sb.id">
-            <!-- 段落分隔标头：segment_title 存在且是新段落的第一个镜头时显示 -->
-            <div
-              v-if="sb.segment_title && (i === 0 || sb.segment_index !== storyboards[i - 1].segment_index)"
-              class="segment-header"
-            >
-              <div class="segment-header-inner">
-                <span class="segment-index-badge">第 {{ (sb.segment_index ?? 0) + 1 }} 幕</span>
-                <span class="segment-title-text">{{ sb.segment_title }}</span>
-                <span class="segment-shot-range">
-                  镜头 {{ i + 1 }}–{{ (() => {
-                    let end = i
-                    while (end + 1 < storyboards.length && storyboards[end + 1].segment_index === sb.segment_index) end++
-                    return end + 1
-                  })() }}
-                </span>
-              </div>
-            </div>
-          <!-- 分镜控制栏（卡片外，缩进表示属于当前幕） -->
-          <div class="sb-ctrl-bar">
-            <span class="sb-ctrl-num">{{ i + 1 }}</span>
-            <span class="sb-ctrl-title">{{ sb.title || '未命名分镜' }}</span>
-            <el-tag v-if="sb.movement" size="small" effect="plain" type="info" class="sb-movement-tag">{{ getMovementLabel(sb.movement) }}</el-tag>
-            <el-button size="small" plain class="sb-ctrl-btn sb-ctrl-config-btn" @click="onOpenVideoParamsDialog(sb)">⚙ 分镜配置</el-button>
-            <el-button
-              size="small"
-              plain
-              class="sb-ctrl-btn sb-ctrl-mode-btn"
-              :title="isSbUniversalMode(sb.id) ? '切换为经典分镜（中间显示参考图）' : '切换为全能模式（中间为片段描述，经典字段保留）'"
-              @click="onToggleSbUniversalMode(sb)"
-            >
-              {{ isSbUniversalMode(sb.id) ? '经典分镜' : '全能模式' }}
-            </el-button>
-            <el-button size="small" plain class="sb-ctrl-btn" title="在本镜头前增加一个分镜" @click="onInsertStoryboardBefore(sb)">＋ 新增</el-button>
-            <el-button
-              class="sb-ctrl-delete"
-              type="danger"
-              text
-              size="small"
-              :title="`删除分镜${i + 1}`"
-              @click="onDeleteSingleStoryboard(sb.id)"
-            >
-              <el-icon><Delete /></el-icon>
-            </el-button>
-          </div>
-          <div :id="'sb-' + sb.id" class="storyboard-row">
-            <!-- 左：分镜脚本 -->
-            <div class="sb-panel sb-script">
-              <div class="sb-script-row sb-script-selects">
-                <el-select
-                  :model-value="getSbCharacterId(sb.id)"
-                  placeholder="选择角色"
-                  clearable
-                  size="small"
-                  class="sb-select"
-                  @change="(v) => setSbCharacterId(sb.id, v)"
-                >
-                  <el-option
-                    v-for="c in (characters || [])"
-                    :key="String(c.id)"
-                    :label="c.name || '未命名'"
-                    :value="c.id"
-                  />
-                  <template v-if="!(characters || []).length" #empty>
-                    <span class="sb-select-empty">请先在「角色生成」中添加角色</span>
-                  </template>
-                </el-select>
-                <el-select
-                  v-model="sbSceneId[sb.id]"
-                  placeholder="选择场景"
-                  clearable
-                  size="small"
-                  class="sb-select"
-                  @change="() => onStoryboardSceneChange(sb.id)"
-                >
-                  <el-option
-                    v-for="s in (scenes || [])"
-                    :key="s.id"
-                    :label="s.location"
-                    :value="s.id"
-                  />
-                </el-select>
-                <el-select
-                  :model-value="getSbPropId(sb.id)"
-                  placeholder="选择物品"
-                  clearable
-                  size="small"
-                  class="sb-select"
-                  @change="(v) => setSbPropId(sb.id, v)"
-                >
-                  <el-option
-                    v-for="p in (props || [])"
-                    :key="String(p.id)"
-                    :label="p.name || '未命名'"
-                    :value="p.id"
-                  />
-                  <template v-if="!(props || []).length" #empty>
-                    <span class="sb-select-empty">请先在「道具生成」中添加物品</span>
-                  </template>
-                </el-select>
-              </div>
-              <!-- 当前选中：场景 / 角色 / 物品缩略图 -->
-              <div v-if="getSbSelectedScene(sb.id) || getSbSelectedCharacters(sb.id).length || getSbSelectedProps(sb.id).length || (characters || []).length" class="sb-selected-thumbs">
-                <div v-if="getSbSelectedScene(sb.id)" class="sb-thumb-row">
-                  <span class="sb-thumb-label">场景</span>
-                  <div class="sb-thumb-list">
-                    <div
-                      v-for="s in [getSbSelectedScene(sb.id)]"
-                      :key="s.id"
-                      class="sb-thumb-item sb-thumb-scene"
-                      :class="{ 'sb-thumb-clickable': hasAssetImage(s) }"
-                      :title="s.location"
-                      role="button"
-                      @click="hasAssetImage(s) && openImagePreview(assetImageUrl(s))"
-                    >
-                      <img v-if="hasAssetImage(s)" :src="assetThumbUrl(s, 96)" alt="" loading="lazy" decoding="async" />
-                      <span v-else class="sb-thumb-placeholder">{{ (s.location || '')[0] }}</span>
-                    </div>
-                  </div>
-                </div>
-                <div v-if="(characters || []).length" class="sb-thumb-row">
-                  <span class="sb-thumb-label">角色</span>
-                  <div class="sb-thumb-list">
-                    <div
-                      v-for="c in getSbSelectedCharacters(sb.id)"
-                      :key="c.id"
-                      class="sb-thumb-item sb-thumb-avatar"
-                      :class="{ 'sb-thumb-clickable': hasAssetImage(c) }"
-                      :title="c.name"
-                      role="button"
-                      @click="hasAssetImage(c) && openImagePreview(assetImageUrl(c))"
-                    >
-                      <img v-if="hasAssetImage(c)" :src="assetThumbUrl(c, 96)" alt="" loading="lazy" decoding="async" />
-                      <span v-else class="sb-thumb-placeholder">{{ (c.name || '')[0] }}</span>
-                    </div>
-                    <el-dropdown trigger="click" @command="(cmd) => onSbAddCharacterCommand(sb.id, cmd)">
-                      <div
-                        class="sb-thumb-item sb-thumb-avatar sb-thumb-add-char"
-                        title="更换角色"
-                        role="button"
-                        @click.stop
-                      >
-                        <el-icon><Plus /></el-icon>
-                      </div>
-                      <template #dropdown>
-                        <el-dropdown-menu class="sb-char-add-dropdown">
-                          <el-dropdown-item
-                            v-for="c in charactersAvailableToAddToSb(sb.id)"
-                            :key="c.id"
-                            :command="c.id"
-                          >
-                            {{ c.name || '未命名' }}
-                          </el-dropdown-item>
-                          <el-dropdown-item v-if="!charactersAvailableToAddToSb(sb.id).length" disabled>
-                            无可更换角色
-                          </el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
-                  </div>
-                </div>
-                <div v-if="getSbSelectedProps(sb.id).length" class="sb-thumb-row">
-                  <span class="sb-thumb-label">物品</span>
-                  <div class="sb-thumb-list">
-                    <div
-                      v-for="p in getSbSelectedProps(sb.id)"
-                      :key="p.id"
-                      class="sb-thumb-item sb-thumb-prop"
-                      :class="{ 'sb-thumb-clickable': hasAssetImage(p) }"
-                      :title="p.name"
-                      role="button"
-                      @click="hasAssetImage(p) && openImagePreview(assetImageUrl(p))"
-                    >
-                      <img v-if="hasAssetImage(p)" :src="assetThumbUrl(p, 96)" alt="" loading="lazy" decoding="async" />
-                      <span v-else class="sb-thumb-placeholder">{{ (p.name || '')[0] }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <!-- 首尾帧模式下隐藏“图片提示词”入口，统一收敛到首/尾帧槽位的“查看提示词” -->
-              <div v-if="!storyboardUseFirstLastFrame" class="sb-prompt-label">
-                <span class="sb-dot"></span>
-                <span>图片提示词</span>
-              </div>
-              <div v-if="!storyboardUseFirstLastFrame" class="sb-prompt-row">
-                <span class="sb-prompt-text">{{ sb.image_prompt || '暂无图片提示词' }}</span>
-                <el-button size="small" link type="primary" @click="onOpenSbPromptDialog(sb)">编辑</el-button>
-              </div>
-              <template v-if="storyboardIncludeNarration || (sbNarration[sb.id] || '').trim() || (sb.narration || '').trim()">
-                <div class="sb-prompt-label">
-                  <span class="sb-dot"></span>
-                  <span>解说旁白</span>
-                </div>
-                <el-input
-                  v-model="sbNarration[sb.id]"
-                  type="textarea"
-                  :rows="2"
-                  placeholder="本镜解说文案（画外音 / 纪录片式旁白，供 TTS 或导出 SRT）"
-                  class="sb-narration-input"
-                  @blur="() => onSaveSbNarrationField(sb)"
-                />
-                <div v-if="(sbNarration[sb.id] || sb.narration || '').toString().trim()" class="sb-narration-actions">
-                  <el-tooltip content="解说旁白配音（TTS）" placement="top">
-                    <el-button size="small" :loading="ttsSbNarrationIds.has(sb.id)" @click="onTtsSbNarration(sb)">
-                      解说配音
-                    </el-button>
-                  </el-tooltip>
-                  <el-tooltip v-if="sbNarrationAudioRelPath(sb)" content="播放解说旁白配音" placement="top">
-                    <el-button size="small" @click="playSbNarrationTts(sb)">
-                      <el-icon><VideoPlay /></el-icon>
-                    </el-button>
-                  </el-tooltip>
-                </div>
-              </template>
-            </div>
-            <!-- 中：经典模式=分镜参考图；全能模式=片段描述（独立字段，与参考图并存） -->
-            <div class="sb-panel sb-image" :class="{ 'sb-image--universal': isSbUniversalMode(sb.id) }">
-              <template v-if="isSbUniversalMode(sb.id)">
-                <div class="sb-prompt-label sb-universal-label-row">
-                  <div class="sb-universal-label-left">
-                    <span class="sb-dot"></span>
-                    <span>片段描述</span>
-                    <el-tooltip placement="top" :show-after="280" :show-arrow="false" popper-class="sb-universal-tooltip-popper">
-                      <template #content>
-                        <div class="sb-universal-tooltip">
-                          全能生视频链路（<strong>AI 配置 · 视频</strong> 中选接口规范：<code>kling_omni</code> 可灵 Omni，或 <code>volcengine_omni</code> 火山即梦 Seedance 2.0 多图参考；模型如 <code>kling-video-o1</code>、<code>doubao-seedance-2-0-260128</code> 等以控制台为准）：此处为提交主提示词；生视频时还会追加已确认关键帧时间轴、站位合同和辅助稿说明。参考图顺序为：已确认关键帧/首尾帧 → 辅助稿；若关键帧不足 2 张，才补场景、角色、道具兜底（前端最多提交 10 张，火山全能链路当前最多取前 9 张）。请严格按下方 @ 图片槽位使用 <strong>@图片1</strong>、<strong>@图片2</strong>…，勿假设 @图片1 一定是场景或人物。若参考图是<strong>四宫格/多视角拼图</strong>，仅借空间与氛围，须在文案中写明<strong>单镜头完整画幅、禁止分屏宫格</strong>，避免成片模仿拼图布局。全能提示词下拉中「生成」会按<strong>本条分镜总时长</strong>与本集剧本、镜序、邻镜信息，自动决定子分镜数 M（第2行「由以下M个分镜…」），第4行起为「分镜1：T1秒:」…多行，且各段秒数之和等于本镜时长；第3行仍为参考图约束；「生成」与「润色」均为<strong>流式输出</strong>到本框；「润色」在此基础上增强。若本框留空，则退回仅用「视频提示词」。
-                        </div>
-                      </template>
-                      <el-icon class="sb-universal-hint-icon" tabindex="0" role="img" aria-label="片段说明">
-                        <QuestionFilled />
-                      </el-icon>
-                    </el-tooltip>
-                  </div>
-                  <el-dropdown
-                    trigger="click"
-                    class="sb-universal-prompt-dd"
-                    @command="(cmd) => onUniversalSegmentPromptMenu(sb, cmd)"
-                  >
-                    <el-button
-                      type="primary"
-                      link
-                      size="small"
-                      class="sb-universal-gen-btn"
-                      :loading="generatingUniversalSegmentIds.has(sb.id)"
-                    >
-                      全能提示词
-                      <el-icon class="sb-universal-dd-caret"><ArrowDown /></el-icon>
-                    </el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="generate">生成全能提示词</el-dropdown-item>
-                        <el-dropdown-item command="generate-force">不查图片强制生成</el-dropdown-item>
-                        <el-dropdown-item command="polish" :disabled="!sbUniversalSegmentTrimmed(sb)">
-                          润色全能提示词
-                        </el-dropdown-item>
-                        <el-dropdown-item command="polish-force" :disabled="!sbUniversalSegmentTrimmed(sb)">
-                          不查图片强制润色
-                        </el-dropdown-item>
-                        <el-dropdown-item
-                          command="to-grok-video-tags"
-                          divided
-                          :disabled="!sbUniversalSegmentTrimmed(sb)"
-                        >
-                          改为 grok视频格式
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </div>
-                <UniversalSegmentOmniAtEditor
-                  v-if="!generatingUniversalSegmentIds.has(sb.id)"
-                  v-model="sbUniversalSegmentText[sb.id]"
-                  :slots="getSbUniversalOmniRefSlots(sb)"
-                  class="sb-universal-textarea"
-                  @blur="() => onSaveUniversalSegmentField(sb)"
-                />
-                <el-input
-                  v-else
-                  v-model="sbUniversalSegmentText[sb.id]"
-                  type="textarea"
-                  :rows="10"
-                  :autosize="{ minRows: 10, maxRows: 22 }"
-                  placeholder="例如：@图片1 承接首帧动作，角色停在门口迟疑；@图片2 延续尾帧状态，镜头缓慢推近…"
-                  class="sb-universal-textarea"
-                  @blur="() => onSaveUniversalSegmentField(sb)"
-                />
-              </template>
-              <template v-else>
-              <div
-                class="sb-image-area"
-                :class="{
-                  'sb-image-area--dragover': dragOverSbId === sb.id,
-                  'sb-image-area--has-quad': !storyboardUseFirstLastFrame && getStripItems(sb.id).length > 0,
-                  'sb-image-area--first-last': storyboardUseFirstLastFrame,
-                }"
-                @dragover="onSbImageDragOver($event, sb.id)"
-                @dragleave="onSbImageDragLeave($event, sb.id)"
-                @drop="onSbImageDrop($event, sb)"
-              >
-                <!-- 首尾帧双槽 -->
-                <template v-if="storyboardUseFirstLastFrame">
-                  <div class="sb-fl-dual">
-                    <div class="sb-fl-slot">
-                      <div class="sb-fl-slot-label">首帧</div>
-                      <div class="sb-fl-slot-body">
-                        <template v-if="getSbFirstImage(sb.id)">
-                          <img
-                            :src="assetThumbUrl(getSbFirstImage(sb.id), 640)"
-                            class="sb-generated-img"
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            @click="openImagePreview(assetImageUrl(getSbFirstImage(sb.id)))"
-                          />
-                        </template>
-                        <template v-else-if="sb.image_url || sb.composed_image">
-                          <img
-                            :src="thumbImageUrl(sb.composed_image || sb.image_url, 640)"
-                            class="sb-generated-img"
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            @click="openImagePreview(imageUrl(sb.composed_image || sb.image_url))"
-                          />
-                        </template>
-                        <template v-else>
-                          <span class="sb-fl-empty">动作前静止</span>
-                        </template>
-                        <div v-if="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id)" class="ai-generating-overlay">
-                          <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) }}</span>
-                          <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
-                          <span class="ai-generating-text">生成中...</span>
-                        </div>
-                      </div>
-                      <div v-if="getSbFirstImage(sb.id)?.prompt" class="sb-fl-slot-prompt" :title="getSbFirstImage(sb.id).prompt">
-                        {{ getSbFirstImage(sb.id).prompt }}
-                      </div>
-                      <div class="sb-fl-slot-actions">
-                        <el-button
-                          :type="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) ? 'warning' : 'primary'"
-                          size="small"
-                          @click="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) : onGenerateSbFrameImage(sb, 'first')"
-                        >
-                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
-                          {{ isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) ? '停止' : '生成' }}
-                        </el-button>
-                        <el-tooltip v-if="canUsePrevTailAsFirst(sb)" content="直接使用上一分镜的尾帧图片（高清原图）替换本首帧，画面更清晰" placement="top">
-                          <el-button size="small" :loading="usingPrevTailAsFirstIds.has(sb.id)" @click="onUsePrevTailAsFirst(sb)">上镜尾帧</el-button>
-                        </el-tooltip>
-                        <el-button size="small" :loading="uploadingSbImageSlot(sb.id) === 'first'" @click="onUploadSbImageClick(sb, 'first')">上传</el-button>
-                        <el-button type="primary" link size="small" @click="showSbFramePromptPreview(sb, 'first')">查看提示词</el-button>
-                      </div>
-                    </div>
-                    <div class="sb-fl-arrow" aria-hidden="true">→</div>
-                    <div class="sb-fl-slot">
-                      <div class="sb-fl-slot-label">尾帧</div>
-                      <div class="sb-fl-slot-body">
-                        <template v-if="getSbLastImage(sb.id)">
-                          <img
-                            :src="assetThumbUrl(getSbLastImage(sb.id), 640)"
-                            class="sb-generated-img"
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            :title="getSbLastImage(sb.id).prompt || ''"
-                            @click="openImagePreview(assetImageUrl(getSbLastImage(sb.id)))"
-                          />
-                        </template>
-                        <template v-else>
-                          <span class="sb-fl-empty">动作后结果</span>
-                        </template>
-                        <div v-if="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)" class="ai-generating-overlay">
-                          <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) }}</span>
-                          <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
-                          <span class="ai-generating-text">生成中...</span>
-                        </div>
-                      </div>
-                      <div v-if="getSbLastImage(sb.id)?.prompt" class="sb-fl-slot-prompt" :title="getSbLastImage(sb.id).prompt">
-                        {{ getSbLastImage(sb.id).prompt }}
-                      </div>
-                      <div class="sb-fl-slot-actions">
-                        <el-button
-                          :type="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) ? 'warning' : 'primary'"
-                          size="small"
-                          @click="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) : onGenerateSbFrameImage(sb, 'last')"
-                        >
-                          <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
-                          {{ isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id) ? '停止' : '生成' }}
-                        </el-button>
-                        <el-checkbox
-                          v-model="lastFrameUseFirstLayoutLock"
-                          class="sb-fl-first-lock-opt"
-                          title="勾选时尾帧生成会附带首帧图作构图与左右站位参考；取消后仅使用场景/角色/道具参考，便于调整出场人物"
-                          @change="onLastFrameLayoutLockChange"
-                        >
-                          首帧站位
-                        </el-checkbox>
-                        <el-button size="small" :loading="uploadingSbImageSlot(sb.id) === 'last'" @click="onUploadSbImageClick(sb, 'last')">上传</el-button>
-                        <el-button type="primary" link size="small" @click="showSbFramePromptPreview(sb, 'last')">查看提示词</el-button>
-                      </div>
-                    </div>
-                  </div>
-                  <div v-if="getStripItems(sb.id).length" class="sb-imgs-strip">
-                    <el-tooltip content="历史图：点击设为首帧或尾帧，左上角放大预览，右上角删除" placement="top" :show-arrow="false">
-                      <el-icon class="sb-strip-hint-icon"><InfoFilled /></el-icon>
-                    </el-tooltip>
-                    <div
-                      v-for="item in getStripItems(sb.id)"
-                      :key="item.key"
-                      class="sb-img-thumb"
-                      :title="stripItemTitle(sb.id, item)"
-                      @click="onStripItemClick(sb, item)"
-                    >
-                      <img :src="item.thumbSrc || item.src" alt="" loading="lazy" decoding="async" />
-                      <div class="keyframe-state-badges">
-                        <span v-if="item.selected" class="keyframe-state-badge keyframe-state-badge--selected">已确认</span>
-                        <span v-if="item.locked" class="keyframe-state-badge keyframe-state-badge--locked">锁定</span>
-                      </div>
-                      <span v-if="item.frameBadge" class="sb-img-thumb-label">{{ item.frameBadge }}</span>
-                      <span v-else-if="item.label" class="sb-img-thumb-label">{{ item.label }}</span>
-                      <button v-if="!item.aux" class="keyframe-mini-btn keyframe-mini-btn--select" :title="item.selected ? '取消确认' : '确认该格'" @click.stop="onToggleKeyframeSelected(sb, item)">
-                        <el-icon :size="10"><Check /></el-icon>
-                      </button>
-                      <button class="keyframe-mini-btn keyframe-mini-btn--lock" :title="item.locked ? '解锁' : '锁定该格'" @click.stop="onToggleKeyframeLocked(sb, item)">
-                        {{ item.locked ? '解' : '锁' }}
-                      </button>
-                      <button class="keyframe-mini-btn keyframe-mini-btn--regen" title="单格重生" :disabled="item.locked" @click.stop="onRegenerateKeyframeItem(sb, item)">
-                        <el-icon :size="10"><Refresh /></el-icon>
-                      </button>
-                      <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(item.src)">
-                        <el-icon :size="10"><ZoomIn /></el-icon>
-                      </button>
-                      <button v-if="item.img?.id" class="extra-thumb-remove" title="删除历史图" @click.stop="onRemoveSbHistoryImage(sb.id, item.img.id)">×</button>
-                      <div v-if="!item.aux" class="keyframe-desc-mini" :title="item.description">
-                        <span>{{ item.description }}</span>
-                        <button class="keyframe-desc-edit" title="编辑关键帧描述" @click.stop="onEditKeyframeDescription(sb, item)">文</button>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-                <!-- 单主图（未勾选首尾帧） -->
-                <template v-else>
-                <div class="sb-main-image-wrap">
-                  <template v-if="getSbImage(sb.id)">
-                    <img
-                      :src="assetThumbUrl(getSbImage(sb.id), 640)"
-                      class="sb-generated-img"
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      :title="getSbImage(sb.id).prompt || ''"
-                      @click="openImagePreview(assetImageUrl(getSbImage(sb.id)))"
-                    />
-                    <div v-if="getSbImage(sb.id).prompt" class="sb-main-img-prompt">{{ getSbImage(sb.id).prompt }}</div>
-                  </template>
-                  <template v-else-if="sb.composed_image || sb.image_url">
-                    <img
-                      :src="thumbImageUrl(sb.composed_image || sb.image_url, 640)"
-                      class="sb-generated-img"
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      @click="openImagePreview(imageUrl(sb.composed_image || sb.image_url))"
-                    />
-                  </template>
-                  <template v-else-if="sb.error_msg || sb.errorMsg">
-                    <div class="sb-image-error" :title="sb.error_msg || sb.errorMsg">{{ sb.error_msg || sb.errorMsg }}</div>
-                    <el-button
-                      :type="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? 'warning' : 'primary'"
-                      size="small"
-                      class="sb-gen-btn"
-                      @click="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_IMAGE, sb.id) : onGenerateSbImage(sb)"
-                    >
-                      <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
-                      <el-icon v-else><Refresh /></el-icon>
-                      {{ isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? '停止' : '重试' }}
-                    </el-button>
-                    <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
-                  </template>
-                  <template v-else>
-                    <el-button
-                      :type="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? 'warning' : 'primary'"
-                      size="small"
-                      class="sb-gen-btn"
-                      @click="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_IMAGE, sb.id) : onGenerateSbImage(sb)"
-                    >
-                      <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
-                      <el-icon v-else><MagicStick /></el-icon>
-                      {{ isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? '停止' : '生成分镜参考图' }}
-                    </el-button>
-                    <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
-                  </template>
-                  <div v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="ai-generating-overlay">
-                    <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_IMAGE, sb.id) }}</span>
-                    <el-icon class="ai-generating-spinner is-loading"><Loading /></el-icon>
-                    <span class="ai-generating-text">生成中...</span>
-                  </div>
-                </div>
-                <div v-if="getStripItems(sb.id).length" class="sb-imgs-strip">
-                  <el-tooltip content="历史图：点击设为主图，左上角放大预览，右上角删除" placement="top" :show-arrow="false">
-                    <el-icon class="sb-strip-hint-icon"><InfoFilled /></el-icon>
-                  </el-tooltip>
-                  <div
-                    v-for="item in getStripItems(sb.id)"
-                    :key="item.key"
-                    class="sb-img-thumb"
-                    :title="stripItemTitle(sb.id, item)"
-                    @click="onStripItemClick(sb, item)"
-                  >
-                    <img :src="item.thumbSrc || item.src" alt="" loading="lazy" decoding="async" />
-                    <div class="keyframe-state-badges">
-                      <span v-if="item.selected" class="keyframe-state-badge keyframe-state-badge--selected">已确认</span>
-                      <span v-if="item.locked" class="keyframe-state-badge keyframe-state-badge--locked">锁定</span>
-                    </div>
-                    <span v-if="item.label" class="sb-img-thumb-label">{{ item.label }}</span>
-                    <button v-if="!item.aux" class="keyframe-mini-btn keyframe-mini-btn--select" :title="item.selected ? '取消确认' : '确认该格'" @click.stop="onToggleKeyframeSelected(sb, item)">
-                      <el-icon :size="10"><Check /></el-icon>
-                    </button>
-                    <button class="keyframe-mini-btn keyframe-mini-btn--lock" :title="item.locked ? '解锁' : '锁定该格'" @click.stop="onToggleKeyframeLocked(sb, item)">
-                      {{ item.locked ? '解' : '锁' }}
-                    </button>
-                    <button class="keyframe-mini-btn keyframe-mini-btn--regen" title="单格重生" :disabled="item.locked" @click.stop="onRegenerateKeyframeItem(sb, item)">
-                      <el-icon :size="10"><Refresh /></el-icon>
-                    </button>
-                    <button class="thumb-preview-btn" title="放大预览" @click.stop="openImagePreview(item.src)">
-                      <el-icon :size="10"><ZoomIn /></el-icon>
-                    </button>
-                    <button v-if="item.img?.id" class="extra-thumb-remove" title="删除历史图" @click.stop="onRemoveSbHistoryImage(sb.id, item.img.id)">×</button>
-                    <div v-if="!item.aux" class="keyframe-desc-mini" :title="item.description">
-                      <span>{{ item.description }}</span>
-                      <button class="keyframe-desc-edit" title="编辑关键帧描述" @click.stop="onEditKeyframeDescription(sb, item)">文</button>
-                    </div>
-                  </div>
-                </div>
-                </template>
-                <div v-if="dragOverSbId === sb.id" class="sb-image-area-drop-hint">松开上传到首帧</div>
-              </div>
-              <div v-if="hasSbImage(sb) || storyboardUseFirstLastFrame" class="sb-image-actions">
-                <template v-if="storyboardUseFirstLastFrame">
-                  <el-button
-                    size="small"
-                    :type="(isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)) ? 'warning' : 'default'"
-                    @click="(isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)) ? stopSbFramePair(sb) : onGenerateSbFramePair(sb)"
-                  >
-                    <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
-                    {{ (isResourceGenerating(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id) || isResourceGenerating(GEN_RESOURCE.SB_LAST_IMAGE, sb.id)) ? '停止' : (hasSbFirstLastPair(sb) ? '重新生成首尾帧' : '一键生成首尾帧') }}
-                  </el-button>
-                  <el-tooltip content="高清放大仅作用于首帧" placement="top">
-                    <el-button size="small" :loading="upscalingSbIds.has(sb.id)" :disabled="!getSbLocalImage(sb)" @click="onUpscaleSbImage(sb)">
-                      <el-icon><ZoomIn /></el-icon>超分(首帧)
-                    </el-button>
-                  </el-tooltip>
-                  <el-dropdown trigger="click" @command="(role) => onGenerateStoryboardAux(sb, role)">
-                    <el-button size="small" :loading="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)">
-                      辅助稿
-                      <el-icon><ArrowDown /></el-icon>
-                    </el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item
-                          v-for="role in storyboardAuxRoleOptions"
-                          :key="role.value"
-                          :command="role.value"
-                        >
-                          {{ role.label }}
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </template>
-                <template v-else>
-                <el-button
-                  size="small"
-                  :type="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? 'warning' : 'default'"
-                  @click="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_IMAGE, sb.id) : onGenerateSbImage(sb)"
-                >
-                  <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)" class="is-loading"><Loading /></el-icon>
-                  {{ isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id) ? '停止' : '重新生成' }}
-                </el-button>
-                <el-button size="small" :loading="uploadingSbImageId === sb.id" @click="onUploadSbImageClick(sb)">上传</el-button>
-                <el-tooltip content="高清放大（2x超分辨率）" placement="top">
-                  <el-button
-                    size="small"
-                    :loading="upscalingSbIds.has(sb.id)"
-                    :disabled="!getSbLocalImage(sb)"
-                    @click="onUpscaleSbImage(sb)"
-                  >
-                    <el-icon><ZoomIn /></el-icon>超分
-                  </el-button>
-                </el-tooltip>
-                <el-dropdown trigger="click" @command="(role) => onGenerateStoryboardAux(sb, role)">
-                  <el-button size="small" :loading="isResourceGenerating(GEN_RESOURCE.SB_IMAGE, sb.id)">
-                    辅助稿
-                    <el-icon><ArrowDown /></el-icon>
-                  </el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item
-                        v-for="role in storyboardAuxRoleOptions"
-                        :key="role.value"
-                        :command="role.value"
-                      >
-                        {{ role.label }}
-                      </el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-                </template>
-              </div>
-              </template>
-            </div>
-            <!-- 右：分镜视频（由 /videos?storyboard_id 拉取）；有视频时仍显示提示词与生成按钮便于调整后重新生成 -->
-            <div class="sb-panel sb-video">
-              <div v-if="getSbVideo(sb.id)" class="sb-video-area">
-                <video
-                  v-if="assetVideoUrl(getSbVideo(sb.id))"
-                  :key="sbMainVideoPlayerKey(sb.id)"
-                  :src="assetVideoUrl(getSbVideo(sb.id))"
-                  controls
-                  class="sb-video-player"
-                  preload="metadata"
-                />
-                <div
-                  v-else
-                  class="sb-video-error"
-                  :title="getSbVideoError(sb.id) || '视频地址无效'"
-                >
-                  {{ getSbVideoError(sb.id) || '视频地址无效，请重新生成' }}
-                </div>
-                <span v-if="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id)" class="sb-video-regenerating-overlay">
-                  <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_VIDEO, sb.id) }}</span>
-                  <el-icon class="is-loading"><Loading /></el-icon>
-                  正在重新生成...
-                </span>
-              </div>
-              <div v-else class="sb-video-area sb-video-placeholder">
-                <span v-if="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id)" class="sb-video-generating-text">
-                  <span class="ai-generating-timer">{{ resourceElapsedLabel(GEN_RESOURCE.SB_VIDEO, sb.id) }}</span>
-                  <el-icon class="is-loading"><Loading /></el-icon>
-                  正在生成视频...
-                  <el-button size="small" type="warning" plain @click.stop="stopResourceGeneration(GEN_RESOURCE.SB_VIDEO, sb.id)">停止</el-button>
-                </span>
-                <template v-else>
-                  <div v-if="getSbVideoError(sb.id)" class="sb-video-error">
-                    {{ getSbVideoError(sb.id) }}
-                  </div>
-                  <el-button
-                    type="primary"
-                    size="small"
-                    class="sb-generate-video-btn"
-                    :disabled="!sbCanSubmitVideo(sb)"
-                    @click="onGenerateSbVideo(sb)"
-                  >
-                    生成分镜视频
-                  </el-button>
-                </template>
-              </div>
-              <!-- 视频历史条：有多条历史时显示，点击可切换 -->
-              <div v-if="getVideoStripItems(sb.id).length" class="sb-videos-strip">
-                <el-tooltip content="历史视频：点击可切换为当前视频" placement="top" :show-arrow="false">
-                  <el-icon class="sb-strip-hint-icon"><InfoFilled /></el-icon>
-                </el-tooltip>
-                <div
-                  v-for="item in getVideoStripItems(sb.id)"
-                  :key="item.key"
-                  class="sb-video-thumb"
-                  :title="`${item.label}（点击切换）`"
-                  @click="onSelectSbMainVideo(sb, item.video)"
-                >
-                  <video :src="item.src" preload="metadata" class="sb-video-thumb-player" />
-                  <span class="sb-video-thumb-label">{{ item.label }}</span>
-                </div>
-              </div>
-              <div v-if="getSbVideo(sb.id)" class="sb-video-actions">
-                <el-button
-                  size="small"
-                  :type="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) ? 'warning' : 'default'"
-                  :disabled="!isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) && !sbCanSubmitVideo(sb)"
-                  @click="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) ? stopResourceGeneration(GEN_RESOURCE.SB_VIDEO, sb.id) : onGenerateSbVideo(sb)"
-                >
-                  <el-icon v-if="isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id)" class="is-loading"><Loading /></el-icon>
-                  {{ isResourceGenerating(GEN_RESOURCE.SB_VIDEO, sb.id) ? '停止' : '重新生成' }}
-                </el-button>
-                <el-tooltip v-if="getNextStoryboard(sb.id)" content="提取本视频尾帧，设为下一个分镜的首帧" placement="top">
-                  <el-button size="small" :loading="linkingTailFrameIds.has(sb.id)" @click="onLinkTailFrameToNext(sb)">尾帧衔接</el-button>
-                </el-tooltip>
-                <el-tooltip v-if="sb.dialogue" content="对白配音（TTS）" placement="top">
-                  <el-button size="small" :loading="ttsSbIds.has(sb.id)" @click="onTtsSbDialogue(sb)">
-                    对白配音
-                  </el-button>
-                </el-tooltip>
-                <el-tooltip v-if="sb.dialogue && sbDialogueAudioRelPath(sb)" content="播放对白配音" placement="top">
-                  <el-button size="small" @click="playSbDialogueTts(sb)">
-                    <el-icon><VideoPlay /></el-icon>
-                  </el-button>
-                </el-tooltip>
-              </div>
-              <div class="sb-video-prompt-label">
-                <span class="sb-dot"></span>
-                <span>视频提示词</span>
-              </div>
-              <div class="sb-video-params-bar">
-                <span class="sb-video-prompt-text sb-video-prompt-text--preview">{{ sb.video_prompt || '暂无视频提示词（在「视频配置」保存后自动生成）' }}</span>
-                <el-button size="small" link type="primary" @click="onOpenSbPromptDialog(sb)">手工编辑</el-button>
-              </div>
-            </div>
-          </div>
-          </template>
-        </template>
-        <!-- 分镜生成中提示条 -->
-        <div v-if="storyboardGenerating || universalOmniPolishRunning" class="sb-generating-tip">
-          <span class="sb-gen-dot" /><span class="sb-gen-dot" /><span class="sb-gen-dot" />
-          <span v-if="universalOmniPolishRunning" class="sb-gen-text">
-            全能片段润色中 {{ universalOmniPolishProgress.current }}/{{ universalOmniPolishProgress.total }}
-            <template v-if="universalOmniPolishProgress.label"> · {{ universalOmniPolishProgress.label }}</template>
-          </span>
-          <span v-else class="sb-gen-text">分镜持续生成中，客官稍等片刻…</span>
-        </div>
-        <div v-else-if="storyboards.length === 0" class="empty-tip">请先生成分镜</div>
-      </section>
-
-      <!-- 7. 视频配置 + AI 模型配置 -->
-      <section class="section card">
-        <h2 class="section-title">视频配置</h2>
-        <div class="config-grid">
-          <!--
-          <el-form-item label="配乐">
-            <el-select v-model="videoMusic" placeholder="无" clearable style="width: 160px">
-              <el-option label="无" value="" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="音效">
-            <el-select v-model="videoSfx" placeholder="无" clearable style="width: 160px">
-              <el-option label="无" value="" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="画质">
-            <el-select v-model="videoQuality" style="width: 120px">
-              <el-option label="高" value="high" />
-              <el-option label="中" value="medium" />
-            </el-select>
-          </el-form-item>
-          -->
-          <el-form-item label="字幕">
-            <div class="video-option-row">
-              <el-switch v-model="videoSubtitle" />
-              <span v-if="videoSubtitle" class="video-option-hint">开启后，合成整集时会检测解说旁白：若有文案则自动生成 SRT、按分镜时长合成旁白语音（过长加速 / 过短补静音）、与成片对齐后烧录字幕并混音。</span>
-            </div>
-          </el-form-item>
-          <el-form-item label="对白烧录">
-            <div class="video-option-row">
-              <el-switch v-model="videoBurnDialogue" />
-              <span v-if="videoBurnDialogue" class="video-option-hint">开启后，将把各镜「配音」生成的对白 TTS 按分镜时长对齐并混入整集成片（无对白音频的分镜为静音）。可与「字幕」旁白同时开启，两条音轨会叠混。</span>
-            </div>
-          </el-form-item>
-          <el-form-item label="水印">
-            <div class="video-option-row">
-              <el-switch v-model="videoWatermark" />
-              <el-input
-                v-if="videoWatermark"
-                v-model="videoWatermarkText"
-                placeholder="右下角水印文字"
-                maxlength="200"
-                show-word-limit
-                clearable
-                class="video-watermark-input"
-              />
-            </div>
-          </el-form-item>
-        </div>
-        <p class="config-tip">
-          文本/图片/视频使用的模型以
-          <template v-if="isAdminUser">
-            「<el-link type="primary" :underline="false" @click="showAiConfigDialog = true">AI 配置</el-link>」
-          </template>
-          <template v-else>管理员配置</template>
-          中设为默认的为准。
-        </p>
-      </section>
-
-      <!-- 8. 合成视频 -->
-      <section id="anchor-video" class="section card">
-        <h2 class="section-title">合成视频</h2>
-        <el-button
-          type="primary"
-          size="large"
-          :loading="videoStatus === 'generating'"
-          :disabled="!currentEpisodeId || storyboards.length === 0 || videoStatus === 'generating'"
-          @click="onGenerateVideo"
-        >
-          合成视频
-        </el-button>
-        <div v-if="videoStatus === 'generating'" class="video-progress">
-          <el-progress :percentage="videoProgress" :status="videoProgress >= 100 ? 'success' : undefined" />
-          <p>视频生成中...</p>
-        </div>
-        <div v-if="videoStatus === 'done'" class="video-done">
-          <el-alert type="success" title="视频生成完成" show-icon />
-        </div>
-        <div v-else-if="videoStatus === 'error'" class="video-error">
-          <el-alert type="error" :title="videoErrorMsg" show-icon />
-        </div>
-        <div v-if="currentEpisodeVideoUrl" class="video-preview-wrap">
-          <p class="video-preview-label">本集合成视频预览</p>
-          <video
-            :src="currentEpisodeVideoUrl"
-            controls
-            class="video-preview-player"
-            preload="metadata"
-          />
-        </div>
-      </section>
+      <VideoWorkbench
+        v-show="filmWorkbenchTab === 'videoCompose'"
+        v-model:subtitle="videoSubtitle"
+        v-model:burn-dialogue="videoBurnDialogue"
+        v-model:watermark="videoWatermark"
+        v-model:watermark-text="videoWatermarkText"
+        :is-admin-user="isAdminUser"
+        :current-episode-id="currentEpisodeId"
+        :storyboards-count="storyboards.length"
+        :video-status="videoStatus"
+        :video-progress="videoProgress"
+        :video-error-msg="videoErrorMsg"
+        :current-episode-video-url="currentEpisodeVideoUrl"
+        @open-ai-config="showAiConfigDialog = true"
+        @generate-video="onGenerateVideo"
+      />
     </main>
 
     <!-- 添加道具弹窗 -->
@@ -3044,7 +1172,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, nextTick, proxyRefs } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, DataAnalysis } from '@element-plus/icons-vue'
@@ -3053,6 +1181,7 @@ import { useFilmStore } from '@/stores/film'
 import { useGenerationTaskStore, GEN_RESOURCE } from '@/stores/generationTaskStore'
 import { syncGeneratingSetsFromStore, buildEpisodeContext, buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/useGenerationTaskSync'
 import { dramaAPI } from '@/api/drama'
+import { workbenchAPI } from '@/api/workbench'
 import { generationAPI } from '@/api/generation'
 import { aiAPI } from '@/api/ai'
 import { characterAPI } from '@/api/characters'
@@ -3069,11 +1198,20 @@ import { propLibraryAPI } from '@/api/propLibrary'
 import { workflowPresetAPI } from '@/api/workflowPresets'
 import { parseScriptIntoEpisodes, episodesListToPlainScript } from '@/utils/scriptEpisodes'
 import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
-import StylePickerButton from '@/components/StylePickerButton.vue'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
 import UsageCenterDialog from '@/components/UsageCenterDialog.vue'
+import FilmCreateHeader from '@/components/filmCreate/layout/FilmCreateHeader.vue'
+import FilmWorkbenchTabs from '@/components/filmCreate/layout/FilmWorkbenchTabs.vue'
+import ProjectPipelinePanel from '@/components/filmCreate/layout/ProjectPipelinePanel.vue'
+import QuickNav from '@/components/filmCreate/layout/QuickNav.vue'
+import ScriptWorkbench from '@/components/filmCreate/workbenches/script/ScriptWorkbench.vue'
+import CharacterWorkbench from '@/components/filmCreate/workbenches/characters/CharacterWorkbench.vue'
+import PropWorkbench from '@/components/filmCreate/workbenches/props/PropWorkbench.vue'
+import SceneWorkbench from '@/components/filmCreate/workbenches/scenes/SceneWorkbench.vue'
+import StoryboardWorkbench from '@/components/filmCreate/workbenches/storyboards/StoryboardWorkbench.vue'
+import VideoWorkbench from '@/components/filmCreate/workbenches/video/VideoWorkbench.vue'
 import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEditor.vue'
 import {
   generationStyleOptions,
@@ -3441,6 +1579,43 @@ function normalizeStoryEpisodeCount() {
 const storyGenerating = ref(false)
 /** 剧本工作台：create 创作 | select 选择预览 */
 const scriptWorkbenchMode = ref('create')
+const filmWorkbenchTab = ref('script')
+const workbenchTabLoaded = reactive({
+  script: false,
+  characters: false,
+  scenes: false,
+  props: false,
+  storyboards: false,
+  videoCompose: false,
+})
+const anchorTabMap = {
+  'anchor-script': 'script',
+  'anchor-characters': 'characters',
+  'anchor-scenes': 'scenes',
+  'anchor-props': 'props',
+  'anchor-storyboard': 'storyboards',
+  'anchor-video': 'videoCompose',
+}
+
+function switchWorkbenchTabForAnchor(anchor) {
+  const tab = anchorTabMap[anchor]
+  if (tab) filmWorkbenchTab.value = tab
+}
+
+async function goWorkbenchAnchor(stepOrAnchor) {
+  const anchor = typeof stepOrAnchor === 'string' ? stepOrAnchor : stepOrAnchor?.anchor
+  if (!anchor) return
+  switchWorkbenchTabForAnchor(anchor)
+  await nextTick()
+  scrollToAnchor(anchor)
+}
+
+async function goStoryboardAnchor(sbId) {
+  filmWorkbenchTab.value = 'storyboards'
+  await nextTick()
+  scrollToStoryboard(sbId)
+}
+
 const showSelectScriptDialog = ref(false)
 const selectScriptLoading = ref(false)
 const selectScriptImporting = ref(false)
@@ -3666,6 +1841,234 @@ const videoWatermark = ref(false)
 const videoWatermarkText = ref('')
 
 const dramaId = computed(() => store.dramaId)
+const workbenchSummary = ref(null)
+const workbenchSummaryLoading = ref(false)
+const projectTitle = computed(() => workbenchSummary.value?.project?.title || store.drama?.title || '项目')
+
+function applyWorkbenchSummarySettings(summary) {
+  const settings = summary?.settings || {}
+  if (!settings || !Object.keys(settings).length) return
+  projectSettingsHydrating = true
+  try {
+    generationStyle.value = settings.style || DEFAULT_GENERATION_STYLE
+    projectAspectRatio.value = settings.aspect_ratio || '16:9'
+    projectImageSpec.value = normalizeImageSpec(settings.image_spec || {})
+    projectVideoSpec.value = normalizeVideoSpec(settings.video_spec || {})
+    videoClipDuration.value = Number(settings.default_segment_duration) || 10
+    scriptLanguage.value = settings.language || 'zh'
+  } finally {
+    nextTick(() => {
+      projectSettingsHydrating = false
+    })
+  }
+}
+
+async function loadWorkbenchSummary({ applySettings = true, silent = true } = {}) {
+  const id = store.dramaId
+  if (!id) return null
+  workbenchSummaryLoading.value = true
+  try {
+    const summary = await workbenchAPI.summary(id)
+    workbenchSummary.value = summary || null
+    if (applySettings) applyWorkbenchSummarySettings(summary)
+    return summary
+  } catch (err) {
+    if (!silent) ElMessage.error(err.message || '加载制作工作台摘要失败')
+    workbenchSummary.value = null
+    return null
+  } finally {
+    workbenchSummaryLoading.value = false
+  }
+}
+
+function resetWorkbenchTabLoaded() {
+  Object.keys(workbenchTabLoaded).forEach((key) => {
+    workbenchTabLoaded[key] = false
+  })
+}
+
+function markAllWorkbenchTabsLoaded() {
+  Object.keys(workbenchTabLoaded).forEach((key) => {
+    workbenchTabLoaded[key] = true
+  })
+}
+
+function mergeCurrentEpisodePatch(patch = {}) {
+  const current = store.currentEpisode || {}
+  const merged = { ...current, ...patch }
+  store.setCurrentEpisode(merged)
+  const drama = store.drama
+  if (drama?.episodes?.length && merged.id != null) {
+    const episodes = drama.episodes.map((ep) => Number(ep.id) === Number(merged.id) ? { ...ep, ...patch } : ep)
+    store.setDrama({ ...drama, episodes })
+  }
+  return merged
+}
+
+function applyScriptWorkbenchTab(data) {
+  const project = data?.project || {}
+  const episodes = Array.isArray(data?.episodes) ? data.episodes : []
+  const prevDrama = store.drama || {}
+  store.setDrama({ ...prevDrama, ...project, episodes })
+  storyInput.value = (project.description || '').toString().trim()
+  storyStyle.value = project.metadata?.story_style || ''
+  storyType.value = project.genre || ''
+  applyProjectAiRouteSelection(project.metadata || {})
+
+  const currentId = selectedEpisodeId.value
+  let ep = currentId != null ? episodes.find((item) => Number(item.id) === Number(currentId)) : null
+  if (!ep) {
+    const wantNum = savedCurrentEpisodeNumber.value
+    ep = episodes.find((item) => Number(item.episode_number) === Number(wantNum)) || episodes[0] || null
+  }
+  if (ep) {
+    const existing = store.currentEpisode && Number(store.currentEpisode.id) === Number(ep.id) ? store.currentEpisode : {}
+    const merged = {
+      ...ep,
+      characters: existing.characters || [],
+      scenes: existing.scenes || [],
+      props: existing.props || [],
+      storyboards: existing.storyboards || [],
+    }
+    store.setCurrentEpisode(merged)
+    store.setScriptContent(ep.script_content || '')
+    scriptTitle.value = ep.title || '第' + (ep.episode_number || 0) + '集'
+    selectedEpisodeId.value = ep.id
+    syncStoryboardStateFromEpisode(merged)
+  } else {
+    store.setCurrentEpisode(null)
+    store.setScriptContent('')
+    scriptTitle.value = ''
+    selectedEpisodeId.value = null
+    syncStoryboardStateFromEpisode(null)
+  }
+}
+
+function applyAssetsWorkbenchTab(data) {
+  const type = data?.type
+  const items = Array.isArray(data?.items) ? data.items : []
+  if (type === 'character') mergeCurrentEpisodePatch({ characters: items })
+  if (type === 'scene') mergeCurrentEpisodePatch({ scenes: items })
+  if (type === 'prop') mergeCurrentEpisodePatch({ props: items })
+}
+
+function applyStoryboardsWorkbenchTab(data) {
+  const boards = Array.isArray(data?.storyboards) ? data.storyboards : []
+  const episodePatch = {
+    ...(data?.episode || {}),
+    storyboards: boards,
+  }
+  const merged = mergeCurrentEpisodePatch(episodePatch)
+  if (merged?.id) {
+    selectedEpisodeId.value = merged.id
+    store.setScriptContent(merged.script_content || store.scriptContent || '')
+    scriptTitle.value = merged.title || '第' + (merged.episode_number || 0) + '集'
+  }
+  syncStoryboardStateFromEpisode(merged)
+}
+
+function applyVideoComposeWorkbenchTab(data) {
+  const boards = Array.isArray(data?.storyboards) ? data.storyboards : []
+  const latestMerge = data?.latest_merge || null
+  const episode = data?.episode || {}
+  const episodePatch = {
+    ...episode,
+    storyboards: boards,
+    video_url: episode.video_url || latestMerge?.merged_url || null,
+    status: latestMerge?.status === 'completed' ? 'completed' : (episode.status || undefined),
+  }
+  const merged = mergeCurrentEpisodePatch(episodePatch)
+  if (merged?.id) {
+    selectedEpisodeId.value = merged.id
+    store.setScriptContent(merged.script_content || store.scriptContent || '')
+    scriptTitle.value = merged.title || '第' + (merged.episode_number || 0) + '集'
+  }
+  syncStoryboardStateFromEpisode(merged)
+
+  const ids = boards.map((sb) => Number(sb.id)).filter((id) => Number.isFinite(id) && id > 0)
+  if (Array.isArray(data?.videos)) {
+    const videoMap = groupByStoryboardId(data.videos)
+    const nextVideos = {}
+    for (const id of ids) nextVideos[id] = videoMap[id] || []
+    sbVideos.value = { ...sbVideos.value, ...nextVideos }
+    restoreSelectionsFromBackend()
+  }
+  if (merged?.id && latestMerge?.status === 'completed' && latestMerge.merged_url) {
+    store.setVideoStatus('done', dramaId.value, merged.id)
+    store.setVideoProgress(100, dramaId.value, merged.id)
+  } else if (merged?.id && (latestMerge?.status === 'processing' || latestMerge?.status === 'pending')) {
+    store.setVideoStatus('generating', dramaId.value, merged.id)
+  }
+}
+
+function assetTypeForWorkbenchTab(tab) {
+  if (tab === 'characters') return 'character'
+  if (tab === 'scenes') return 'scene'
+  if (tab === 'props') return 'prop'
+  return ''
+}
+
+async function loadScriptWorkbenchTab({ force = false, recoverTasks = false } = {}) {
+  if (!store.dramaId || (!force && workbenchTabLoaded.script)) return
+  const data = await workbenchAPI.scriptTab(store.dramaId)
+  applyScriptWorkbenchTab(data)
+  workbenchTabLoaded.script = true
+  if (recoverTasks) await recoverAndSyncEpisodeTasks(currentEpisodeId.value)
+}
+
+async function loadAssetWorkbenchTab(tab, { force = false } = {}) {
+  const type = assetTypeForWorkbenchTab(tab)
+  if (!store.dramaId || !type || (!force && workbenchTabLoaded[tab])) return
+  if (!workbenchTabLoaded.script) {
+    await loadScriptWorkbenchTab({ force: false })
+  }
+  const data = await workbenchAPI.assetsTab(store.dramaId, {
+    type,
+    episode_id: currentEpisodeId.value || undefined,
+  })
+  applyAssetsWorkbenchTab(data)
+  workbenchTabLoaded[tab] = true
+}
+
+async function loadStoryboardsWorkbenchTab({ force = false, recoverTasks = false } = {}) {
+  if (!store.dramaId || (!force && workbenchTabLoaded.storyboards)) return
+  if (!workbenchTabLoaded.script) {
+    await loadScriptWorkbenchTab({ force: false })
+  }
+  const data = await workbenchAPI.storyboardsTab(store.dramaId, {
+    episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
+  })
+  applyStoryboardsWorkbenchTab(data)
+  workbenchTabLoaded.storyboards = true
+  await loadStoryboardMedia({ force: true })
+  if (recoverTasks) await recoverAndSyncEpisodeTasks(currentEpisodeId.value)
+}
+
+async function loadVideoComposeWorkbenchTab({ force = false, recoverTasks = false } = {}) {
+  if (!store.dramaId || (!force && workbenchTabLoaded.videoCompose)) return
+  if (!workbenchTabLoaded.script) {
+    await loadScriptWorkbenchTab({ force: false })
+  }
+  const data = await workbenchAPI.videoComposeTab(store.dramaId, {
+    episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
+  })
+  applyVideoComposeWorkbenchTab(data)
+  workbenchTabLoaded.videoCompose = true
+  if (recoverTasks) await recoverAndSyncEpisodeTasks(currentEpisodeId.value)
+}
+
+async function loadWorkbenchTab(tab = filmWorkbenchTab.value, options = {}) {
+  if (tab === 'script') return loadScriptWorkbenchTab(options)
+  if (['characters', 'scenes', 'props'].includes(tab)) return loadAssetWorkbenchTab(tab, options)
+  if (tab === 'storyboards') return loadStoryboardsWorkbenchTab(options)
+  if (tab === 'videoCompose') return loadVideoComposeWorkbenchTab(options)
+}
+
+async function loadInitialWorkbenchData({ recoverTasks = false } = {}) {
+  await loadWorkbenchSummary({ applySettings: true })
+  await loadWorkbenchTab(filmWorkbenchTab.value || 'script', { force: true, recoverTasks })
+}
+
 const characters = computed(() => store.characters)
 const scenes = computed(() => store.scenes)
 const props = computed(() => store.props)
@@ -6166,6 +4569,9 @@ function onEpisodeSelect(epId) {
     syncStoryboardStateFromEpisode(null)
     return
   }
+  ;['characters', 'scenes', 'props', 'storyboards', 'videoCompose'].forEach((key) => {
+    workbenchTabLoaded[key] = false
+  })
   const list = store.drama?.episodes || []
   const ep = list.find((e) => Number(e.id) === Number(epId))
   if (!ep) return
@@ -6173,7 +4579,7 @@ function onEpisodeSelect(epId) {
   store.setScriptContent(ep.script_content || '')
   scriptTitle.value = ep.title || '第' + (ep.episode_number || 0) + '集'
   syncStoryboardStateFromEpisode(ep)
-  loadStoryboardMedia()
+  loadWorkbenchTab(filmWorkbenchTab.value, { force: true }).catch(() => {})
   recoverAndSyncEpisodeTasks(epId)
 }
 
@@ -6230,6 +4636,8 @@ async function loadDrama({ force = false, recoverTasks = false } = {}) {
     }
     syncStoryboardStateFromEpisode(ep)
     await loadStoryboardMedia()
+    markAllWorkbenchTabsLoaded()
+    loadWorkbenchSummary({ applySettings: false })
     if (recoverTasks) {
       await recoverAndSyncEpisodeTasks(ep?.id)
     }
@@ -6414,7 +4822,9 @@ function getPropAffectedStoryboards(propId) {
 }
 
 /** 点击分镜 chip → 滚动到对应分镜行 */
-function scrollToStoryboard(sbId) {
+async function scrollToStoryboard(sbId) {
+  filmWorkbenchTab.value = 'storyboards'
+  await nextTick()
   const el = document.getElementById('sb-' + sbId)
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
@@ -9841,13 +8251,16 @@ function applyRouteToStore() {
   clearPendingProjectSettingsSave()
   const id = route.params.id
   if (id && id !== 'new') {
+    resetWorkbenchTabLoaded()
     store.setDrama({ id: Number(id) })
     if (route.query.episode) {
       selectedEpisodeId.value = Number(route.query.episode)
     }
-    loadDrama({ force: true, recoverTasks: true })
+    loadInitialWorkbenchData({ recoverTasks: true })
   } else {
     store.reset()
+    resetWorkbenchTabLoaded()
+    workbenchSummary.value = null
     storyInput.value = ''
     scriptTitle.value = ''
     selectedEpisodeId.value = null
@@ -9865,6 +8278,903 @@ function applyRouteToStore() {
   }
 }
 
+// 过渡桥接：主要 UI 模板已拆出组件，业务状态暂留父页面；后续按 tab 下沉到 composables。
+const filmCreateCtx = proxyRefs({
+  _findStyleOption,
+  AccountMenu,
+  ACTIVE_VIDEO_AI_CONFIG_TTL_MS,
+  activeVideoAiConfigCache,
+  activeVideoAiConfigCacheAt,
+  addCharRefFileInput,
+  addCharRefImage,
+  addingCharFromLibraryId,
+  addingCharToLibraryId,
+  addingCharToMaterialId,
+  addingPropFromLibraryId,
+  addingPropToLibraryId,
+  addingPropToMaterialId,
+  addingSceneFromLibraryId,
+  addingSceneToLibraryId,
+  addingSceneToMaterialId,
+  addPipelineError,
+  addPropAddRefFileInput,
+  addPropAddRefImage,
+  addPropForm,
+  addPropRefFileInput,
+  addPropRefImage,
+  addPropSaving,
+  addSceneRefFileInput,
+  addSceneRefImage,
+  AI_ROUTE_METADATA_KEY,
+  aiAPI,
+  AIConfigContent,
+  aiRouteLoading,
+  aiRoutePayload,
+  aiRoutesExpanded,
+  aiRoutesLoaded,
+  aiRouteSummary,
+  aiRouteTypes,
+  allActiveTasks,
+  anchorTabMap,
+  angleToPromptFragment,
+  applyAssetsWorkbenchTab,
+  applyDefaultWorkflowSelections,
+  applyProjectAiRouteSelection,
+  applyRouteToStore,
+  applyRuntimeRoutingPolicies,
+  applyScriptWorkbenchTab,
+  applyStoryboardsWorkbenchTab,
+  applyVideoComposeWorkbenchTab,
+  applyWorkbenchSummarySettings,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  assetImageUrl,
+  assetThumbUrl,
+  assetTypeForWorkbenchTab,
+  assetVideoUrl,
+  auxRoleFrameType,
+  auxRoleLabel,
+  backfillDramaStylePromptMetadataIfNeeded,
+  baseUrl,
+  batchImageErrors,
+  batchImageProgress,
+  batchImageRunning,
+  batchImageStopping,
+  batchVideoErrors,
+  batchVideoProgress,
+  batchVideoRunning,
+  batchVideoStopping,
+  Box,
+  CharacterWorkbench,
+  buildAuxPrompt,
+  buildEpisodeContext,
+  buildExtractTaskMeta,
+  buildFirstFrameImagePrompt,
+  buildKeyframeParamsJson,
+  buildLastFrameImagePrompt,
+  buildRegenerateKeyframePrompt,
+  buildResourceTaskMeta,
+  buildSbAuxTimelinePrompt,
+  buildSbGenMeta,
+  buildSbKeyframeTimelinePrompt,
+  buildSbVideoContextPrompt,
+  buildSbVideoPromptForApi,
+  buildStoryboardKeyframePrompt,
+  buildUniversalSegmentFieldOverrides,
+  canManageLibrary,
+  canSplitSbByAudio,
+  canUsePrevTailAsFirst,
+  canUseUniversalOmniVideoApi,
+  captureVideoLastFrame,
+  characterAPI,
+  characterLibraryAPI,
+  characters,
+  charactersAvailableToAddToSb,
+  charactersBlockCollapsed,
+  charactersGenerating,
+  charLibraryKeyword,
+  charLibraryList,
+  charLibraryLoading,
+  charLibraryPage,
+  charLibraryPageSize,
+  charLibraryTab,
+  charLibraryTotal,
+  charRoleLabel,
+  charSd2CertPayload,
+  Check,
+  checkPause,
+  clearCharRefImage,
+  clearLocalGeneratingState,
+  clearPendingProjectSettingsSave,
+  clearPropRefImage,
+  clearSceneRefImage,
+  clipSecondsForStoryboardEstimate,
+  cloneSpec,
+  closeImagePreview,
+  collectImagePreviewGallery,
+  collectSbAssetReferenceItems,
+  collectSbClassicVideoReferenceAbsoluteUrls,
+  collectSbOmniReferenceAbsoluteUrls,
+  collectSbSceneOnlyReferenceAbsoluteUrls,
+  collectSbVideoReferenceItems,
+  compactKeyframeText,
+  computed,
+  configOptionLabel,
+  confirmAdminProjectOperation,
+  confirmImageSpec,
+  confirmUniversalNonSeedance2Video,
+  consumeResourceUploadPreconfirm,
+  consumeSbImageUploadPreconfirm,
+  countDialogueLinesInSb,
+  createStoryboardImageBatchId,
+  createStoryboardImageTasks,
+  currentEpisode,
+  currentEpisodeId,
+  currentEpisodeVideoUrl,
+  currentUser,
+  DataAnalysis,
+  debouncedLoadCharLibrary,
+  debouncedLoadDramaAllCharList,
+  debouncedLoadDramaAllPropList,
+  debouncedLoadDramaAllSceneList,
+  debouncedLoadPropLibrary,
+  debouncedLoadSceneLibrary,
+  dedupeStoryboardsForAssetLink,
+  DEFAULT_GENERATION_STYLE,
+  defaultImageSpec,
+  defaultKeyframeDescription,
+  defaultVideoSpec,
+  Delete,
+  dimensionsForArea,
+  Document,
+  DocumentAdd,
+  doExtractCharFromImage,
+  doExtractFromRef,
+  doExtractFromRef2,
+  doExtractPropFromImage,
+  doExtractSceneFromImage,
+  doGenerateCharacterPrompt,
+  doGeneratePropPrompt,
+  doGenerateScenePrompt,
+  doGenerateSceneSinglePrompt,
+  doUploadResourceImage,
+  doUploadSbImage,
+  dragOverResourceKey,
+  dragOverSbId,
+  dramaAllCharKeyword,
+  dramaAllCharList,
+  dramaAllCharLoading,
+  dramaAllCharPage,
+  dramaAllCharPageSize,
+  dramaAllCharTotal,
+  dramaAllPropKeyword,
+  dramaAllPropList,
+  dramaAllPropLoading,
+  dramaAllPropPage,
+  dramaAllPropPageSize,
+  dramaAllPropTotal,
+  dramaAllSceneKeyword,
+  dramaAllSceneList,
+  dramaAllSceneLoading,
+  dramaAllScenePage,
+  dramaAllScenePageSize,
+  dramaAllSceneTotal,
+  dramaAPI,
+  dramaId,
+  editCharacter,
+  editCharacterForm,
+  editCharacterPromptGenerating,
+  editCharacterSaving,
+  editCharLibraryForm,
+  editCharLibrarySaving,
+  editingFramePromptRegenerating,
+  editingFramePromptSaving,
+  editingFramePromptSb,
+  editingFramePromptSlot,
+  editingFramePromptText,
+  editingSbImagePromptId,
+  editingSbImagePromptText,
+  editingSbVideoPromptId,
+  editingSbVideoPromptText,
+  editProp,
+  editPropForm,
+  editPropLibraryForm,
+  editPropLibrarySaving,
+  editPropPromptGenerating,
+  editPropSaving,
+  editScene,
+  editSceneForm,
+  editSceneLibraryForm,
+  editSceneLibrarySaving,
+  editScenePromptGenerating,
+  editSceneSaving,
+  effectiveStoryboardFrameCount,
+  ElMessage,
+  ElMessageBox,
+  EMPTY_ARR,
+  ensureProfessionalFramePrompt,
+  episodesListToPlainScript,
+  estimateVideoDurationSecFromCharLen,
+  Expand,
+  exportingStoryboardSheet,
+  exportStoryboardSheet,
+  extractIdentityAnchors,
+  extractingAnchors,
+  extractingCharAppearance,
+  extractingPropAddDesc,
+  extractingPropDesc,
+  extractingSceneDesc,
+  Film,
+  FilmCreateHeader,
+  filmWorkbenchTab,
+  FilmWorkbenchTabs,
+  findResource,
+  Fold,
+  formatElapsed,
+  formatKeyframeSecond,
+  formatSrtTimestamp,
+  formatVideoPromptForEdit,
+  frameTypeForSlot,
+  GEN_RESOURCE,
+  generatingCharIds,
+  generatingPropIds,
+  generatingSbFirstImageIds,
+  generatingSbImageIds,
+  generatingSbLastImageIds,
+  generatingSbVideoIds,
+  generatingSceneIds,
+  generatingUniversalSegmentIds,
+  generationAPI,
+  generationStyle,
+  generationStyleOptions,
+  genStore,
+  getActiveVideoAiConfig,
+  getCachedFramePromptFromDb,
+  getCharAffectedStoryboards,
+  getCurrentUser,
+  getFinalizeMergeOptions,
+  getFirstImageFile,
+  getGeneratingSetsBag,
+  getMainImageUrlForVideo,
+  getMovementLabel,
+  getNeighborKeyframeRefs,
+  getNextStoryboard,
+  getPrevStoryboard,
+  getPropAffectedStoryboards,
+  getQuadGridImage,
+  getRunningResourceTask,
+  getSbAllImages,
+  getSbAllVideos,
+  getSbCharacterId,
+  getSbCharacterIds,
+  getSbConfirmedKeyframeImages,
+  getSbFirstFrameUrl,
+  getSbFirstImage,
+  getSbImage,
+  getSbLastFrameUrl,
+  getSbLastImage,
+  getSbLatestAuxImages,
+  getSbLocalImage,
+  getSbPrimaryImages,
+  getSbPropId,
+  getSbPropIds,
+  getSbSelectedCharacters,
+  getSbSelectedProps,
+  getSbSelectedScene,
+  getSbStoryboardReferenceImages,
+  getSbUniversalOmniRefSlots,
+  getSbVideo,
+  getSbVideoDurationForApi,
+  getSbVideoError,
+  getSceneAffectedStoryboards,
+  getSelectedStyle,
+  getSelectedStylePrompt,
+  getSelectedStylePromptZh,
+  getStoryboardAssetReferenceImages,
+  getStoryboardCountForApi,
+  getStripItems,
+  getStylePromptEn,
+  getStylePromptZh,
+  getVideoDurationForApi,
+  getVideoStripItems,
+  goList,
+  goStoryboardAnchor,
+  goWorkbenchAnchor,
+  groupByStoryboardId,
+  hasAssetImage,
+  hasSbFirstLastPair,
+  hasSbImage,
+  IMAGE_TIER_AREAS,
+  imageAiPayload,
+  imageRatioOptions,
+  imageReferenceUrlForApi,
+  imagesAPI,
+  imageSpecDialogVisible,
+  imageSpecDraft,
+  imageSpecPreview,
+  imageSpecSummary,
+  imageTierOptions,
+  imageUrl,
+  inferringParams,
+  InfoFilled,
+  invalidateActiveVideoAiConfigCache,
+  isAdmin,
+  isAdminUser,
+  isAdminViewingOtherProject,
+  isAuxStoryboardImage,
+  isCharAddToEpisodeLoading,
+  isDark,
+  isEpisodeExtractRunning,
+  isFreshPreconfirm,
+  isHttpVideoUrl,
+  isPropAddToEpisodeLoading,
+  isResourceGenerating,
+  isSbUniversalMode,
+  isSceneAddToEpisodeLoading,
+  isSeedance2VideoModel,
+  keyframeDescriptionFromParams,
+  keyframeIndexInfo,
+  keyframeItemLabel,
+  keyframeTimelineLine,
+  keyframeTimeRange,
+  lastFrameUseFirstLayoutLock,
+  latestStoryboardKeyframeBatch,
+  linkingTailFrameIds,
+  loadAssetWorkbenchTab,
+  loadCharLibraryList,
+  loadDrama,
+  loadDramaAllCharList,
+  loadDramaAllPropList,
+  loadDramaAllSceneList,
+  loadDramaPromise,
+  Loading,
+  loadInitialWorkbenchData,
+  loadPipelineConcurrency,
+  loadPropLibraryList,
+  loadRuntimeAiConfigs,
+  loadSceneLibraryList,
+  loadScriptWorkbenchTab,
+  loadSelectScriptList,
+  loadSingleStoryboardMedia,
+  loadStoryboardMedia,
+  loadStoryboardsWorkbenchTab,
+  loadVideoComposeWorkbenchTab,
+  loadWorkbenchSummary,
+  loadWorkbenchTab,
+  loadWorkflowPresets,
+  localPathToThumbUrl,
+  localPathToUrl,
+  MagicStick,
+  markAllWorkbenchTabsLoaded,
+  MAX_STORY_EPISODE_COUNT,
+  mergeCurrentEpisodePatch,
+  Minus,
+  Moon,
+  navCollapsed,
+  navSteps,
+  nextTick,
+  normalizeAiRouteId,
+  normalizeAudioRelPath,
+  normalizeImageSpec,
+  normalizeRuntimeConcurrency,
+  normalizeStoryboardFrameCount,
+  normalizeStoryEpisodeCount,
+  normalizeVideoSpec,
+  novelAiSummarize,
+  novelFileContent,
+  novelFileName,
+  novelImporting,
+  novelImportMode,
+  novelImportReset,
+  novelMaxChapters,
+  novelText,
+  onAddCharacterToLibrary,
+  onAddCharacterToMaterialLibrary,
+  onAddCharFromLibrary,
+  onAddDramaCharToEpisode,
+  onAddDramaPropToEpisode,
+  onAddDramaSceneToEpisode,
+  onAddEpisode,
+  onAddPropFromLibrary,
+  onAddPropToLibrary,
+  onAddPropToMaterialLibrary,
+  onAddSceneFromLibrary,
+  onAddSceneToLibrary,
+  onAddSceneToMaterialLibrary,
+  onAddSingleStoryboard,
+  onAiRouteSelectVisible,
+  onBatchInferParams,
+  onBeforeUnmount,
+  onCharLibraryDialogOpen,
+  onCharLibraryTabChange,
+  onCloseCharDialog,
+  onClosePropDialog,
+  onCloseSceneDialog,
+  onDeleteCharacter,
+  onDeleteCharacterRaw,
+  onDeleteCharLibrary,
+  onDeleteProp,
+  onDeletePropLibrary,
+  onDeletePropRaw,
+  onDeleteScene,
+  onDeleteSceneLibrary,
+  onDeleteSceneRaw,
+  onDeleteSingleStoryboard,
+  onEditKeyframeDescription,
+  onEditSbImagePrompt,
+  onEditSbVideoPrompt,
+  onEpisodeSelect,
+  onExportNarrationSrt,
+  onExportStoryboardSheet,
+  onExtractProps,
+  onExtractPropsRaw,
+  onExtractScenes,
+  onExtractScenesRaw,
+  onGenerateCharacterImage,
+  onGenerateCharacterImageRaw,
+  onGenerateCharacters,
+  onGenerateCharactersRaw,
+  onGeneratePropImage,
+  onGeneratePropImageRaw,
+  onGenerateSbFrameImage,
+  onGenerateSbFramePair,
+  onGenerateSbImage,
+  onGenerateSbVideo,
+  onGenerateSceneImage,
+  onGenerateSceneImageRaw,
+  onGenerateScript,
+  onGenerateStory,
+  onGenerateStoryboard,
+  onGenerateStoryboardAux,
+  onGenerateUniversalSegmentPrompt,
+  onGenerateVideo,
+  onImagePreviewKeydown,
+  onImportNovel,
+  onInsertStoryboardBefore,
+  onLastFrameLayoutLockChange,
+  onLinkTailFrameToNext,
+  onMounted,
+  onNovelFileChange,
+  onOpenSbPromptDialog,
+  onOpenVideoParamsDialog,
+  onPickScriptFromDialog,
+  onPipelineResume,
+  onPolishSbPrompt,
+  onPolishUniversalSegmentPromptStream,
+  onProjectVideoResolutionChange,
+  onPropLibraryDialogOpen,
+  onPropLibraryTabChange,
+  onRefImageDrop,
+  onRefImageDrop2,
+  onRefImageFileChange,
+  onRefImageFileChange2,
+  onRegenAffectedSbImages,
+  onRegenerateKeyframeItem,
+  onRegenerateLayoutDescription,
+  onRemoveExtraImage,
+  onRemoveSbHistoryImage,
+  onResourceDragLeave,
+  onResourceDragOver,
+  onResourceDrop,
+  onResourceImageFileChange,
+  onSaveSbImagePrompt,
+  onSaveSbNarrationField,
+  onSaveSbPromptDialog,
+  onSaveSbVideoFields,
+  onSaveSbVideoPrompt,
+  onSaveUniversalSegmentField,
+  onSaveVideoParams,
+  onSbAddCharacterCommand,
+  onSbImageDragLeave,
+  onSbImageDragOver,
+  onSbImageDrop,
+  onSbImageFileChange,
+  onSceneLibraryDialogOpen,
+  onSceneLibraryTabChange,
+  onSd2CertifyCharacter,
+  onSd2CertifyRefresh,
+  onSd2PrimaryAction,
+  onSd2VoicePrimaryAction,
+  onSd2VoiceReplace,
+  onSelectSbFrameImage,
+  onSelectSbMainImage,
+  onSelectSbMainVideo,
+  onSelectStripItem,
+  onSetPrimaryImage,
+  onSplitSbByAudio,
+  onStoryboardCharacterChange,
+  onStoryboardPropChange,
+  onStoryboardSceneChange,
+  onStoryboardUseFirstLastFrameChange,
+  onStripItemClick,
+  onToggleKeyframeLocked,
+  onToggleKeyframeSelected,
+  onToggleSbUniversalMode,
+  onTtsSbDialogue,
+  onTtsSbNarration,
+  onUniversalSegmentPromptMenu,
+  onUniversalSegmentToGrokVideoTags,
+  onUploadResourceClick,
+  onUploadSbImageClick,
+  onUpscaleSbImage,
+  onUsePrevTailAsFirst,
+  onVideoParamsDialogClosed,
+  openAddCharacter,
+  openAddScene,
+  openCharSd2CertDialog,
+  openEditCharLibrary,
+  openEditPropLibrary,
+  openEditSceneLibrary,
+  openFramePromptEditor,
+  openImagePreview,
+  openImageSpecDialog,
+  openSelectScriptDialog,
+  parseExtraImages,
+  parseImageParamsJson,
+  parseJsonObject,
+  parseRatioValue,
+  parseScriptIntoEpisodes,
+  pendingProjectStyleSave,
+  Picture,
+  PropWorkbench,
+  pipelineActiveTasks,
+  pipelineConcurrency,
+  pipelineCountdown,
+  pipelineCountdownMsg,
+  pipelineCurrentStep,
+  pipelineErrorLog,
+  pipelineModelStrategyItems,
+  pipelineModelStrategyTypes,
+  pipelinePaused,
+  pipelineResolveResume,
+  pipelineRest,
+  pipelineRunning,
+  pipelineStepIndex,
+  pipelineStepTotal,
+  pipelineVideoConcurrency,
+  pipelineWithRetry,
+  playSbDialogueTts,
+  playSbNarrationTts,
+  playSbTtsFromRel,
+  playSd2Voice,
+  Plus,
+  polishUniversalSegmentsAfterGeneration,
+  pollTask,
+  pollTaskWithPause,
+  pollUntilResourceHasImage,
+  previewGallery,
+  previewImageIndex,
+  previewImageUrl,
+  PROJECT_SETTINGS_SAVE_DELAY_MS,
+  projectAiRouteSelectionForSave,
+  projectAspectRatio,
+  projectImageSpec,
+  projectMediaSpecMetadata,
+  projectOwnerLabel,
+  projectSettingsHydrating,
+  projectSettingsSaveTimer,
+  projectStylePromptMetadata,
+  projectTitle,
+  projectVideoResolution,
+  projectVideoSpec,
+  propAPI,
+  propLibraryAPI,
+  propLibraryKeyword,
+  propLibraryList,
+  propLibraryLoading,
+  propLibraryPage,
+  propLibraryPageSize,
+  propLibraryTab,
+  propLibraryTotal,
+  props,
+  propsBlockCollapsed,
+  propsExtracting,
+  proxyRefs,
+  pushAbsUrl,
+  quadPanelLabel,
+  QuestionFilled,
+  QuickNav,
+  reactive,
+  readFileAsRefImage,
+  recordHasPlayableVideoUrl,
+  recoverAndSyncEpisodeTasks,
+  recoveringEpisodeTaskKeys,
+  ref,
+  Refresh,
+  refreshStoryboardsForEpisode,
+  refreshStoryboardsOnly,
+  regenerateEditingFramePrompt,
+  regeneratingLayoutSbIds,
+  regenSbImagesForAsset,
+  regenSbImagesProgress,
+  resetWorkbenchTabLoaded,
+  resolvedProjectImageSpec,
+  resolvedProjectVideoSpec,
+  resolveImageSpec,
+  resolveSbImageById,
+  resolveVideoSpec,
+  resourceElapsedLabel,
+  resourceImageFileInput,
+  resourcePanelCollapsed,
+  resourceUploadId,
+  resourceUploadPreconfirm,
+  resourceUploadType,
+  restoreSelectionsFromBackend,
+  roundToMultiple,
+  route,
+  routePrimaryConfig,
+  router,
+  runConcurrently,
+  runGenerateStoryFromPremise,
+  runOneClickPipeline,
+  runPipelineCountdown,
+  runRepairPipeline,
+  runtimeAiConfigs,
+  runtimeRoutingPolicies,
+  saveCharRefImageIfAny,
+  savedCurrentEpisodeNumber,
+  saveEditingFramePrompt,
+  saveProjectSettings,
+  savePropRefImageIfAny,
+  saveSceneRefImageIfAny,
+  saveScriptToBackend,
+  sbAction,
+  sbAngle,
+  sbAngleH,
+  sbAngleS,
+  sbAngleV,
+  sbAtmosphere,
+  sbCanSubmitVideo,
+  sbCharacterIds,
+  sbCreationMode,
+  sbDialogue,
+  sbDialogueAudioPaths,
+  sbDialogueAudioRelPath,
+  sbDof,
+  sbDuration,
+  sbImageFileInput,
+  sbImages,
+  sbImageUploadForId,
+  sbImageUploadPreconfirm,
+  sbImageUploadSlotById,
+  sbLayoutDescription,
+  sbLighting,
+  sbLocation,
+  sbMainVideoPlayerKey,
+  sbMovement,
+  sbNarration,
+  sbNarrationAudioPaths,
+  sbNarrationAudioRelPath,
+  sbPromptImageText,
+  sbPromptPolishedText,
+  sbPromptPolishing,
+  sbPromptSaving,
+  sbPromptTarget,
+  sbPromptVideoText,
+  sbPropIds,
+  sbResult,
+  sbSceneId,
+  sbSelectedImgId,
+  sbSelectedLastImgId,
+  sbSelectedVideoId,
+  sbShotType,
+  sbTime,
+  sbTitle,
+  sbTruncatedDismissed,
+  sbTruncatedWarning,
+  sbTtsPreviewAudio,
+  sbUniversalSegmentText,
+  sbUniversalSegmentTrimmed,
+  sbVideoErrors,
+  sbVideoFirstLastUrls,
+  sbVideos,
+  sceneAPI,
+  sceneLibraryAPI,
+  sceneLibraryKeyword,
+  sceneLibraryList,
+  sceneLibraryLoading,
+  sceneLibraryPage,
+  sceneLibraryPageSize,
+  sceneLibraryTab,
+  sceneLibraryTotal,
+  scenes,
+  scenesBlockCollapsed,
+  scenesExtracting,
+  scheduleProjectSettingsSave,
+  scriptContent,
+  scriptEstimateStoryboardHint,
+  scriptEstimateStoryboardTitle,
+  scriptEstimateVideoDurationHint,
+  scriptEstimateVideoDurationTitle,
+  scriptGenerating,
+  scriptLanguage,
+  scriptStoryboardEstimate,
+  scriptStoryboardStyle,
+  ScriptWorkbench,
+  scriptTextTrimmedForEstimate,
+  scriptTitle,
+  scriptWorkbenchMode,
+  scrollToAnchor,
+  scrollToStoryboard,
+  scrollToTop,
+  SceneWorkbench,
+  sd2ActionLabel,
+  sd2CertifyingId,
+  sd2VoiceActionLabel,
+  sd2VoiceUploadingId,
+  selectableScriptDramas,
+  selectedAiConfigIds,
+  selectedEpisodeId,
+  selectedWorkflowPreset,
+  selectedWorkflowPresetIds,
+  selectedWorkflowPresetName,
+  selectPreviewEpisodeId,
+  selectScriptDramas,
+  selectScriptImporting,
+  selectScriptLoading,
+  setPipelineStep,
+  setSbCharacterId,
+  setSbCreationModeId,
+  setSbPropId,
+  Setting,
+  shotCountEstimateFromDurationSec,
+  showAddProp,
+  showAiConfigDialog,
+  showCharLibrary,
+  showCharSd2Cert,
+  showEditCharacter,
+  showEditCharLibrary,
+  showEditProp,
+  showEditPropLibrary,
+  showEditScene,
+  showEditSceneLibrary,
+  showFramePromptEditor,
+  showNovelImport,
+  showPreviewImage,
+  showPropLibrary,
+  showSbFramePromptPreview,
+  showSbPromptDialog,
+  showSceneLibrary,
+  showSelectScriptDialog,
+  showUsageCenterDialog,
+  showVideoParamsDialog,
+  showWorkflowConfigDialog,
+  skipPipelineCountdown,
+  sortStoryboardReferenceImages,
+  splitByAudioLoading,
+  startBatchImageGeneration,
+  startBatchVideoGeneration,
+  startOneClickPipeline,
+  startRepairPipeline,
+  startTextFrameworkPipeline,
+  staticThumbUrlFromRel,
+  stopBatchImageGeneration,
+  stopBatchVideoGeneration,
+  stopCharacterPromptPoll,
+  stopEpisodeTask,
+  stopPropPromptPoll,
+  stopResourceGeneration,
+  stopSbFramePair,
+  stopScenePromptPoll,
+  store,
+  storyboardAuxRoleOptions,
+  storyboardCount,
+  storyboardFrameCount,
+  storyboardFrameCountOptions,
+  storyboardGenerating,
+  storyboardImageAiPayload,
+  storyboardImageTimeValue,
+  storyboardIncludeNarration,
+  storyboardMediaKey,
+  storyboardMediaPromise,
+  storyboardMenuExpanded,
+  storyboardRefName,
+  storyboards,
+  storyboardsAPI,
+  StoryboardWorkbench,
+  storyboardUniversalOmni,
+  storyboardUseFirstLastFrame,
+  storyEpisodeCount,
+  storyGenerating,
+  storyInput,
+  storyStyle,
+  storyType,
+  stripItemTitle,
+  stylePromptMetadataForSave,
+  submitAddProp,
+  submitEditCharacter,
+  submitEditCharLibrary,
+  submitEditProp,
+  submitEditPropLibrary,
+  submitEditScene,
+  submitEditSceneLibrary,
+  submitSbFrameImageTask,
+  Sunny,
+  switchWorkbenchTabForAnchor,
+  syncGeneratingSetsFromStore,
+  syncStoryboardStateFromEpisode,
+  taskAPI,
+  taskClockNow,
+  taskClockTimer,
+  textAiPayload,
+  thumbImageUrl,
+  toAbsoluteImageUrl,
+  toggleAiRoutesExpanded,
+  toggleNav,
+  toggleTheme,
+  trackFilmCreateAction,
+  ttsAiPayload,
+  ttsSbIds,
+  ttsSbNarrationIds,
+  universalOmniPolishProgress,
+  universalOmniPolishRunning,
+  universalSegmentAtImageToGrokTags,
+  universalSegmentDurationSecForSb,
+  UniversalSegmentOmniAtEditor,
+  updateStoryboardDialogue,
+  updateStoryboardImageMeta,
+  Upload,
+  uploadAPI,
+  uploadingResourceId,
+  uploadingSbImageId,
+  uploadingSbImageSlot,
+  upscalingSbIds,
+  UsageCenterDialog,
+  useCharacters,
+  useFilmStore,
+  useGenerationTaskStore,
+  useNavigation,
+  usePropsComposable,
+  User,
+  userFilledStoryboardCount,
+  userFilledVideoDuration,
+  useRoute,
+  useRouter,
+  useScenes,
+  useTheme,
+  usingPrevTailAsFirstIds,
+  VIDEO_TIER_AREAS,
+  videoAiPayload,
+  videoBurnDialogue,
+  VideoCamera,
+  videoClipDuration,
+  VideoWorkbench,
+  videoDuration,
+  videoErrorMsg,
+  videoFrameContiguity,
+  videoModelNameFromAiConfig,
+  videoMusic,
+  videoParamsSaving,
+  videoParamsTarget,
+  VideoPlay,
+  videoProgress,
+  videoQuality,
+  videoResolution,
+  videosAPI,
+  videoSfx,
+  videoStatus,
+  videoSubtitle,
+  videoTierOptions,
+  videoWatermark,
+  videoWatermarkText,
+  waitForResume,
+  WarningFilled,
+  watch,
+  workbenchAPI,
+  workbenchSummary,
+  workbenchSummaryLoading,
+  workbenchTabLoaded,
+  workflowPresetAPI,
+  WorkflowPresetConfigDialog,
+  workflowPresetLabel,
+  workflowPresetLoading,
+  workflowPresetOptions,
+  workflowPresetPayload,
+  ZoomIn,
+})
+
 onMounted(async () => {
   window.addEventListener('keydown', onImagePreviewKeydown)
   taskClockTimer = setInterval(() => {
@@ -9879,6 +9189,15 @@ onMounted(async () => {
 watch(() => route.params.id, () => {
   applyRouteToStore()
 })
+
+watch(
+  () => filmWorkbenchTab.value,
+  (tab) => {
+    loadWorkbenchTab(tab).catch((err) => {
+      ElMessage.error(err.message || '加载当前工作台失败')
+    })
+  }
+)
 
 // 剧本分集切换时同步 URL query 参数（?episode=<episode_id>），使刷新/分享页面仍保持当前选中集
 // 同时监听 query 变化，支持浏览器前进/后退时自动切换对应集次
@@ -9940,3162 +9259,4 @@ watch(
 )
 </script>
 
-<style scoped>
-.script-workbench-unified {
-  margin-bottom: 0;
-}
-.script-workbench-tabs :deep(.el-tabs__header) {
-  margin-bottom: 16px;
-}
-.script-workbench-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 1px;
-}
-.script-workbench-tabs :deep(.el-tabs__item) {
-  font-size: 15px;
-  font-weight: 600;
-}
-.script-pane-inner {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-.script-sub-block {
-  padding-top: 4px;
-}
-.script-sub-divider {
-  margin: 20px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-html.light .script-sub-divider {
-  border-top-color: rgba(0, 0, 0, 0.08);
-}
-.script-mode-hint {
-  margin-top: 0;
-  margin-bottom: 12px;
-}
-.script-preview-wrap {
-  margin-top: 20px;
-}
-.preview-block-title {
-  margin: 16px 0 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #a1a1aa;
-}
-html.light .preview-block-title {
-  color: #64748b;
-}
-.preview-block-title:first-of-type {
-  margin-top: 0;
-}
-.preview-actions {
-  margin-top: 16px;
-}
-.script-select-empty {
-  margin-top: 16px;
-  color: #71717a;
-  font-size: 14px;
-}
-.select-script-list {
-  min-height: 120px;
-  max-height: 420px;
-  overflow-y: auto;
-}
-.select-script-item {
-  padding: 12px 14px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.select-script-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(99, 102, 241, 0.35);
-}
-.select-script-item.disabled,
-.select-script-item.disabled:hover {
-  cursor: not-allowed;
-  opacity: 0.55;
-  border-color: rgba(255, 255, 255, 0.06);
-  background: transparent;
-}
-html.light .select-script-item {
-  border-color: rgba(99, 102, 241, 0.15);
-}
-html.light .select-script-item:hover {
-  background: rgba(99, 102, 241, 0.06);
-}
-.select-script-title {
-  font-weight: 600;
-  color: #e4e4e7;
-  margin-bottom: 6px;
-}
-html.light .select-script-title {
-  color: #1e1b4b;
-}
-.select-script-desc {
-  font-size: 13px;
-  color: #9ca0b2;
-  line-height: 1.45;
-}
-.select-script-empty {
-  text-align: center;
-  color: #71717a;
-  padding: 24px;
-}
-.preview-ep-tabs {
-  margin-top: 4px;
-}
-
-.film-create {
-  min-height: 100vh;
-  background: #16171e;
-  background-image:
-    radial-gradient(ellipse 80% 50% at 60% -5%, rgba(99, 102, 241, 0.13) 0%, transparent 65%),
-    radial-gradient(ellipse 50% 40% at 90% 50%, rgba(139, 92, 246, 0.07) 0%, transparent 55%),
-    radial-gradient(ellipse 45% 35% at 5% 75%, rgba(79, 70, 229, 0.06) 0%, transparent 55%),
-    linear-gradient(180deg, #16171e 0%, #1a1b24 40%, #1e1f29 100%);
-  color: #e4e4e7;
-}
-html.light .film-create {
-  background: #f6f8fb;
-  background-image: none;
-  color: #1e1b4b;
-}
-.header {
-  background: rgba(20, 21, 28, 0.78);
-  backdrop-filter: blur(20px) saturate(1.2);
-  -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 10px 28px;
-  position: sticky;
-  top: 0;
-  z-index: 200;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15), 0 4px 20px rgba(0, 0, 0, 0.2);
-  margin-left: 180px;
-  transition: margin-left 0.25s cubic-bezier(.4,0,.2,1);
-}
-.sidebar-collapsed .header {
-  margin-left: 48px;
-}
-html.light .header {
-  background: rgba(255, 255, 255, 0.94) !important;
-  border-bottom-color: rgba(226, 232, 240, 0.95) !important;
-  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.16), 0 4px 14px rgba(15, 23, 42, 0.05) !important;
-}
-.admin-project-notice {
-  margin: 14px 32px 0 212px;
-  padding: 10px 14px;
-  border: 1px solid rgba(245, 158, 11, 0.28);
-  border-radius: 8px;
-  background: rgba(120, 53, 15, 0.2);
-  color: #fde68a;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-  transition: margin-left 0.25s cubic-bezier(.4,0,.2,1);
-}
-.admin-project-notice > div {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.admin-project-notice strong {
-  color: #fbbf24;
-  white-space: nowrap;
-}
-.admin-project-notice span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sidebar-collapsed .admin-project-notice {
-  margin-left: 80px;
-}
-html.light .admin-project-notice {
-  background: #fffbeb;
-  border-color: #f59e0b;
-  color: #92400e;
-}
-html.light .admin-project-notice strong {
-  color: #b45309;
-}
-.header-inner {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.logo {
-  margin: 0;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  line-height: 1;
-  transition: filter 0.3s;
-}
-.logo:hover { filter: drop-shadow(0 0 10px rgba(139, 92, 246, 0.5)); }
-.logo-main {
-  font-size: 1.05rem;
-  font-weight: 700;
-  background: linear-gradient(135deg, #d0d5e8 0%, #a8b0cc 50%, #8890b0 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  letter-spacing: -0.01em;
-  filter: drop-shadow(0 0 8px rgba(160, 170, 200, 0.15));
-}
-.logo-sub {
-  font-size: 0.65rem;
-  font-weight: 400;
-  letter-spacing: 0.04em;
-  color: #52525e;
-  -webkit-text-fill-color: #52525e;
-  text-transform: uppercase;
-}
-html.light .logo-main {
-  background: linear-gradient(135deg, #6d28d9, #4f46e5);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-html.light .logo-sub {
-  color: #9ca3af;
-  -webkit-text-fill-color: #9ca3af;
-}
-.breadcrumb-sep {
-  color: #3a3a44;
-  font-size: 0.9rem;
-  font-weight: 300;
-  flex-shrink: 0;
-  user-select: none;
-}
-html.light .breadcrumb-sep { color: #d1d5db; }
-.page-title {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: #7a7a88;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 6px;
-  padding: 4px 12px;
-  max-width: 220px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-html.light .page-title {
-  color: #6b7280;
-  background: rgba(99, 102, 241, 0.04);
-  border-color: rgba(99, 102, 241, 0.1);
-}
-.header-episode-select {
-  flex-shrink: 0;
-}
-.btn-back-drama {
-  flex-shrink: 0;
-}
-.header-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.btn-theme {
-  --el-button-bg-color: rgba(255, 255, 255, 0.04);
-  --el-button-border-color: rgba(255, 255, 255, 0.08);
-  --el-button-text-color: #8b8b96;
-  --el-button-hover-bg-color: rgba(255, 255, 255, 0.08);
-  --el-button-hover-border-color: rgba(255, 255, 255, 0.18);
-  --el-button-hover-text-color: #c8c8d0;
-  transition: all 0.2s ease;
-}
-html.light .btn-theme {
-  --el-button-bg-color: rgba(99, 102, 241, 0.04);
-  --el-button-border-color: rgba(99, 102, 241, 0.12);
-  --el-button-text-color: #6b7280;
-  --el-button-hover-bg-color: rgba(99, 102, 241, 0.08);
-  --el-button-hover-border-color: rgba(99, 102, 241, 0.3);
-  --el-button-hover-text-color: #4f46e5;
-}
-/* ===== 左侧固定侧边栏 ===== */
-.quick-nav {
-  position: fixed;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 210;
-  display: flex;
-  flex-direction: column;
-  padding: 14px 0 10px;
-  background: linear-gradient(180deg, #131318 0%, #111116 50%, #0f0f14 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 1px 0 0 rgba(255,255,255,0.02), 4px 0 24px rgba(0, 0, 0, 0.4);
-  width: 180px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  transition: width 0.25s cubic-bezier(.4,0,.2,1), padding 0.25s cubic-bezier(.4,0,.2,1);
-}
-html.light .quick-nav {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 247, 255, 0.99) 100%);
-  border-right-color: rgba(139, 92, 246, 0.1);
-  box-shadow: 1px 0 0 rgba(139,92,246,0.06), 4px 0 20px rgba(139, 92, 246, 0.04);
-}
-.quick-nav::-webkit-scrollbar { width: 4px; }
-.quick-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
-.quick-nav::-webkit-scrollbar-track { background: transparent; }
-.quick-nav.collapsed {
-  width: 48px;
-  padding: 12px 0;
-}
-.quick-nav.collapsed .nav-steps,
-.quick-nav.collapsed .nav-group,
-.quick-nav.collapsed .nav-ai-routes {
-  display: none;
-}
-@media (max-width: 768px) {
-  .quick-nav { width: 48px; padding: 12px 0; }
-  .quick-nav .nav-steps, .quick-nav .nav-group, .quick-nav .nav-ai-routes { display: none; }
-  .quick-nav .nav-sidebar-title { display: none; }
-  .quick-nav .nav-sidebar-header { justify-content: center; padding: 0 4px 8px; }
-  .header, .main { margin-left: 48px !important; }
-  .admin-project-notice {
-    margin: 10px 12px 0 60px !important;
-    align-items: flex-start;
-    flex-direction: column;
-  }
-  .admin-project-notice > div {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .main { padding: 16px 12px 48px; }
-  .asset-list-two { grid-template-columns: 1fr; }
-}
-/* 当前任务面板 */
-.atp-panel {
-  margin-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  padding: 6px 0 4px;
-}
-.atp-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px 4px;
-}
-.atp-title {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: #a78bfa;
-  letter-spacing: 0.03em;
-  flex: 1;
-}
-.atp-count-badge {
-  font-size: 0.68rem;
-  background: rgba(139, 92, 246, 0.25);
-  color: #c4b5fd;
-  border-radius: 8px;
-  padding: 1px 5px;
-  min-width: 16px;
-  text-align: center;
-}
-.atp-spin-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #a78bfa;
-  flex-shrink: 0;
-  animation: atp-pulse 1.2s ease-in-out infinite;
-}
-@keyframes atp-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.75); }
-}
-.atp-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.atp-list :deep(.el-tooltip__trigger) {
-  display: block;
-  width: 100%;
-  min-width: 0;
-}
-.atp-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  border-radius: 6px;
-  transition: background 0.15s;
-  min-width: 0;
-  cursor: default;
-}
-.atp-item:hover { background: rgba(255,255,255,0.05); }
-.atp-item-dot {
-  display: inline-block;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #7c3aed;
-  flex-shrink: 0;
-  animation: atp-pulse 1.6s ease-in-out infinite;
-}
-.atp-item-label {
-  font-size: 0.72rem;
-  color: #a1a1aa;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
-}
-.atp-more {
-  font-size: 0.68rem;
-  color: #71717a;
-  padding: 2px 10px 2px 19px;
-}
-/* 折叠态任务徽章 */
-.atp-collapsed-badge {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 4px 0;
-  cursor: default;
-}
-.atp-collapsed-count {
-  font-size: 0.65rem;
-  color: #a78bfa;
-  font-weight: 700;
-  line-height: 1;
-}
-html.light .atp-title { color: #7c3aed; }
-html.light .atp-count-badge { background: rgba(139,92,246,0.12); color: #7c3aed; }
-html.light .atp-spin-dot { background: #7c3aed; }
-html.light .atp-item-dot { background: #8b5cf6; }
-html.light .atp-item-label { color: #374151; }
-html.light .atp-item:hover { background: rgba(0,0,0,0.04); }
-html.light .atp-panel { border-top-color: rgba(139,92,246,0.15); }
-.nav-sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 10px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  margin-bottom: 8px;
-  flex-shrink: 0;
-}
-html.light .nav-sidebar-header { border-bottom-color: rgba(139, 92, 246, 0.12); }
-.quick-nav.collapsed .nav-sidebar-header {
-  justify-content: center;
-  padding: 0 4px 8px;
-}
-.nav-sidebar-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #7a7a88;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-}
-html.light .nav-sidebar-title { color: #7c3aed; }
-.nav-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  color: #5a5a66;
-  transition: color 0.15s, background 0.15s;
-  border-radius: 6px;
-  flex-shrink: 0;
-  font-size: 16px;
-}
-.nav-toggle:hover { color: #c8c8d0; background: rgba(255,255,255,0.06); }
-html.light .nav-toggle { color: #9ca3af; }
-html.light .nav-toggle:hover { color: #374151; background: rgba(0,0,0,0.05); }
-
-/* ─── Steps ─── */
-.nav-steps {
-  display: flex;
-  flex-direction: column;
-  padding: 0 10px 0 10px;
-}
-.nav-step {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 3px 6px 3px 0;
-  transition: background 0.2s ease;
-  user-select: none;
-}
-.nav-step:hover { background: rgba(255,255,255,0.04); }
-html.light .nav-step:hover { background: rgba(99,102,241,0.05); }
-
-.nav-ai-routes {
-  margin: 8px 8px 6px;
-  padding: 6px 8px;
-  border-top: 1px solid rgba(255,255,255,0.06);
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  background: rgba(255,255,255,0.025);
-  border-radius: 8px;
-}
-.nav-ai-routes.collapsed {
-  padding-bottom: 6px;
-}
-html.light .nav-ai-routes {
-  border-top-color: rgba(139, 92, 246, 0.12);
-  border-bottom-color: rgba(139, 92, 246, 0.08);
-  background: rgba(139, 92, 246, 0.035);
-}
-.nav-ai-routes-head {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-}
-.nav-ai-routes-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #a78bfa;
-}
-html.light .nav-ai-routes-title { color: #6d28d9; }
-.nav-ai-routes-summary {
-  flex-shrink: 0;
-  font-size: 12px;
-  color: #a1a1aa;
-}
-html.light .nav-ai-routes-summary { color: #8b5cf6; }
-.nav-ai-routes-body {
-  min-height: 28px;
-  padding-top: 2px;
-}
-.nav-ai-route-row {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-.nav-ai-route-label {
-  font-size: 12px;
-  color: #a1a1aa;
-  white-space: nowrap;
-}
-html.light .nav-ai-route-label { color: #6b7280; }
-.nav-ai-route-select {
-  width: 100%;
-}
-.nav-ai-route-select :deep(.el-select__wrapper) {
-  min-height: 28px;
-  padding: 3px 7px;
-  border-radius: 7px;
-}
-.nav-ai-route-select :deep(.el-select__placeholder) {
-  font-size: 12px;
-}
-
-/* connector column */
-.step-connector-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 20px;
-  flex-shrink: 0;
-}
-.step-line {
-  width: 2px;
-  flex: 1;
-  min-height: 6px;
-  background: rgba(255,255,255,0.1);
-  border-radius: 1px;
-  transition: background 0.3s;
-}
-html.light .step-line { background: rgba(0,0,0,0.1); }
-.step-line.filled { background: rgba(34, 197, 94, 0.5); }
-
-/* dot */
-.step-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 700;
-  transition: all 0.25s;
-  border: 2px solid transparent;
-}
-.dot-pending {
-  background: rgba(39,39,42,0.6);
-  border-color: rgba(63,63,70,0.4);
-  color: #52525b;
-}
-html.light .dot-pending {
-  background: rgba(229,231,235,0.6);
-  border-color: rgba(156,163,175,0.3);
-  color: #9ca3af;
-}
-.dot-partial {
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.45);
-  color: #f59e0b;
-}
-.dot-generating {
-  background: rgba(139, 92, 246, 0.15);
-  border-color: rgba(139, 92, 246, 0.5);
-  color: #a78bfa;
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.2);
-}
-.dot-done {
-  background: rgba(34, 197, 94, 0.12);
-  border-color: rgba(34, 197, 94, 0.5);
-  color: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.15);
-}
-.dot-icon { font-size: 13px; }
-.dot-num { font-size: 11px; line-height: 1; }
-
-/* step body */
-.step-body {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  padding: 3px 0;
-  min-width: 0;
-}
-.step-label {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 500;
-  color: #71717a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 0.2s ease;
-}
-html.light .step-label { color: #6b7280; }
-.nav-step:hover .step-label { color: #d4d4d8; }
-html.light .nav-step:hover .step-label { color: #1e1b4b; }
-.status-done .step-label { color: #6ee7b7; }
-html.light .status-done .step-label { color: #059669; }
-.status-generating .step-label { color: #c4b5fd; }
-html.light .status-generating .step-label { color: #7c3aed; }
-.status-partial .step-label { color: #fbbf24; }
-html.light .status-partial .step-label { color: #d97706; }
-
-.step-count {
-  font-size: 10px;
-  color: #52525b;
-  background: rgba(255,255,255,0.04);
-  border-radius: 10px;
-  padding: 1px 5px;
-  flex-shrink: 0;
-  font-weight: 500;
-}
-html.light .step-count { background: rgba(0,0,0,0.04); color: #9ca3af; }
-
-.step-badge {
-  display: flex;
-  align-items: center;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.partial-badge { color: #f59e0b; }
-.gen-badge { color: #a78bfa; }
-
-/* spin animation */
-@keyframes navSpin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-.spin { animation: navSpin 1s linear infinite; display: inline-flex; }
-
-/* sub-toggle & sub-list */
-.nav-group { margin-top: 4px; }
-.nav-sub-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  font-size: 12px;
-  color: #5a5a66;
-  cursor: pointer;
-  transition: color 0.15s;
-  border-top: 1px solid rgba(255,255,255,0.04);
-}
-html.light .nav-sub-toggle { border-top-color: rgba(0,0,0,0.07); color: #9ca3af; }
-.nav-sub-toggle:hover { color: #e4e4e7; }
-html.light .nav-sub-toggle:hover { color: #374151; }
-.nav-sub-list {
-  background: rgba(0,0,0,0.15);
-  padding: 4px 0;
-  border-radius: 0 0 6px 6px;
-}
-html.light .nav-sub-list { background: rgba(99,102,241,0.03); }
-.nav-sub-item {
-  padding: 4px 10px 4px 26px;
-  font-size: 11.5px;
-  color: #52525b;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 0.15s, background 0.15s;
-  border-radius: 4px;
-  margin: 0 4px;
-}
-html.light .nav-sub-item { color: #9ca3af; }
-.nav-sub-item:hover { color: #d4d4d8; background: rgba(255,255,255,0.04); }
-html.light .nav-sub-item:hover { color: #1e1b4b; background: rgba(99,102,241,0.06); }
-
-.main {
-  margin-left: 180px;
-  margin-right: 0;
-  padding: 24px 32px 48px;
-  transition: margin-left 0.25s cubic-bezier(.4,0,.2,1);
-}
-.sidebar-collapsed .main {
-  margin-left: 48px;
-}
-.section {
-  margin-bottom: 24px;
-}
-.card {
-  background: #1e1f28;
-  border-radius: 14px;
-  padding: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
-}
-.card:hover {
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.25);
-}
-html.light .card {
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(16px) saturate(1.3);
-  -webkit-backdrop-filter: blur(16px) saturate(1.3);
-  border-color: rgba(139, 92, 246, 0.08);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 4px 20px rgba(99, 102, 241, 0.05);
-}
-html.light .card:hover {
-  border-color: rgba(139, 92, 246, 0.18);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 8px 36px rgba(99, 102, 241, 0.08);
-}
-.section-title {
-  font-size: 1.05rem;
-  margin: 0 0 4px;
-  color: #f4f4f5;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-html.light .section-title { color: #1e1b4b; }
-.pipeline-section {
-  padding: 12px 16px !important;
-}
-.project-settings-block {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding-bottom: 12px;
-  margin-bottom: 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
-}
-.settings-block-title {
-  font-size: 14px;
-  color: var(--el-text-color-primary);
-  white-space: nowrap;
-  font-weight: 600;
-}
-.project-setting-field {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.project-setting-inline-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: nowrap;
-}
-.project-setting-field > span {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  white-space: nowrap;
-}
-.project-setting-field--style {
-  min-width: 220px;
-}
-.media-spec-button {
-  min-width: 150px;
-  justify-content: flex-start;
-  font-variant-numeric: tabular-nums;
-}
-.media-spec-current {
-  margin: -4px 0 12px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-.media-spec-mode {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  width: 100%;
-  margin-bottom: 18px;
-}
-.media-spec-mode :deep(.el-radio-button__inner) {
-  width: 100%;
-}
-.media-spec-section-title {
-  margin: 14px 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-text-color-secondary);
-}
-.media-spec-tier-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-.media-spec-choice,
-.media-spec-ratio-choice {
-  border: 1px solid var(--el-border-color-light);
-  background: var(--el-fill-color-blank);
-  color: var(--el-text-color-regular);
-  border-radius: 8px;
-  min-height: 44px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-}
-.media-spec-choice.active,
-.media-spec-ratio-choice.active {
-  border-color: var(--el-color-primary);
-  background: #ecf5ff;
-  color: var(--el-color-primary);
-}
-.media-spec-ratio-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-.media-spec-ratio-choice {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 72px;
-  font-size: 13px;
-}
-.media-spec-ratio-icon {
-  display: block;
-  width: 26px;
-  max-height: 28px;
-  border: 2px solid currentColor;
-  border-radius: 4px;
-  opacity: 0.72;
-}
-.media-spec-custom-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-.media-spec-custom-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-.media-spec-custom-grid :deep(.el-input-number) {
-  width: 100%;
-}
-.media-spec-result {
-  margin-top: 18px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: var(--el-fill-color-light);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--el-text-color-secondary);
-}
-.media-spec-result strong {
-  color: var(--el-text-color-primary);
-  font-size: 18px;
-  font-variant-numeric: tabular-nums;
-}
-.one-click-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.one-click-label {
-  font-size: 14px;
-  color: var(--el-text-color-primary);
-  white-space: nowrap;
-  font-weight: 600;
-}
-.pipeline-model-strategy {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-  min-height: 28px;
-}
-.pipeline-model-strategy-title {
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-  white-space: nowrap;
-}
-.pipeline-model-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 280px;
-  min-height: 26px;
-  padding: 3px 9px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 7px;
-  background: var(--el-fill-color-lighter);
-  color: var(--el-text-color-regular);
-  font-size: 12px;
-  line-height: 1.3;
-}
-.pipeline-model-chip.specified {
-  border-color: rgba(124, 58, 237, 0.35);
-  background: rgba(124, 58, 237, 0.08);
-}
-.pipeline-model-chip.empty {
-  border-color: rgba(239, 68, 68, 0.28);
-  background: rgba(239, 68, 68, 0.08);
-}
-.pipeline-model-chip-label {
-  color: var(--el-text-color-secondary);
-  white-space: nowrap;
-}
-.pipeline-model-chip strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-.pipeline-status {
-  margin-top: 12px;
-  padding: 12px;
-  background: var(--el-fill-color-light);
-  border-radius: 8px;
-  font-size: 13px;
-}
-.pipeline-current-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  color: var(--el-text-color-primary);
-  font-weight: 500;
-  font-size: 13px;
-}
-.pipeline-step-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 44px;
-  padding: 1px 7px;
-  border-radius: 10px;
-  background: var(--el-color-primary);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.pipeline-active-tasks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.pipeline-task-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 10px 2px 6px;
-  border-radius: 12px;
-  background: rgba(64, 158, 255, 0.12);
-  border: 1px solid rgba(64, 158, 255, 0.3);
-  color: var(--el-color-primary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.pipeline-task-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--el-color-primary);
-  flex-shrink: 0;
-  animation: pipeline-dot-pulse 1.2s ease-in-out infinite;
-}
-@keyframes pipeline-dot-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.75); }
-}
-.pipeline-error-log {
-  margin-top: 0;
-  padding: 12px;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 8px;
-  font-size: 13px;
-  color: #fca5a5;
-  max-height: 200px;
-  overflow-y: auto;
-}
-.pipeline-status .pipeline-error-log {
-  margin-top: 8px;
-}
-.pipeline-error-title {
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.pipeline-error-line {
-  margin-bottom: 4px;
-  word-break: break-all;
-}
-/* 阶段间倒计时 */
-.pipeline-countdown {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  margin: 10px 0 8px;
-  padding: 12px 14px;
-  background: rgba(103, 194, 58, 0.08);
-  border: 1px solid rgba(103, 194, 58, 0.35);
-  border-radius: 10px;
-}
-.pipeline-countdown-ring {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  background: rgba(103, 194, 58, 0.15);
-  border: 2px solid rgba(103, 194, 58, 0.6);
-  flex-shrink: 0;
-}
-.pipeline-countdown-num {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--el-color-success);
-  line-height: 1;
-}
-.pipeline-countdown-unit {
-  font-size: 11px;
-  color: var(--el-color-success);
-  opacity: 0.8;
-}
-.pipeline-countdown-body {
-  flex: 1;
-  min-width: 0;
-}
-.pipeline-countdown-msg {
-  margin: 0 0 8px;
-  font-size: 13px;
-  color: var(--el-text-color-primary);
-  line-height: 1.5;
-}
-.pipeline-countdown-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.pipeline-countdown-paused {
-  font-size: 12px;
-  color: var(--el-color-warning);
-}
-/* 批量生成分镜图/视频 */
-.sb-batch-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.sb-batch-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.batch-status {
-  margin-top: 12px;
-  padding: 12px 16px;
-  background: var(--el-fill-color-light);
-  border-radius: 8px;
-  font-size: 13px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.batch-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--el-text-color-primary);
-  font-weight: 500;
-}
-.batch-failed {
-  color: var(--el-color-danger);
-  font-size: 12px;
-}
-.batch-stopping {
-  color: var(--el-color-warning);
-  font-size: 12px;
-}
-.batch-error-log {
-  padding: 10px 12px;
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 6px;
-  font-size: 13px;
-  color: #fca5a5;
-  max-height: 160px;
-  overflow-y: auto;
-}
-.batch-error-title {
-  font-weight: 600;
-  margin-bottom: 6px;
-  color: #f87171;
-}
-.batch-error-line {
-  margin-bottom: 3px;
-  word-break: break-all;
-}
-/* 角色/场景/道具 → 影响的分镜 */
-.asset-storyboard-link {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 8px;
-  padding: 6px 8px;
-  background: rgba(99, 102, 241, 0.07);
-  border: 1px solid rgba(99, 102, 241, 0.18);
-  border-radius: 6px;
-  min-height: 28px;
-}
-.asl-label {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.asl-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 500;
-  background: rgba(99, 102, 241, 0.15);
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  color: #a5b4fc;
-  cursor: pointer;
-  transition: background 0.15s, box-shadow 0.15s;
-  white-space: nowrap;
-}
-.asl-chip:hover {
-  background: rgba(99, 102, 241, 0.28);
-  box-shadow: 0 0 6px rgba(99, 102, 241, 0.4);
-  color: #c7d2fe;
-}
-.asl-regen-btn {
-  margin-left: auto !important;
-  flex-shrink: 0;
-  height: 22px !important;
-  padding: 0 10px !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
-  background: rgba(251, 146, 60, 0.15) !important;
-  border: 1px solid rgba(251, 146, 60, 0.5) !important;
-  color: #fb923c !important;
-  border-radius: 11px !important;
-  transition: background 0.15s, box-shadow 0.15s !important;
-}
-.asl-regen-btn:not(.is-loading):hover {
-  background: rgba(251, 146, 60, 0.28) !important;
-  box-shadow: 0 0 6px rgba(251, 146, 60, 0.35) !important;
-  color: #fdba74 !important;
-}
-.asl-progress {
-  font-size: 11px;
-  color: #fb923c;
-  margin-left: 4px;
-  flex-shrink: 0;
-}
-/* 参考图上传区（添加角色/道具/场景弹窗顶部） */
-.ref-image-zone {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.ref-image-box {
-  width: 120px;
-  height: 120px;
-  border: 2px dashed #c0c4cc;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  overflow: hidden;
-  background: #fafafa;
-  flex-shrink: 0;
-  transition: border-color 0.2s;
-}
-.ref-image-box:hover {
-  border-color: #409eff;
-}
-.ref-preview-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.ref-upload-hint {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  color: #909399;
-  font-size: 12px;
-  text-align: center;
-  padding: 8px;
-}
-.ref-upload-icon {
-  font-size: 28px;
-  line-height: 1;
-}
-.ref-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 资源管理大面板 + 可折叠标题 */
-.resource-panel {
-  padding: 0;
-  overflow: hidden;
-}
-.collapse-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.2s;
-}
-.collapse-header:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-.resource-panel .collapse-header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-.resource-panel .collapse-header .section-title {
-  margin: 0;
-}
-.collapse-icon {
-  font-size: 1.1rem;
-  color: #a1a1aa;
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-.resource-panel-body {
-  padding: 16px 20px 20px;
-}
-.resource-block {
-  margin-bottom: 20px;
-  padding: 0;
-  overflow: hidden;
-}
-.resource-block:last-child {
-  margin-bottom: 0;
-}
-.resource-block-header {
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-.resource-block-header .collapse-icon {
-  font-size: 1rem;
-}
-.resource-block-title {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0;
-  color: #e4e4e7;
-}
-html.light .resource-block-title {
-  color: #18181b;
-}
-.resource-block-body {
-  padding: 12px 14px 14px;
-}
-.resource-block-body .asset-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-.resource-block-body .asset-actions :deep(.el-button + .el-button) {
-  margin-left: 0;
-}
-.workflow-preset-label {
-  font-size: 13px;
-  color: #a1a1aa;
-  white-space: nowrap;
-}
-.workflow-preset-select {
-  width: 280px;
-  max-width: min(320px, 100%);
-}
-html.light .workflow-preset-label {
-  color: #64748b;
-}
-.resource-block-body .asset-list-two {
-  gap: 16px;
-}
-.section-desc {
-  color: #52525b;
-  font-size: 0.82rem;
-  margin: 0 0 14px;
-  line-height: 1.5;
-}
-html.light .section-desc { color: #6b7280; }
-.story-textarea {
-  margin-bottom: 12px;
-}
-.story-episode-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 40px;
-  color: #52525b;
-  font-size: 14px;
-}
-html.light .story-episode-count {
-  color: #4b5563;
-}
-.story-episode-count :deep(.el-input-number) {
-  width: 116px;
-}
-.story-episode-count :deep(.el-input__inner) {
-  text-align: center;
-}
-.row { display: flex; flex-wrap: wrap; align-items: center; }
-.gap { gap: 12px; }
-.asset-actions { margin-bottom: 12px; }
-.asset-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 16px;
-}
-.asset-list-two {
-  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
-  gap: 20px;
-}
-.asset-item {
-  background: #22232d;
-  border-radius: 8px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.asset-item-left-right {
-  flex-direction: row;
-  align-items: stretch;
-}
-.asset-item-left-right .asset-info {
-  flex: 1;
-  min-width: 0;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-}
-.asset-item-left-right .asset-name {
-  font-size: 1.05rem;
-  margin-bottom: 8px;
-}
-.asset-item-left-right .asset-desc-full {
-  flex: 1;
-  font-size: 0.875rem;
-  color: #a1a1aa;
-  line-height: 1.5;
-  margin-bottom: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.asset-item-left-right .asset-cover-wrap {
-  flex-shrink: 0;
-  align-self: flex-start;
-}
-.asset-item-left-right .asset-cover {
-  width: 200px;
-  height: 200px;
-}
-.asset-item-left-right .asset-cover.asset-cover--clickable {
-  cursor: pointer;
-}
-.asset-cover {
-  width: 100%;
-  aspect-ratio: 1;
-  background: #2a2b36;
-  position: relative;
-  overflow: hidden;
-}
-.asset-item-left-right .asset-cover .cover-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.cover-img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-}
-.asset-primary-badge {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: rgba(16, 185, 129, 0.88);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.35;
-  pointer-events: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.22);
-}
-.cover-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #5a5a66;
-  font-size: 0.85rem;
-}
-.cover-placeholder.error {
-  background: #450a0a;
-  color: #f87171;
-  font-size: 0.8rem;
-  padding: 8px;
-  line-height: 1.4;
-  word-break: break-all;
-  text-align: center;
-}
-.ai-generating-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: rgba(24, 24, 27, 0.72);
-  color: #cbd5e1;
-  pointer-events: none;
-}
-.ai-generating-timer {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: rgba(39, 39, 42, 0.72);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.4;
-}
-.ai-generating-spinner {
-  font-size: 34px;
-  color: #93c5fd;
-}
-.ai-generating-text {
-  font-size: 14px;
-  font-weight: 600;
-}
-html.light .ai-generating-overlay {
-  background: rgba(248, 250, 252, 0.82);
-  color: #94a3b8;
-}
-html.light .ai-generating-timer {
-  background: rgba(31, 41, 55, 0.58);
-}
-.sb-image-error {
-  width: 100%;
-  flex: 1;
-  background: #450a0a;
-  color: #f87171;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px;
-  text-align: center;
-  font-size: 0.85rem;
-  overflow: hidden;
-  margin-bottom: 8px;
-}
-.asset-cover--dragover {
-  outline: 2px dashed var(--el-color-primary);
-  outline-offset: -2px;
-  background: rgba(64, 158, 255, 0.08);
-}
-.asset-cover-drop-hint {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 0.9rem;
-  pointer-events: none;
-}
-.image-preview-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  background: rgba(10, 10, 15, 0.88);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-.image-preview-img {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-  cursor: default;
-  pointer-events: auto;
-}
-.image-preview-close,
-.image-preview-nav {
-  position: fixed;
-  z-index: 10000;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255,255,255,0.18);
-  background: rgba(24,24,27,0.68);
-  color: #fff;
-  cursor: pointer;
-  pointer-events: auto;
-  transition: background 0.15s, border-color 0.15s;
-}
-.image-preview-close:hover,
-.image-preview-nav:hover {
-  background: rgba(39,39,42,0.9);
-  border-color: rgba(255,255,255,0.34);
-}
-.image-preview-close {
-  top: 20px;
-  right: 24px;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  font-size: 24px;
-  line-height: 1;
-}
-.image-preview-nav {
-  top: 50%;
-  width: 44px;
-  height: 64px;
-  border-radius: 8px;
-  transform: translateY(-50%);
-  font-size: 22px;
-}
-.image-preview-nav--prev { left: 24px; }
-.image-preview-nav--next { right: 24px; }
-.image-preview-count {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(24,24,27,0.7);
-  color: #fff;
-  font-size: 13px;
-  pointer-events: auto;
-}
-.asset-info { padding: 10px; }
-.asset-name { font-weight: 600; margin-bottom: 4px; color: #e4e4e7; }
-.asset-desc {
-  font-size: 0.8rem;
-  color: #a1a1aa;
-  margin-bottom: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.asset-desc-full {
-  font-size: 0.875rem;
-  color: #a1a1aa;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.asset-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
-.asset-item-left-right .asset-name {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
-.asset-item-left-right .asset-name span { flex: 1; min-width: 0; }
-.btn-delete-icon { flex-shrink: 0; padding: 2px 4px !important; opacity: 0.45; transition: opacity 0.15s; }
-.btn-delete-icon:hover { opacity: 1; }
-/* 图片 + 操作按钮 竖向包裹 */
-.asset-cover-wrap {
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  width: 200px;
-}
-.asset-cover-actions {
-  display: flex;
-  gap: 6px;
-  padding: 6px 8px;
-  border-top: 1px solid rgba(255,255,255,0.06);
-}
-.asset-cover-actions .el-button { flex: 1; justify-content: center; }
-html.light .asset-cover-actions { border-top-color: rgba(139,92,246,0.1); }
-/* 额外参考图缩略图条 */
-.extra-images-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 5px 8px;
-  background: rgba(0,0,0,0.15);
-}
-.extra-thumb {
-  position: relative;
-  width: 52px;
-  height: 52px;
-  border-radius: 4px;
-  overflow: hidden;
-  cursor: pointer;
-  border: 1.5px solid transparent;
-  transition: border-color 0.15s;
-}
-.extra-thumb:hover { border-color: #a78bfa; }
-.extra-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.extra-thumb-remove {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 16px;
-  height: 16px;
-  background: rgba(239,68,68,0.85);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  font-size: 11px;
-  line-height: 16px;
-  text-align: center;
-  cursor: pointer;
-  padding: 0;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.thumb-preview-btn {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 16px;
-  height: 16px;
-  background: rgba(59,130,246,0.85);
-  color: #fff;
-  border: none;
-  border-radius: 50%;
-  font-size: 9px;
-  line-height: 1;
-  text-align: center;
-  cursor: pointer;
-  padding: 0;
-  opacity: 0;
-  transition: opacity 0.15s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.thumb-preview-btn .el-icon,
-.thumb-preview-btn svg {
-  width: 10px;
-  height: 10px;
-}
-.extra-thumb:hover .extra-thumb-remove,
-.extra-thumb:hover .thumb-preview-btn { opacity: 1; }
-.sb-img-thumb:hover .extra-thumb-remove,
-.sb-img-thumb:hover .thumb-preview-btn,
-.sb-img-thumb:hover .keyframe-mini-btn { opacity: 1; }
-.keyframe-state-badges {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  display: flex;
-  gap: 3px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  max-width: calc(100% - 24px);
-  pointer-events: none;
-}
-.keyframe-state-badge {
-  padding: 1px 4px;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 9px;
-  line-height: 1.3;
-  font-weight: 700;
-  background: rgba(39, 39, 42, 0.76);
-}
-.keyframe-state-badge--selected { background: rgba(16, 185, 129, 0.88); }
-.keyframe-state-badge--locked { background: rgba(245, 158, 11, 0.9); }
-.keyframe-mini-btn {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border: none;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 9px;
-  line-height: 1;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
-}
-.keyframe-mini-btn--select {
-  left: 20px;
-  top: 1px;
-  background: rgba(16, 185, 129, 0.88);
-}
-.keyframe-mini-btn--lock {
-  left: 39px;
-  top: 1px;
-  background: rgba(245, 158, 11, 0.9);
-}
-.keyframe-mini-btn--regen {
-  left: 58px;
-  top: 1px;
-  background: rgba(99, 102, 241, 0.9);
-}
-.keyframe-mini-btn:disabled {
-  cursor: not-allowed;
-  background: rgba(113, 113, 122, 0.7);
-}
-html.light .extra-images-strip { background: rgba(139,92,246,0.05); }
-.empty-tip {
-  color: #5a5a66;
-  font-size: 0.9rem;
-  padding: 16px 0;
-}
-
-/* 亮色模式：资源卡片 */
-html.light .asset-item {
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(139, 92, 246, 0.12);
-  box-shadow: 0 2px 10px rgba(139, 92, 246, 0.06);
-}
-html.light .asset-item:hover {
-  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.12);
-  border-color: rgba(139, 92, 246, 0.3);
-  transform: translateY(-2px);
-  transition: box-shadow 0.25s, transform 0.2s, border-color 0.25s;
-}
-html.light .asset-cover {
-  background: #f3f4f6;
-}
-html.light .asset-name {
-  color: #18181b;
-}
-html.light .asset-desc,
-html.light .asset-desc-full,
-html.light .asset-item-left-right .asset-desc-full {
-  color: #6b7280;
-}
-html.light .cover-placeholder {
-  color: #9ca3af;
-  background: #f3f4f6;
-}
-html.light .cover-placeholder.error {
-  background: #fef2f2;
-  color: #dc2626;
-}
-html.light .empty-tip {
-  color: #9ca3af;
-}
-
-/* 分镜：每行一个，三列布局 */
-@keyframes sb-fade-in {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-/* ── 段落分隔标头 ─────────────────────────────── */
-.segment-header {
-  margin: 24px 0 14px;
-  position: relative;
-}
-.segment-header:first-child { margin-top: 0; }
-.segment-header-inner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 18px;
-  background: linear-gradient(90deg, rgba(139,92,246,0.12) 0%, transparent 80%);
-  border-left: 3px solid rgba(139,92,246,0.6);
-  border-radius: 0 10px 10px 0;
-}
-.segment-index-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: #a78bfa;
-  background: rgba(139,92,246,0.15);
-  padding: 2px 8px;
-  border-radius: 20px;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-}
-.segment-title-text {
-  font-size: 14px;
-  font-weight: 600;
-  color: #d4d4d8;
-  flex: 1;
-  letter-spacing: -0.01em;
-}
-.segment-shot-range {
-  font-size: 11px;
-  color: #52525b;
-  white-space: nowrap;
-}
-html.light .segment-header-inner {
-  background: linear-gradient(90deg, rgba(139,92,246,0.07) 0%, transparent 80%);
-  border-left-color: rgba(124,58,237,0.5);
-}
-html.light .segment-title-text { color: #1e1b4b; }
-html.light .segment-index-badge { color: #7c3aed; background: rgba(124,58,237,0.08); }
-html.light .segment-shot-range { color: #9ca3af; }
-
-/* 左侧导航段落标签 */
-.nav-segment-label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 12px 2px;
-  font-size: 10px;
-  font-weight: 700;
-  color: #a78bfa;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-.nav-segment-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #8b5cf6;
-  flex-shrink: 0;
-}
-
-.storyboard-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0;
-  margin-bottom: 16px;
-  background: #1e1f28;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  overflow: hidden;
-  position: relative;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-  animation: sb-fade-in 0.35s ease both;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-}
-.storyboard-row:hover {
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.25);
-  transform: translateY(-1px);
-}
-html.light .storyboard-row {
-  background: rgba(255, 255, 255, 0.7);
-  border-color: rgba(139, 92, 246, 0.06);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.7) inset, 0 2px 12px rgba(99, 102, 241, 0.04);
-}
-html.light .storyboard-row:hover {
-  border-color: rgba(139, 92, 246, 0.18);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.7) inset, 0 6px 24px rgba(99, 102, 241, 0.08);
-  transform: translateY(-1px);
-}
-.storyboard-row:last-child { margin-bottom: 0; }
-/* ── 分镜控制栏（卡片外，缩进） ── */
-.sb-ctrl-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 32px;
-  margin-bottom: 4px;
-  height: 26px;
-}
-.sb-ctrl-num {
-  background: var(--el-color-primary);
-  color: #fff;
-  border-radius: 5px;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-.sb-ctrl-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #e4e4e7;
-  max-width: 12em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-html.light .sb-ctrl-title {
-  color: #000;
-}
-.sb-movement-tag.el-tag {
-  height: 18px;
-  line-height: 18px;
-  padding: 0 6px;
-  font-size: 11px;
-  margin-left: 6px;
-  flex-shrink: 0;
-}
-.sb-ctrl-btn.el-button {
-  height: 22px;
-  padding: 0 8px;
-  font-size: 11px;
-}
-.sb-ctrl-config-btn.el-button {
-  border-color: rgba(139,92,246,0.45);
-  color: #a78bfa;
-  background: rgba(139,92,246,0.08);
-}
-.sb-ctrl-config-btn.el-button:hover {
-  border-color: #8b5cf6;
-  color: #fff;
-  background: rgba(139,92,246,0.6);
-}
-html.light .sb-ctrl-config-btn.el-button {
-  border-color: rgba(124,58,237,0.35);
-  color: #7c3aed;
-  background: rgba(124,58,237,0.06);
-}
-html.light .sb-ctrl-config-btn.el-button:hover {
-  border-color: #7c3aed;
-  color: #fff;
-  background: #7c3aed;
-}
-.sb-ctrl-delete {
-  margin-left: auto;
-  opacity: 0.4;
-  transition: opacity 0.2s;
-  height: 22px;
-  padding: 0 4px;
-}
-.sb-ctrl-bar:hover .sb-ctrl-delete {
-  opacity: 1;
-}
-.sb-panel {
-  flex: 1;
-  min-width: 0;
-  padding: 14px 16px;
-  border-right: 1px solid rgba(255,255,255,0.05);
-  display: flex;
-  flex-direction: column;
-}
-html.light .sb-panel {
-  border-right-color: rgba(139,92,246,0.08);
-}
-.sb-panel:last-child { border-right: none; }
-.sb-panel-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #e4e4e7;
-  margin-bottom: 10px;
-}
-.sb-panel-title .el-icon { font-size: 1rem; color: #a1a1aa; }
-.sb-panel-title-name {
-  margin-left: 4px;
-  color: #a1a1aa;
-  font-weight: 500;
-  max-width: 12em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sb-script { padding-top: 10px; }
-.sb-script-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.sb-select { flex: 1; min-width: 0; }
-.sb-select-empty { font-size: 0.8rem; color: #71717a; padding: 8px; }
-.sb-selected-thumbs {
-  margin: 10px 0;
-  padding: 8px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-.sb-thumb-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.sb-thumb-row:last-child { margin-bottom: 0; }
-.sb-thumb-label {
-  font-size: 0.8rem;
-  color: #71717a;
-  flex-shrink: 0;
-  width: 36px;
-}
-.sb-thumb-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-.sb-thumb-item {
-  flex-shrink: 0;
-  border-radius: 6px;
-  overflow: hidden;
-  background: #22232d;
-}
-.sb-thumb-item.sb-thumb-clickable {
-  cursor: pointer;
-}
-.sb-thumb-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-}
-.sb-thumb-add-char {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border: 1.5px dashed #52525b;
-  background: transparent;
-  color: #a1a1aa;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-.sb-thumb-add-char:hover {
-  color: #e4e4e7;
-  border-color: #71717a;
-  background: rgba(63, 63, 70, 0.5);
-}
-html.light .sb-thumb-add-char {
-  border-color: #d4d4d8;
-  color: #71717a;
-}
-html.light .sb-thumb-add-char:hover {
-  color: #18181b;
-  border-color: #a1a1aa;
-  background: #f4f4f5;
-}
-.sb-thumb-prop,
-.sb-thumb-scene {
-  width: 36px;
-  height: 36px;
-}
-.sb-script-row.sb-script-selects {
-  gap: 6px;
-}
-.sb-script-row.sb-script-selects .sb-select {
-  min-width: 0;
-}
-.sb-script-row.sb-script-selects .el-select { flex: 1; min-width: 0; }
-.sb-thumb-item img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.sb-thumb-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  color: #7a7a88;
-  background: #2a2b36;
-}
-.sb-script-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.8rem;
-  color: #71717a;
-  margin-bottom: 6px;
-}
-.sb-script-label .el-icon { font-size: 0.9rem; }
-.sb-upload-icon { margin-left: auto; cursor: pointer; color: #a1a1aa; }
-.sb-meta {
-  font-size: 0.75rem;
-  color: #71717a;
-  display: flex;
-  gap: 12px;
-}
-.sb-image-area {
-  flex: 1;
-  min-height: 200px;
-  max-height: 320px;
-  background: linear-gradient(145deg, #1a1b24 0%, #1e1f28 60%, #1c1d26 100%);
-  border: 1px dashed rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  overflow: hidden;
-  position: relative;
-  transition: border-color 0.2s, background 0.2s;
-}
-.sb-image-area:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-}
-html.light .sb-image-area {
-  background: linear-gradient(145deg, #f5f3ff 0%, #ede9fe 100%);
-  border-color: rgba(124,58,237,0.2);
-}
-html.light .sb-image-area:hover {
-  border-color: rgba(124,58,237,0.45);
-}
-.sb-image-area--dragover {
-  outline: 2px dashed var(--el-color-primary);
-  outline-offset: -2px;
-  background: rgba(64, 158, 255, 0.1);
-}
-.sb-image-area-drop-hint {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 0.9rem;
-  border-radius: 8px;
-  pointer-events: none;
-}
-.sb-generated-img {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  border-radius: 8px;
-}
-.sb-image-file-input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
-.sb-gen-btn { margin-top: 4px; }
-.sb-image-area img.sb-generated-img { cursor: pointer; }
-.sb-panel.sb-image.sb-image--universal {
-  min-height: 300px;
-  justify-content: flex-start;
-}
-.sb-universal-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  width: 100%;
-}
-.sb-universal-label-left {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.sb-universal-hint-icon {
-  cursor: help;
-  color: #9ca3af;
-  font-size: 16px;
-  flex-shrink: 0;
-}
-.sb-universal-hint-icon:hover {
-  color: #a78bfa;
-}
-.sb-universal-gen-btn {
-  flex-shrink: 0;
-}
-.sb-universal-prompt-dd {
-  flex-shrink: 0;
-}
-.sb-universal-dd-caret {
-  margin-left: 2px;
-  font-size: 12px;
-  vertical-align: middle;
-}
-:global(.sb-universal-tooltip-popper.el-popper) {
-  padding: 0 !important;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-.sb-universal-tooltip {
-  max-width: 360px;
-  font-size: 12px;
-  line-height: 1.55;
-  padding: 10px 12px;
-  border-radius: 8px;
-  color: #f1f5f9;
-  background: #0f172a;
-  border: 1px solid rgba(248, 250, 252, 0.22);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-}
-.sb-universal-tooltip strong {
-  font-weight: 600;
-  color: #ffffff;
-}
-html.light .sb-universal-tooltip {
-  color: #0f172a;
-  background: #ffffff;
-  border-color: #cbd5e1;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
-}
-html.light .sb-universal-tooltip strong {
-  color: #020617;
-}
-.sb-universal-textarea {
-  flex: 1;
-  min-height: 0;
-}
-.sb-universal-textarea :deep(.el-textarea__inner) {
-  min-height: 220px !important;
-  font-size: 13px;
-  line-height: 1.55;
-}
-.vp-mode-hint {
-  font-size: 12px;
-  color: #909399;
-  line-height: 1.45;
-  margin-top: 8px;
-  max-width: 520px;
-}
-.sb-ctrl-mode-btn.el-button {
-  border-color: rgba(34, 197, 94, 0.35);
-  color: #86efac;
-  background: rgba(34, 197, 94, 0.08);
-}
-.sb-ctrl-mode-btn.el-button:hover {
-  border-color: #22c55e;
-  color: #fff;
-  background: rgba(34, 197, 94, 0.45);
-}
-html.light .sb-ctrl-mode-btn.el-button {
-  border-color: rgba(22, 163, 74, 0.35);
-  color: #15803d;
-  background: rgba(22, 163, 74, 0.06);
-}
-html.light .sb-ctrl-mode-btn.el-button:hover {
-  border-color: #16a34a;
-  color: #fff;
-  background: #16a34a;
-}
-/* 有四宫格或多图时，image-area 改为纵向滚动布局 */
-.sb-image-area--first-last {
-  min-height: 220px;
-  max-height: none;
-  padding: 8px;
-  align-items: stretch;
-  justify-content: flex-start;
-}
-.sb-fl-dual {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-  width: 100%;
-  flex: 1;
-  min-height: 180px;
-}
-.sb-fl-slot {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.sb-fl-slot-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: #a78bfa;
-  text-align: center;
-}
-.sb-fl-slot-body {
-  flex: 1;
-  min-height: 120px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
-  overflow: hidden;
-  position: relative;
-}
-.sb-fl-slot-body .sb-generated-img {
-  max-height: 160px;
-}
-.sb-fl-empty {
-  font-size: 0.75rem;
-  color: #71717a;
-}
-.sb-fl-arrow {
-  flex-shrink: 0;
-  align-self: center;
-  font-size: 1.25rem;
-  color: #a78bfa;
-  opacity: 0.85;
-}
-.sb-fl-slot-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: center;
-  align-items: center;
-}
-.sb-fl-first-lock-opt {
-  margin: 0 2px;
-  height: auto;
-}
-.sb-fl-first-lock-opt :deep(.el-checkbox__label) {
-  font-size: 12px;
-  padding-left: 4px;
-}
-.sb-fl-slot-prompt {
-  font-size: 0.68rem;
-  line-height: 1.35;
-  color: #9ca3af;
-  max-height: 2.7em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  padding: 0 4px;
-  word-break: break-all;
-}
-.sb-image-area--has-quad {
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: flex-start;
-  gap: 10px;
-  min-height: 360px;
-  max-height: none;
-  padding: 10px;
-  overflow: visible;
-}
-.sb-image-area--has-quad .sb-main-image-wrap {
-  flex: 0 0 210px;
-  min-height: 210px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.18);
-}
-html.light .sb-image-area--has-quad .sb-main-image-wrap {
-  background: rgba(255, 255, 255, 0.72);
-}
-/* 分镜候选关键帧宫格 */
-.sb-imgs-strip {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-  grid-auto-rows: 152px;
-  align-items: stretch;
-  gap: 6px;
-  width: 100%;
-  max-height: 318px;
-  padding: 8px 8px 6px;
-  overflow-y: auto;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  background: var(--el-fill-color-blank);
-  flex-shrink: 0;
-}
-.sb-strip-hint-icon {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  z-index: 3;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
-  cursor: default;
-  transition: color 0.15s;
-}
-.sb-strip-hint-icon:hover {
-  color: var(--el-color-primary);
-}
-.sb-img-thumb {
-  position: relative;
-  cursor: pointer;
-  border-radius: 4px;
-  overflow: hidden;
-  border: 2px solid transparent;
-  transition: border-color 0.2s;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  min-width: 0;
-  background: var(--el-fill-color-lighter);
-}
-.sb-img-thumb:hover { border-color: var(--el-color-primary); }
-.sb-img-thumb img {
-  width: 100%;
-  height: calc(100% - 40px);
-  object-fit: cover;
-  display: block;
-}
-.sb-img-thumb-label {
-  position: absolute;
-  bottom: 41px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 10px;
-  color: #fff;
-  background: rgba(0,0,0,0.45);
-  pointer-events: none;
-}
-.keyframe-desc-mini {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 40px;
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  padding: 4px;
-  border-top: 1px solid var(--el-border-color-lighter);
-  background: var(--el-bg-color);
-  color: var(--el-text-color-secondary);
-  font-size: 10px;
-  line-height: 1.25;
-}
-.keyframe-desc-mini span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  word-break: break-word;
-}
-.keyframe-desc-edit {
-  flex: 0 0 20px;
-  width: 20px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px;
-  background: var(--el-fill-color-light);
-  color: var(--el-text-color-secondary);
-  font-size: 10px;
-  cursor: pointer;
-  padding: 0;
-}
-.keyframe-desc-edit:hover {
-  color: var(--el-color-primary);
-  border-color: var(--el-color-primary);
-}
-/* 主图容器 */
-.sb-main-image-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 80px;
-  position: relative;
-  width: 100%;
-  flex: 1;
-}
-/* 主图下方提示词预览 */
-.sb-main-img-prompt {
-  width: 100%;
-  font-size: 10px;
-  color: var(--el-text-color-secondary);
-  background: var(--el-fill-color-lighter);
-  border-top: 1px solid var(--el-border-color-lighter);
-  padding: 4px 6px;
-  line-height: 1.4;
-  max-height: 48px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  word-break: break-all;
-  cursor: default;
-}
-/* 四宫格整图作为上方预览时稍微缩小 */
-.sb-quad-preview { max-height: 160px; }
-/* 四宫格拆分中占位 */
-.quad-splitting-tip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  padding: 8px;
-}
-.sb-image-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  flex-shrink: 0;
-  padding-top: 6px;
-}
-.sb-video-area {
-  flex: 1;
-  min-height: 200px;
-  background: linear-gradient(145deg, #1a1b24 0%, #1e1f28 60%, #1c1d26 100%);
-  border: 1px dashed rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: border-color 0.2s;
-  position: relative;
-  overflow: hidden;
-}
-html.light .sb-video-area {
-  background: linear-gradient(145deg, #f5f3ff 0%, #ede9fe 100%);
-  border-color: rgba(124,58,237,0.2);
-}
-.sb-video-placeholder {
-  color: #71717a;
-  font-size: 0.9rem;
-  flex-direction: column;
-  gap: 10px;
-  text-align: center;
-  padding: 16px;
-}
-html.light .sb-video-placeholder {
-  color: #7c3aed;
-}
-.sb-video-generating-text {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: #94a3b8;
-  font-size: 0.9rem;
-  min-height: 120px;
-}
-.sb-video-error {
-  color: #f56c6c;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  word-break: break-word;
-  max-height: 80px;
-  overflow-y: auto;
-  padding: 4px 8px;
-  background: rgba(245, 108, 108, 0.08);
-  border-radius: 4px;
-  text-align: left;
-  width: 100%;
-}
-.sb-video-player {
-  width: 100%;
-  max-height: 240px;
-  border-radius: 8px;
-}
-.sb-video-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  flex-shrink: 0;
-  padding-top: 6px;
-}
-.sb-video-regenerating-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 0.82rem;
-  color: #cbd5e1;
-  background: rgba(24, 24, 27, 0.68);
-}
-html.light .sb-video-regenerating-overlay {
-  background: rgba(248, 250, 252, 0.78);
-  color: #94a3b8;
-}
-.sb-videos-strip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-.sb-video-thumb {
-  position: relative;
-  width: 72px;
-  height: 48px;
-  border-radius: 5px;
-  overflow: hidden;
-  cursor: pointer;
-  border: 1.5px solid transparent;
-  flex-shrink: 0;
-  transition: border-color 0.15s;
-}
-.sb-video-thumb:hover {
-  border-color: #a855f7;
-}
-.sb-video-thumb-player {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  pointer-events: none;
-}
-.sb-video-thumb-label {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: rgba(0,0,0,0.55);
-  color: #e4e4e7;
-  font-size: 0.65rem;
-  text-align: center;
-  padding: 1px 0;
-  pointer-events: none;
-}
-.sb-video-prompt-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.sb-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #a855f7;
-  flex-shrink: 0;
-}
-.sb-video-prompt-label > span:not(.sb-dot) { font-size: 0.85rem; color: #e4e4e7; }
-.sb-video-params-bar {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 4px 0;
-}
-.sb-video-params-bar .sb-video-prompt-text {
-  flex: 1;
-  min-width: 0;
-}
-.sb-video-prompt-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.sb-video-prompt-row .sb-video-prompt-text {
-  flex: 1;
-  min-width: 0;
-}
-.vp-dialog-form .el-form-item {
-  margin-bottom: 12px;
-}
-.sb-video-prompt-text {
-  font-size: 0.85rem;
-  color: #a1a1aa;
-  line-height: 1.5;
-  padding: 8px 0;
-}
-.sb-video-prompt-text--preview {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-all;
-}
-.sb-video-prompt-edit {
-  margin-bottom: 8px;
-}
-.sb-video-prompt-edit .el-textarea { margin-bottom: 8px; }
-.sb-video-prompt-edit-actions { display: flex; gap: 8px; }
-.sb-generate-video-btn { margin-top: 8px; }
-.sb-prompt-label { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; }
-.sb-prompt-label .sb-dot { flex-shrink: 0; }
-.sb-prompt-label > span:not(.sb-dot) { font-size: 0.85rem; color: #e4e4e7; }
-.sb-prompt-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
-.sb-prompt-row .sb-prompt-text { flex: 1; min-width: 0; font-size: 0.85rem; color: #a1a1aa; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.sb-image-prompt-edit .el-textarea { margin-bottom: 6px; }
-.sb-prompt-edit-actions { display: flex; gap: 8px; }
-.sb-video-fields-collapse { margin: 8px 0; }
-.sb-video-fields-collapse .el-collapse-item__header { font-size: 0.9rem; }
-.sb-prompt-section-title { font-size: 0.9rem; font-weight: 600; color: #e4e4e7; margin-bottom: 8px; }
-.sb-prompt-section-title--row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.vp-video-prompt-hint { font-size: 12px; color: #909399; line-height: 1.5; }
-.sb-split-audio-tip { font-size: 12px; color: #64748b; line-height: 1.45; margin: 0 0 8px; }
-.sb-split-audio-row { display: flex; flex-direction: column; align-items: flex-start; }
-.sb-prompt-dialog-form .el-form-item { margin-bottom: 10px; }
-.sb-collapse-title { color: #a1a1aa; }
-.sb-video-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; padding: 8px 0; }
-.sb-field { display: flex; flex-direction: column; gap: 4px; }
-.sb-field-full { grid-column: 1 / -1; }
-.sb-field-label { font-size: 0.8rem; color: #a1a1aa; }
-.sb-field-select { width: 100%; }
-.sb-video-fields-actions { grid-column: 1 / -1; margin-top: 8px; }
-.config-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px 24px;
-  margin-bottom: 16px;
-}
-.video-option-hint {
-  flex: 1;
-  min-width: 200px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--el-text-color-secondary);
-}
-.video-option-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 10px 12px;
-}
-.video-watermark-input {
-  flex: 1;
-  min-width: 200px;
-  max-width: 360px;
-}
-.config-tip {
-  margin: 12px 0 0;
-  font-size: 0.9rem;
-  color: #a1a1aa;
-}
-.config-tip .el-link { font-size: inherit; }
-.sb-truncated-warning {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  margin-bottom: 14px;
-  background: rgba(234, 179, 8, 0.12);
-  border: 1px solid rgba(234, 179, 8, 0.4);
-  border-radius: 8px;
-  color: #fbbf24;
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-.sb-truncated-warning .el-icon {
-  flex-shrink: 0;
-  font-size: 1rem;
-  color: #fbbf24;
-}
-.sb-truncated-warning span {
-  flex: 1;
-}
-/* 分镜生成中提示条 */
-.sb-generating-tip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 18px;
-  margin-top: 10px;
-  background: rgba(139, 92, 246, 0.08);
-  border: 1px dashed rgba(139, 92, 246, 0.35);
-  border-radius: 10px;
-  color: #a78bfa;
-  font-size: 0.9rem;
-}
-.sb-gen-text {
-  flex: 1;
-  letter-spacing: 0.03em;
-}
-.sb-gen-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #a78bfa;
-  animation: sb-dot-bounce 1.2s infinite ease-in-out both;
-}
-.sb-gen-dot:nth-child(1) { animation-delay: 0s; }
-.sb-gen-dot:nth-child(2) { animation-delay: 0.2s; }
-.sb-gen-dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes sb-dot-bounce {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
-  40%            { transform: scale(1);   opacity: 1;   }
-}
-.sb-config-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.sb-setting-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.sb-setting-group {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.sb-setting-group-title {
-  min-width: 108px;
-  font-size: 0.9rem;
-  color: var(--el-text-color-primary);
-  font-weight: 600;
-}
-.sb-setting-group :deep(.el-checkbox__label) {
-  color: #e4e4e7;
-  font-size: 0.875rem;
-  line-height: 1.45;
-}
-html.light .sb-setting-group :deep(.el-checkbox__label) {
-  color: #374151;
-}
-.sb-export-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.sb-config-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.sb-config-label {
-  font-size: 0.85rem;
-  color: #a1a1aa;
-  white-space: nowrap;
-}
-.sb-config-input {
-  width: 110px;
-}
-.sb-config-hint {
-  font-size: 0.78rem;
-  color: #52525b;
-  white-space: nowrap;
-}
-.sb-config-hint--estimate {
-  white-space: normal;
-  max-width: 220px;
-  line-height: 1.35;
-}
-.sb-config-divider {
-  color: #3a3a44;
-  font-size: 0.85rem;
-  margin: 0 4px;
-}
-/* 解说导出行：避免浅色主题下勾选文案与卡片背景对比度不足 */
-.sb-narration-export-row :deep(.el-checkbox__label) {
-  color: #e4e4e7;
-  font-size: 0.875rem;
-  line-height: 1.45;
-}
-html.light .sb-narration-export-row :deep(.el-checkbox__label) {
-  color: #374151;
-}
-.sb-export-srt-btn.el-button--primary.is-plain {
-  --el-button-bg-color: rgba(124, 58, 237, 0.75);
-  --el-button-border-color: #a78bfa;
-  --el-button-text-color: #fff;
-  --el-button-hover-text-color: #fff;
-  --el-button-hover-bg-color: #8b5cf6;
-  --el-button-hover-border-color: #c4b5fd;
-}
-html.light .sb-export-srt-btn.el-button--primary.is-plain {
-  --el-button-bg-color: #7c3aed;
-  --el-button-border-color: #6d28d9;
-  --el-button-text-color: #fff;
-  --el-button-hover-text-color: #fff;
-  --el-button-hover-bg-color: #6d28d9;
-  --el-button-hover-border-color: #5b21b6;
-}
-.sb-narration-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-/* 分镜内解说旁白输入框：强制字/底对比，避免主题变量与页面继承冲突导致「看不见字」 */
-.sb-narration-input :deep(.el-textarea__inner) {
-  color: #e4e4e7 !important;
-  background-color: rgba(24, 24, 27, 0.85) !important;
-  border-color: rgba(255, 255, 255, 0.12) !important;
-  box-shadow: none;
-}
-.sb-narration-input :deep(.el-textarea__inner::placeholder) {
-  color: #71717a !important;
-}
-html.light .sb-narration-input :deep(.el-textarea__inner) {
-  color: #1e1b4b !important;
-  background-color: #ffffff !important;
-  border-color: rgba(139, 92, 246, 0.22) !important;
-}
-html.light .sb-narration-input :deep(.el-textarea__inner::placeholder) {
-  color: #9ca3af !important;
-}
-.sub-title {
-  font-size: 1rem;
-  margin: 16px 0 8px;
-  color: #e4e4e7;
-}
-.video-progress, .video-done, .video-error {
-  margin-top: 16px;
-}
-.video-preview-wrap {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-.video-preview-label {
-  margin: 0 0 10px;
-  font-size: 0.95rem;
-  color: #a1a1aa;
-}
-.video-preview-player {
-  display: block;
-  max-width: 100%;
-  max-height: 360px;
-  border-radius: 8px;
-  background: #1a1b24;
-}
-
-/* 公共库弹窗 */
-.library-dialog .el-dialog__body { padding-top: 8px; }
-.sd2-cert-dialog .el-dialog__body { padding-top: 10px; }
-.sd2-cert-desc :deep(.el-descriptions__cell) {
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-.sd2-cert-value {
-  display: inline-block;
-  max-width: 100%;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-}
-.library-toolbar { margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.library-team-hint { font-size: 12px; color: var(--el-text-color-secondary); }
-.library-team-hint--warn { color: var(--el-color-warning); }
-.char-library-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }
-.library-item-sub { font-size: 12px; color: var(--el-text-color-secondary); font-weight: normal; }
-.library-list {
-  min-height: 200px;
-  max-height: 420px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.library-item {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 10px;
-  background: #1e1f28;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
-}
-.library-item-cover {
-  width: 72px;
-  height: 72px;
-  flex-shrink: 0;
-  background: #252630;
-  border-radius: 6px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-.library-item-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.library-item-placeholder {
-  font-size: 0.8rem;
-  color: #5a5a66;
-}
-.library-item-info { flex: 1; min-width: 0; }
-.library-item-name { font-weight: 500; margin-bottom: 4px; }
-.library-item-desc { font-size: 0.85rem; color: #7a7a88; margin-bottom: 8px; }
-.library-item-actions { display: flex; gap: 8px; }
-.library-empty {
-  text-align: center;
-  color: #5a5a66;
-  padding: 40px 20px;
-}
-.library-pagination {
-  margin-top: 12px;
-  display: flex;
-  justify-content: center;
-}
-.library-placeholder {
-  padding: 40px 20px;
-  text-align: center;
-  color: #5a5a66;
-}
-
-/* 专业帧提示词弹窗 - 干净美观版 */
-.sb-frame-prompt-clean .el-message-box__content {
-  padding: 16px 20px 8px;
-}
-.sb-prompt-clean-body {
-  max-width: 680px;
-  min-width: 480px;
-}
-.sb-prompt-pre {
-  margin: 0 0 12px 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 13px;
-  line-height: 1.65;
-  color: #e2e8f0;
-  background: #0f172a;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 8px;
-  padding: 14px 16px;
-  max-height: 420px;
-  overflow-y: auto;
-}
-html.light .sb-prompt-pre {
-  color: #1e2937;
-  background: #f8fafc;
-  border-color: #cbd5e1;
-}
-.sb-prompt-meta-line {
-  font-size: 11px;
-  color: #64748b;
-  padding: 0 4px 8px;
-  line-height: 1.4;
-}
-html.light .sb-prompt-meta-line {
-  color: #64748b;
-}
-
-/* 首尾帧提示词编辑器 */
-.frame-prompt-editor-body {
-  padding: 4px 0;
-}
-.frame-prompt-editor-hint {
-  font-size: 12px;
-  color: #64748b;
-  margin-bottom: 10px;
-  line-height: 1.5;
-}
-html.light .frame-prompt-editor-hint {
-  color: #475569;
-}
-.frame-prompt-editor-textarea :deep(.el-textarea__inner) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 13px;
-  line-height: 1.65;
-}
-
-/* 空间布局锚点展示（首尾帧一致性合同） */
-.frame-layout-anchor {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  margin-bottom: 10px;
-}
-html.light .frame-layout-anchor {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-}
-.frame-layout-anchor-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: #334155;
-  margin-bottom: 4px;
-}
-.frame-layout-anchor-text {
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #1e293b;
-  background: #fff;
-  padding: 6px 8px;
-  border-radius: 4px;
-  border: 1px solid #e2e8f0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.frame-layout-anchor-note {
-  font-size: 11px;
-  color: #64748b;
-  margin-top: 4px;
-  line-height: 1.4;
-}
-</style>
+<style src="@/styles/filmCreateShared.css"></style>

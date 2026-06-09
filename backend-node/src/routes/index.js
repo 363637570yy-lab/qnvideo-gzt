@@ -23,6 +23,7 @@ const promptOverridesRoutes = require('./promptOverrides');
 const sceneModelMapRoutes = require('./sceneModelMap');
 const workflowPresetRoutes = require('./workflowPresets');
 const authRoutes = require('./auth');
+const workbenchRoutes = require('./workbench');
 const { requireAuth, requireAdmin, authorizeProjectAccess } = require('../middleware/auth');
 
 function setupRouter(cfg, db, log) {
@@ -51,6 +52,7 @@ function setupRouter(cfg, db, log) {
   const audio = audioRoutes(db, log, cfg);
   const promptOverrides = promptOverridesRoutes.routes(db, log);
   const workflowPresets = workflowPresetRoutes(db, log);
+  const workbench = workbenchRoutes(db, log);
 
   // ---------- auth ----------
   r.use('/auth', authRoutes(log, db));
@@ -111,6 +113,13 @@ function setupRouter(cfg, db, log) {
   r.get('/dramas/:id', drama.getDrama);
   r.put('/dramas/:id', drama.updateDrama);
   r.delete('/dramas/:id', drama.deleteDrama);
+
+  // ---------- workbench ----------
+  r.get('/workbench/projects/:drama_id/summary', workbench.summary);
+  r.get('/workbench/projects/:drama_id/tabs/script', workbench.scriptTab);
+  r.get('/workbench/projects/:drama_id/tabs/assets', workbench.assetsTab);
+  r.get('/workbench/projects/:drama_id/tabs/storyboards', workbench.storyboardsTab);
+  r.get('/workbench/projects/:drama_id/tabs/video-compose', workbench.videoComposeTab);
 
   // ---------- ai-configs ----------
   r.get('/ai-configs', aiConfig.list);

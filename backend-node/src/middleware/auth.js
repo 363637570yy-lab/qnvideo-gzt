@@ -189,6 +189,9 @@ function lookupDramaIds(db, req) {
   const directDrama = pathNumber(p, /^\/dramas\/(\d+)(?:\/|$)/);
   pushResolved(ids, directDrama);
 
+  const workbenchDrama = pathNumber(p, /^\/workbench\/projects\/(\d+)(?:\/|$)/);
+  pushResolved(ids, workbenchDrama);
+
   const episodeId = pathNumber(p, /^\/episodes\/(\d+)(?:\/|$)/) || pathNumber(p, /^\/images\/episode\/(\d+)(?:\/|$)/) || pathNumber(p, /^\/videos\/episode\/(\d+)(?:\/|$)/);
   pushResolved(ids, resolveEpisodeDramaId(db, episodeId));
 
