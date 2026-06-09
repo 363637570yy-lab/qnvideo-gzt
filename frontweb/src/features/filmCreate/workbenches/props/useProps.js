@@ -19,7 +19,23 @@ import { buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/use
  * @param {Function} deps.hasAssetImage
  */
 export function useProps(deps) {
-  const { store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary } = deps
+  const {
+    store,
+    dramaId,
+    currentEpisodeId,
+    getSelectedStyle,
+    loadDrama,
+    pollTask,
+    pollUntilResourceHasImage,
+    hasAssetImage,
+    isAdminUser,
+    canManageLibrary,
+    confirmAdminProjectOperation = async () => true,
+    trackFilmCreateAction = () => {},
+    textAiPayload = () => ({}),
+    imageAiPayload = () => ({}),
+    workflowPresetPayload = () => ({}),
+  } = deps
   const genStore = useGenerationTaskStore()
 
   function buildPropImageMeta(prop) {
@@ -99,7 +115,7 @@ export function useProps(deps) {
 
 
   // ── 函数 ──────────────────────────────────────────────
-  async function onExtractProps(options = {}) {
+  async function runExtractProps(options = {}) {
     if (!currentEpisodeId.value) {
       ElMessage.warning('请先完成剧本并保存')
       return
@@ -123,6 +139,24 @@ export function useProps(deps) {
     } catch (e) {
       genStore.markFailed(meta, e.message || '提取失败')
       ElMessage.error(e.message || '提取失败')
+    }
+  }
+
+  async function onExtractProps(options = null) {
+    if (!(await confirmAdminProjectOperation('提取道具'))) return
+    trackFilmCreateAction('extract_props_click')
+    const beforeCount = (store.props || []).length
+    try {
+      await runExtractProps(options || textAiPayload())
+      const afterCount = (store.props || []).length
+      trackFilmCreateAction('extract_props_complete', {
+        extra: { before_count: beforeCount, after_count: afterCount },
+      })
+    } catch (e) {
+      trackFilmCreateAction('extract_props_failed', {
+        extra: { message: String(e?.message || 'failed').slice(0, 120) },
+      })
+      throw e
     }
   }
 
@@ -279,6 +313,7 @@ export function useProps(deps) {
   }
 
   async function onDeleteProp(prop) {
+    if (!(await confirmAdminProjectOperation(`删除道具「${prop?.name || prop?.id || ''}」`))) return
     try {
       await ElMessageBox.confirm(
         `确定要删除道具「${(prop.name || '未命名').slice(0, 20)}」吗？此操作不可恢复。`,
@@ -294,7 +329,7 @@ export function useProps(deps) {
     }
   }
 
-  async function onGeneratePropImage(prop, options = {}) {
+  async function runGeneratePropImage(prop, options = {}) {
     prop.errorMsg = ''
     prop.error_msg = ''
     const meta = buildPropImageMeta(prop)
@@ -328,6 +363,11 @@ export function useProps(deps) {
     } finally {
       generatingPropIds.delete(prop.id)
     }
+  }
+
+  async function onGeneratePropImage(prop, options = null) {
+    if (!(await confirmAdminProjectOperation(`生成道具「${prop?.name || prop?.id || ''}」图片`))) return
+    return runGeneratePropImage(prop, options || { ...imageAiPayload(), ...workflowPresetPayload('prop') })
   }
 
   // ── 道具库函数 ────────────────────────────────────────

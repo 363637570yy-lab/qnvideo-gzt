@@ -163,6 +163,8 @@ import { useMediaPreview } from '@/features/filmCreate/shared/composables/useMed
 import { useTaskRuntime } from '@/features/filmCreate/shared/composables/useTaskRuntime'
 import { usePipelineRunner } from '@/features/filmCreate/shared/composables/usePipelineRunner'
 import { usePipelineOrchestrator } from '@/features/filmCreate/shared/composables/usePipelineOrchestrator'
+import { useResourceImageManager } from '@/features/filmCreate/shared/composables/useResourceImageManager'
+import { localPathToUrl as resourceLocalPathToUrl, parseExtraImages as parseResourceExtraImages } from '@/features/filmCreate/shared/utils/resourceImages'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useScriptWorkbench } from '@/features/filmCreate/workbenches/script/useScriptWorkbench'
 import { useCharacters } from '@/features/filmCreate/workbenches/characters/useCharacters'
@@ -181,7 +183,6 @@ const genStore = useGenerationTaskStore()
 const { isDark, toggle: toggleTheme } = useTheme()
 const currentUser = ref(getCurrentUser())
 const isAdminUser = ref(isAdmin())
-let resourceUploadPreconfirm = null
 const projectOwnerLabel = computed(() => {
   const owner = store.drama?.owner_user || store.drama?.created_by_user || {}
   return owner.display_name || owner.username || store.drama?.owner_user_id || '未知用户'
@@ -204,20 +205,6 @@ async function confirmAdminProjectOperation(action = '继续操作') {
   } catch {
     return false
   }
-}
-
-function isFreshPreconfirm(marker) {
-  return !!(marker && Number(marker.expiresAt) > Date.now())
-}
-
-function consumeResourceUploadPreconfirm(type, id) {
-  const marker = resourceUploadPreconfirm
-  resourceUploadPreconfirm = null
-  return !!(
-    isFreshPreconfirm(marker) &&
-    String(marker.type) === String(type) &&
-    String(marker.id) === String(id)
-  )
 }
 
 function canManageLibrary(item) {
@@ -862,16 +849,32 @@ const {
   dramaAllCharList, dramaAllCharLoading, dramaAllCharPage, dramaAllCharPageSize, dramaAllCharTotal, dramaAllCharKeyword,
   showEditCharLibrary, editCharLibraryForm,
   editCharLibrarySaving, addingCharToLibraryId, addingCharToMaterialId, addingCharFromLibraryId,
-  charRoleLabel, onGenerateCharacters: onGenerateCharactersRaw, openAddCharacter, stopCharacterPromptPoll, editCharacter,
+  charRoleLabel, onGenerateCharacters, openAddCharacter, stopCharacterPromptPoll, editCharacter,
   saveCharRefImageIfAny, submitEditCharacter, doGenerateCharacterPrompt, doExtractCharFromImage,
-  extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter: onDeleteCharacterRaw, onGenerateCharacterImage: onGenerateCharacterImageRaw, onSd2CertifyCharacter, onSd2CertifyRefresh, sd2ActionLabel, onSd2PrimaryAction, openCharSd2CertDialog,
+  extractIdentityAnchors, clearCharRefImage, onCloseCharDialog, onDeleteCharacter, onGenerateCharacterImage, onSd2CertifyCharacter, onSd2CertifyRefresh, sd2ActionLabel, onSd2PrimaryAction, openCharSd2CertDialog,
   onSd2VoicePrimaryAction, onSd2VoiceReplace, sd2VoiceActionLabel, playSd2Voice,
   loadCharLibraryList, debouncedLoadCharLibrary, loadDramaAllCharList, debouncedLoadDramaAllCharList,
   onCharLibraryDialogOpen, onCharLibraryTabChange, isCharAddToEpisodeLoading,
   openEditCharLibrary, submitEditCharLibrary,
   onDeleteCharLibrary, onAddCharacterToLibrary, onAddCharacterToMaterialLibrary,
   onAddCharFromLibrary, onAddDramaCharToEpisode,
-} = useCharacters({ store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary })
+} = useCharacters({
+  store,
+  dramaId,
+  currentEpisodeId,
+  getSelectedStyle,
+  loadDrama,
+  pollTask,
+  pollUntilResourceHasImage,
+  hasAssetImage,
+  isAdminUser,
+  canManageLibrary,
+  confirmAdminProjectOperation,
+  trackFilmCreateAction,
+  textAiPayload,
+  imageAiPayload,
+  workflowPresetPayload,
+})
 
 // ── Composable: Props ──────────────────────────────────
 const {
@@ -885,16 +888,32 @@ const {
   dramaAllPropList, dramaAllPropLoading, dramaAllPropPage, dramaAllPropPageSize, dramaAllPropTotal, dramaAllPropKeyword,
   showEditPropLibrary, editPropLibraryForm,
   editPropLibrarySaving, addingPropToLibraryId, addingPropToMaterialId, addingPropFromLibraryId,
-  onExtractProps: onExtractPropsRaw, stopPropPromptPoll, editProp, doGeneratePropPrompt, savePropRefImageIfAny,
+  onExtractProps, stopPropPromptPoll, editProp, doGeneratePropPrompt, savePropRefImageIfAny,
   clearPropRefImage, doExtractPropFromImage, submitEditProp, submitAddProp,
-  onClosePropDialog, onDeleteProp: onDeletePropRaw, onGeneratePropImage: onGeneratePropImageRaw,
+  onClosePropDialog, onDeleteProp, onGeneratePropImage,
   loadPropLibraryList, debouncedLoadPropLibrary, loadDramaAllPropList, debouncedLoadDramaAllPropList,
   onPropLibraryDialogOpen, onPropLibraryTabChange, isPropAddToEpisodeLoading,
   openEditPropLibrary, submitEditPropLibrary,
   onDeletePropLibrary, onAddPropToLibrary, onAddPropToMaterialLibrary,
   onAddPropFromLibrary, onAddDramaPropToEpisode,
   doExtractFromRef2,
-} = usePropsComposable({ store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary })
+} = usePropsComposable({
+  store,
+  dramaId,
+  currentEpisodeId,
+  getSelectedStyle,
+  loadDrama,
+  pollTask,
+  pollUntilResourceHasImage,
+  hasAssetImage,
+  isAdminUser,
+  canManageLibrary,
+  confirmAdminProjectOperation,
+  trackFilmCreateAction,
+  textAiPayload,
+  imageAiPayload,
+  workflowPresetPayload,
+})
 
 // ── Composable: Scenes ─────────────────────────────────
 const {
@@ -907,101 +926,33 @@ const {
   dramaAllSceneList, dramaAllSceneLoading, dramaAllScenePage, dramaAllScenePageSize, dramaAllSceneTotal, dramaAllSceneKeyword,
   showEditSceneLibrary, editSceneLibraryForm,
   editSceneLibrarySaving, addingSceneToLibraryId, addingSceneToMaterialId, addingSceneFromLibraryId,
-  onExtractScenes: onExtractScenesRaw, openAddScene, stopScenePromptPoll, editScene, doGenerateScenePrompt, doGenerateSceneSinglePrompt,
+  onExtractScenes, openAddScene, stopScenePromptPoll, editScene, doGenerateScenePrompt, doGenerateSceneSinglePrompt,
   saveSceneRefImageIfAny, clearSceneRefImage, doExtractSceneFromImage, submitEditScene,
-  onCloseSceneDialog, onDeleteScene: onDeleteSceneRaw, onGenerateSceneImage: onGenerateSceneImageRaw,
+  onCloseSceneDialog, onDeleteScene, onGenerateSceneImage,
   loadSceneLibraryList, debouncedLoadSceneLibrary, loadDramaAllSceneList, debouncedLoadDramaAllSceneList,
   onSceneLibraryDialogOpen, onSceneLibraryTabChange, isSceneAddToEpisodeLoading,
   openEditSceneLibrary, submitEditSceneLibrary,
   onDeleteSceneLibrary, onAddSceneToLibrary, onAddSceneToMaterialLibrary,
   onAddSceneFromLibrary, onAddDramaSceneToEpisode,
-} = useScenes({ store, dramaId, currentEpisodeId, getSelectedStyle, scriptLanguage, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, dramaAPI, isAdminUser, canManageLibrary })
-
-async function onGenerateCharacters() {
-  if (!(await confirmAdminProjectOperation('提取角色'))) return
-  trackFilmCreateAction('generate_characters_click')
-  const beforeCount = (store.currentEpisode?.characters || []).length
-  try {
-    await onGenerateCharactersRaw(textAiPayload())
-    const afterCount = (store.currentEpisode?.characters || []).length
-    trackFilmCreateAction('generate_characters_complete', {
-      extra: { before_count: beforeCount, after_count: afterCount },
-    })
-  } catch (e) {
-    trackFilmCreateAction('generate_characters_failed', {
-      extra: { message: String(e?.message || 'failed').slice(0, 120) },
-    })
-    throw e
-  }
-}
-
-async function onExtractProps() {
-  if (!(await confirmAdminProjectOperation('提取道具'))) return
-  trackFilmCreateAction('extract_props_click')
-  const beforeCount = (store.props || []).length
-  try {
-    await onExtractPropsRaw(textAiPayload())
-    const afterCount = (store.props || []).length
-    trackFilmCreateAction('extract_props_complete', {
-      extra: { before_count: beforeCount, after_count: afterCount },
-    })
-  } catch (e) {
-    trackFilmCreateAction('extract_props_failed', {
-      extra: { message: String(e?.message || 'failed').slice(0, 120) },
-    })
-    throw e
-  }
-}
-
-async function onExtractScenes() {
-  if (!(await confirmAdminProjectOperation('提取场景'))) return
-  trackFilmCreateAction('extract_scenes_click')
-  const beforeCount = (store.currentEpisode?.scenes || []).length
-  try {
-    await onExtractScenesRaw(textAiPayload())
-    const afterCount = (store.currentEpisode?.scenes || []).length
-    trackFilmCreateAction('extract_scenes_complete', {
-      extra: { before_count: beforeCount, after_count: afterCount },
-    })
-  } catch (e) {
-    trackFilmCreateAction('extract_scenes_failed', {
-      extra: { message: String(e?.message || 'failed').slice(0, 120) },
-    })
-    throw e
-  }
-}
-
-async function onGenerateCharacterImage(char) {
-  if (!(await confirmAdminProjectOperation(`生成角色「${char?.name || char?.id || ''}」图片`))) return
-  return onGenerateCharacterImageRaw(char, { ...imageAiPayload(), ...workflowPresetPayload('character') })
-}
-
-async function onGeneratePropImage(prop) {
-  if (!(await confirmAdminProjectOperation(`生成道具「${prop?.name || prop?.id || ''}」图片`))) return
-  return onGeneratePropImageRaw(prop, { ...imageAiPayload(), ...workflowPresetPayload('prop') })
-}
-
-async function onGenerateSceneImage(scene) {
-  if (!(await confirmAdminProjectOperation(`生成场景「${scene?.location || scene?.id || ''}」图片`))) return
-  return onGenerateSceneImageRaw(scene, { ...imageAiPayload(), ...workflowPresetPayload('scene') })
-}
-
-async function onDeleteCharacter(char) {
-  if (!(await confirmAdminProjectOperation(`删除角色「${char?.name || char?.id || ''}」`))) return
-  return onDeleteCharacterRaw(char)
-}
-
-async function onDeleteProp(prop) {
-  if (!(await confirmAdminProjectOperation(`删除道具「${prop?.name || prop?.id || ''}」`))) return
-  return onDeletePropRaw(prop)
-}
-
-async function onDeleteScene(scene) {
-  if (!(await confirmAdminProjectOperation(`删除场景「${scene?.location || scene?.id || ''}」`))) return
-  return onDeleteSceneRaw(scene)
-}
-
-
+} = useScenes({
+  store,
+  dramaId,
+  currentEpisodeId,
+  getSelectedStyle,
+  scriptLanguage,
+  loadDrama,
+  pollTask,
+  pollUntilResourceHasImage,
+  hasAssetImage,
+  dramaAPI,
+  isAdminUser,
+  canManageLibrary,
+  confirmAdminProjectOperation,
+  trackFilmCreateAction,
+  textAiPayload,
+  imageAiPayload,
+  workflowPresetPayload,
+})
 
 // 资源管理大面板及子区块折叠状态
 const resourcePanelCollapsed = ref(false)
@@ -1106,8 +1057,53 @@ const {
   getDramaAllPropList: () => dramaAllPropList.value || [],
   getSceneLibraryList: () => sceneLibraryList.value || [],
   getDramaAllSceneList: () => dramaAllSceneList.value || [],
+  parseExtraImages: parseResourceExtraImages,
+  localPathToUrl: resourceLocalPathToUrl,
+})
+
+const {
+  resourceImageFileInput,
+  resourceUploadType,
+  resourceUploadId,
+  uploadingResourceId,
+  dragOverResourceKey,
   parseExtraImages,
   localPathToUrl,
+  localPathToThumbUrl,
+  onRefImageFileChange,
+  onRefImageDrop,
+  onRefImageFileChange2,
+  onRefImageDrop2,
+  doExtractFromRef,
+  onResourceDragOver,
+  onResourceDragLeave,
+  onResourceDrop,
+  onUploadResourceClick,
+  doUploadResourceImage,
+  onSetPrimaryImage,
+  onRemoveExtraImage,
+  onResourceImageFileChange,
+} = useResourceImageManager({
+  store,
+  dramaId,
+  uploadAPI,
+  characterAPI,
+  propAPI,
+  sceneAPI,
+  loadDrama,
+  confirmAdminProjectOperation,
+  thumbImageUrl,
+  staticThumbUrlFromRel,
+  addCharRefImage,
+  addPropRefImage,
+  addSceneRefImage,
+  addPropAddRefImage,
+  extractingCharAppearance,
+  extractingPropDesc,
+  extractingSceneDesc,
+  editCharacterForm,
+  editPropForm,
+  editSceneForm,
 })
 
 const storyboardVideoWorkflow = useStoryboardVideoWorkflow({
@@ -1286,153 +1282,7 @@ const {
 
 /** 分镜 TTS 试听：避免多条同时播放 */
 let sbTtsPreviewAudio = null
-// 角色/道具/场景 上传图片
-const resourceImageFileInput = ref(null)
-const resourceUploadType = ref(null) // 'character' | 'prop' | 'scene'
-const resourceUploadId = ref(null)
-const uploadingResourceId = ref(null) // 'char-1' | 'prop-2' | 'scene-3'
-const dragOverResourceKey = ref(null) // 'char-1' | 'prop-2' | 'scene-3'
-function getFirstImageFile(dataTransfer) {
-  if (!dataTransfer?.files?.length) return null
-  const file = Array.from(dataTransfer.files).find((f) => f.type.startsWith('image/'))
-  return file || null
-}
 
-// ── 参考图文件读取工具 ──────────────────────────────────
-function readFileAsRefImage(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = (ev) => resolve({ dataUrl: ev.target.result, filename: file.name })
-    reader.readAsDataURL(file)
-  })
-}
-
-/**
- * 处理角色/道具/场景参考图文件选择（<input type="file"> change 事件）
- * type: 'character' | 'prop' | 'scene'
- */
-async function onRefImageFileChange(type, event) {
-  const file = event.target?.files?.[0]
-  if (!file) return
-  const result = await readFileAsRefImage(file)
-  if (type === 'character') addCharRefImage.value = result
-  else if (type === 'prop') addPropRefImage.value = result
-  else if (type === 'scene') addSceneRefImage.value = result
-  event.target.value = ''
-}
-
-/**
- * 处理角色/道具/场景参考图拖放（drop 事件）
- * type: 'character' | 'prop' | 'scene'
- */
-async function onRefImageDrop(type, event) {
-  const file = getFirstImageFile(event.dataTransfer)
-  if (!file) return
-  const result = await readFileAsRefImage(file)
-  if (type === 'character') addCharRefImage.value = result
-  else if (type === 'prop') addPropRefImage.value = result
-  else if (type === 'scene') addSceneRefImage.value = result
-}
-
-/**
- * 处理"添加道具"简单弹窗的参考图文件选择
- * type: 'addProp'
- */
-async function onRefImageFileChange2(type, event) {
-  const file = event.target?.files?.[0]
-  if (!file) return
-  const result = await readFileAsRefImage(file)
-  if (type === 'addProp') addPropAddRefImage.value = result
-  event.target.value = ''
-}
-
-/**
- * 处理"添加道具"简单弹窗的参考图拖放
- * type: 'addProp'
- */
-async function onRefImageDrop2(type, event) {
-  const file = getFirstImageFile(event.dataTransfer)
-  if (!file) return
-  const result = await readFileAsRefImage(file)
-  if (type === 'addProp') addPropAddRefImage.value = result
-}
-
-/**
- * 从本地选择（尚未保存到服务器）的参考图中提取特征描述
- * type: 'character' | 'prop' | 'scene'
- */
-async function doExtractFromRef(type) {
-  if (type === 'character') {
-    const refImage = addCharRefImage.value
-    if (!refImage) return
-    extractingCharAppearance.value = true
-    try {
-      const name = editCharacterForm.value?.name || ''
-      const res = await uploadAPI.extractDescriptionFromImage('character', refImage.dataUrl, name)
-      if (res?.description && editCharacterForm.value) {
-        editCharacterForm.value.appearance = res.description
-        ElMessage.success('已从参考图提取外貌描述')
-      }
-    } catch (e) {
-      ElMessage.error(e.message || '提取失败，请检查 AI 配置中是否有支持视觉的模型')
-    } finally {
-      extractingCharAppearance.value = false
-    }
-  } else if (type === 'prop') {
-    const refImage = addPropRefImage.value
-    if (!refImage) return
-    extractingPropDesc.value = true
-    try {
-      const name = editPropForm.value?.name || ''
-      const res = await uploadAPI.extractDescriptionFromImage('prop', refImage.dataUrl, name)
-      if (res?.description && editPropForm.value) {
-        editPropForm.value.description = res.description
-        ElMessage.success('已从参考图提取特征描述')
-      }
-    } catch (e) {
-      ElMessage.error(e.message || '提取失败，请检查 AI 配置中是否有支持视觉的模型')
-    } finally {
-      extractingPropDesc.value = false
-    }
-  } else if (type === 'scene') {
-    const refImage = addSceneRefImage.value
-    if (!refImage) return
-    extractingSceneDesc.value = true
-    try {
-      const name = editSceneForm.value?.name || ''
-      const res = await uploadAPI.extractDescriptionFromImage('scene', refImage.dataUrl, name)
-      if (res?.description && editSceneForm.value) {
-        editSceneForm.value.description = res.description
-        ElMessage.success('已从参考图提取场景描述')
-      }
-    } catch (e) {
-      ElMessage.error(e.message || '提取失败，请检查 AI 配置中是否有支持视觉的模型')
-    } finally {
-      extractingSceneDesc.value = false
-    }
-  }
-}
-
-function onResourceDragOver(e, type, id) {
-  e.preventDefault()
-  e.stopPropagation()
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-  const key = type === 'character' ? 'char-' : type === 'prop' ? 'prop-' : 'scene-'
-  dragOverResourceKey.value = key + id
-}
-function onResourceDragLeave(e, key) {
-  e.preventDefault()
-  if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return
-  if (key && dragOverResourceKey.value !== key) return
-  dragOverResourceKey.value = null
-}
-function onResourceDrop(e, type, id) {
-  e.preventDefault()
-  e.stopPropagation()
-  dragOverResourceKey.value = null
-  const file = getFirstImageFile(e.dataTransfer)
-  if (file) doUploadResourceImage(type, id, file)
-}
 function getGeneratingSetsBag() {
   return {
     generatingCharIds,
@@ -1946,148 +1796,6 @@ async function onAddEpisode() {
   } catch (e) {
     ElMessage.error(e.message || '添加失败')
   }
-}
-
-async function onUploadResourceClick(type, id) {
-  if (!(await confirmAdminProjectOperation('上传素材图片'))) return
-  resourceUploadPreconfirm = { type: String(type), id: String(id), expiresAt: Date.now() + 60000 }
-  resourceUploadType.value = type
-  resourceUploadId.value = id
-  resourceImageFileInput.value?.click()
-}
-
-// 解析 extra_images JSON，返回 local_path 数组
-function parseExtraImages(item) {
-  if (!item?.extra_images) return []
-  try {
-    const arr = typeof item.extra_images === 'string' ? JSON.parse(item.extra_images) : item.extra_images
-    return Array.isArray(arr) ? arr.filter(Boolean) : []
-  } catch { return [] }
-}
-
-// 将 local_path 转成可访问的 URL
-function localPathToUrl(p) {
-  if (!p) return ''
-  if (p.startsWith('http')) return p
-  return '/static/' + p.replace(/^\//, '')
-}
-
-function localPathToThumbUrl(p, width = 160) {
-  if (!p) return ''
-  if (p.startsWith('http')) return thumbImageUrl(p, width)
-  return staticThumbUrlFromRel(p.replace(/^\//, ''), width)
-}
-
-// 查找角色/道具/场景在 store 中的当前对象
-function findResource(type, id) {
-  const list = type === 'character' ? (store.characters ?? [])
-    : type === 'prop' ? (store.props ?? [])
-    : (store.scenes ?? [])
-  return list.find((x) => Number(x.id) === Number(id)) || null
-}
-
-async function doUploadResourceImage(type, id, file) {
-  if (!file || !type || id == null) return
-  if (!consumeResourceUploadPreconfirm(type, id) && !(await confirmAdminProjectOperation('上传素材图片'))) return
-  const key = type === 'character' ? 'char-' : type === 'prop' ? 'prop-' : 'scene-'
-  uploadingResourceId.value = key + id
-  try {
-    const res = await uploadAPI.uploadImage(file, { dramaId: dramaId.value })
-    const data = res?.data ?? res
-    const uploadedLocalPath = data?.local_path || data?.path || null
-    const url = data?.url || uploadedLocalPath
-    if (!url) { ElMessage.error('上传未返回地址'); return }
-
-    const current = findResource(type, id)
-    const hasPrimary = !!(current?.local_path || current?.image_url)
-
-    if (hasPrimary) {
-      // 已有主图 → 追加到 extra_images
-      const extras = parseExtraImages(current)
-      const newPath = uploadedLocalPath || url
-      if (!extras.includes(newPath)) extras.push(newPath)
-      const extraJson = JSON.stringify(extras)
-      if (type === 'character') {
-        await characterAPI.putImage(id, { extra_images: extraJson })
-      } else if (type === 'prop') {
-        await propAPI.update(id, { extra_images: extraJson })
-      } else if (type === 'scene') {
-        await sceneAPI.update(id, { extra_images: extraJson })
-      }
-    } else {
-      // 无主图 → 设为主图
-      if (type === 'character') {
-        await characterAPI.putImage(id, { image_url: url, local_path: uploadedLocalPath ?? null })
-      } else if (type === 'prop') {
-        await propAPI.update(id, { image_url: url, local_path: uploadedLocalPath ?? null })
-      } else if (type === 'scene') {
-        await sceneAPI.update(id, { image_url: url, local_path: uploadedLocalPath ?? null })
-      }
-    }
-    await loadDrama()
-    ElMessage.success('上传成功')
-  } catch (e) {
-    ElMessage.error(e.message || '上传失败')
-  } finally {
-    uploadingResourceId.value = null
-  }
-}
-
-// 将某张额外图片设为主图（主图降级到 extra_images 第一位）
-async function onSetPrimaryImage(type, item, extraPath) {
-  if (!(await confirmAdminProjectOperation('切换素材主图'))) return
-  const extras = parseExtraImages(item)
-  const oldPrimary = item.local_path || ''
-  const newExtras = extras.filter((p) => p !== extraPath)
-  if (oldPrimary) newExtras.unshift(oldPrimary)
-  const extraJson = JSON.stringify(newExtras)
-  try {
-    if (type === 'character') {
-      await characterAPI.putImage(item.id, { local_path: extraPath, image_url: '', extra_images: extraJson })
-    } else if (type === 'prop') {
-      await propAPI.update(item.id, { local_path: extraPath, image_url: '', extra_images: extraJson })
-    } else if (type === 'scene') {
-      await sceneAPI.update(item.id, { local_path: extraPath, image_url: '', extra_images: extraJson })
-    }
-    await loadDrama()
-  } catch (e) {
-    ElMessage.error(e.message || '操作失败')
-  }
-}
-
-// 删除某张额外图片
-async function onRemoveExtraImage(type, item, extraPath) {
-  if (!(await confirmAdminProjectOperation('删除素材历史图'))) return
-  const extras = parseExtraImages(item).filter((p) => p !== extraPath)
-  const extraJson = extras.length ? JSON.stringify(extras) : null
-  try {
-    if (type === 'character') {
-      await characterAPI.putImage(item.id, { extra_images: extraJson })
-    } else if (type === 'prop') {
-      await propAPI.update(item.id, { extra_images: extraJson })
-    } else if (type === 'scene') {
-      await sceneAPI.update(item.id, { extra_images: extraJson })
-    }
-    await loadDrama()
-  } catch (e) {
-    ElMessage.error(e.message || '删除失败')
-  }
-}
-
-function onResourceImageFileChange(ev) {
-  const file = ev.target?.files?.[0]
-  const type = resourceUploadType.value
-  const id = resourceUploadId.value
-  if (!file || !type || id == null) {
-    resourceUploadPreconfirm = null
-    ev.target.value = ''
-    return
-  }
-  doUploadResourceImage(type, id, file).finally(() => {
-    resourceUploadType.value = null
-    resourceUploadId.value = null
-    ev.target.value = ''
-  })
 }
 
 /** P0-3: 对分镜图执行超分辨率（2x） */
@@ -3289,7 +2997,6 @@ const filmCreateCtx = proxyRefs({
   confirmAdminProjectOperation,
   confirmImageSpec,
   confirmUniversalNonSeedance2Video,
-  consumeResourceUploadPreconfirm,
   countDialogueLinesInSb,
   createStoryboardImageBatchId,
   createStoryboardImageTasks,
@@ -3414,7 +3121,6 @@ const filmCreateCtx = proxyRefs({
   getCharAffectedStoryboards,
   getCurrentUser,
   getFinalizeMergeOptions,
-  getFirstImageFile,
   getGeneratingSetsBag,
   getMainImageUrlForVideo,
   getMovementLabel,
@@ -3485,7 +3191,6 @@ const filmCreateCtx = proxyRefs({
   isCharAddToEpisodeLoading,
   isDark,
   isEpisodeExtractRunning,
-  isFreshPreconfirm,
   isHttpVideoUrl,
   isPropAddToEpisodeLoading,
   isResourceGenerating,
@@ -3571,14 +3276,11 @@ const filmCreateCtx = proxyRefs({
   onClosePropDialog,
   onCloseSceneDialog,
   onDeleteCharacter,
-  onDeleteCharacterRaw,
   onDeleteCharLibrary,
   onDeleteProp,
   onDeletePropLibrary,
-  onDeletePropRaw,
   onDeleteScene,
   onDeleteSceneLibrary,
-  onDeleteSceneRaw,
   onDeleteSingleStoryboard,
   onEditKeyframeDescription,
   onEditSbImagePrompt,
@@ -3587,21 +3289,15 @@ const filmCreateCtx = proxyRefs({
   onExportNarrationSrt,
   onExportStoryboardSheet,
   onExtractProps,
-  onExtractPropsRaw,
   onExtractScenes,
-  onExtractScenesRaw,
   onGenerateCharacterImage,
-  onGenerateCharacterImageRaw,
   onGenerateCharacters,
-  onGenerateCharactersRaw,
   onGeneratePropImage,
-  onGeneratePropImageRaw,
   onGenerateSbFrameImage,
   onGenerateSbFramePair,
   onGenerateSbImage,
   onGenerateSbVideo,
   onGenerateSceneImage,
-  onGenerateSceneImageRaw,
   onGenerateScript,
   onGenerateStory,
   onGenerateStoryboard,
@@ -3753,7 +3449,6 @@ const filmCreateCtx = proxyRefs({
   QuestionFilled,
   QuickNav,
   reactive,
-  readFileAsRefImage,
   recordHasPlayableVideoUrl,
   recoverAndSyncEpisodeTasks,
   recoveringEpisodeTaskKeys,
@@ -3775,7 +3470,6 @@ const filmCreateCtx = proxyRefs({
   resourceImageFileInput,
   resourcePanelCollapsed,
   resourceUploadId,
-  resourceUploadPreconfirm,
   resourceUploadType,
   restoreSelectionsFromBackend,
   roundToMultiple,

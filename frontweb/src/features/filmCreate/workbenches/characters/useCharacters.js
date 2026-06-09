@@ -21,7 +21,23 @@ import { buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/use
  * @param {Function} deps.hasAssetImage - 判断资源是否有图片
  */
 export function useCharacters(deps) {
-  const { store, dramaId, currentEpisodeId, getSelectedStyle, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, isAdminUser, canManageLibrary } = deps
+  const {
+    store,
+    dramaId,
+    currentEpisodeId,
+    getSelectedStyle,
+    loadDrama,
+    pollTask,
+    pollUntilResourceHasImage,
+    hasAssetImage,
+    isAdminUser,
+    canManageLibrary,
+    confirmAdminProjectOperation = async () => true,
+    trackFilmCreateAction = () => {},
+    textAiPayload = () => ({}),
+    imageAiPayload = () => ({}),
+    workflowPresetPayload = () => ({}),
+  } = deps
   const genStore = useGenerationTaskStore()
 
   function buildCharImageMeta(char) {
@@ -103,7 +119,7 @@ export function useCharacters(deps) {
   function charRoleLabel(role) { return CHAR_ROLE_LABEL[role] || role || '' }
 
   // ── 核心函数 ──────────────────────────────────────────
-  async function onGenerateCharacters(options = {}) {
+  async function runGenerateCharacters(options = {}) {
     if (!store.dramaId) return
     const epId = currentEpisodeId.value
     if (!epId) {
@@ -133,6 +149,24 @@ export function useCharacters(deps) {
     } catch (e) {
       genStore.markFailed(meta, e.message || '生成失败')
       ElMessage.error(e.message || '生成失败')
+    }
+  }
+
+  async function onGenerateCharacters(options = null) {
+    if (!(await confirmAdminProjectOperation('提取角色'))) return
+    trackFilmCreateAction('generate_characters_click')
+    const beforeCount = (store.currentEpisode?.characters || []).length
+    try {
+      await runGenerateCharacters(options || textAiPayload())
+      const afterCount = (store.currentEpisode?.characters || []).length
+      trackFilmCreateAction('generate_characters_complete', {
+        extra: { before_count: beforeCount, after_count: afterCount },
+      })
+    } catch (e) {
+      trackFilmCreateAction('generate_characters_failed', {
+        extra: { message: String(e?.message || 'failed').slice(0, 120) },
+      })
+      throw e
     }
   }
 
@@ -320,6 +354,7 @@ export function useCharacters(deps) {
   }
 
   async function onDeleteCharacter(char) {
+    if (!(await confirmAdminProjectOperation(`删除角色「${char?.name || char?.id || ''}」`))) return
     try {
       await ElMessageBox.confirm(
         `确定要删除角色「${(char.name || '未命名').slice(0, 20)}」吗？此操作不可恢复。`,
@@ -335,7 +370,7 @@ export function useCharacters(deps) {
     }
   }
 
-  async function onGenerateCharacterImage(char, options = {}) {
+  async function runGenerateCharacterImage(char, options = {}) {
     char.errorMsg = ''
     char.error_msg = ''
     const meta = buildCharImageMeta(char)
@@ -369,6 +404,11 @@ export function useCharacters(deps) {
     } finally {
       generatingCharIds.delete(char.id)
     }
+  }
+
+  async function onGenerateCharacterImage(char, options = null) {
+    if (!(await confirmAdminProjectOperation(`生成角色「${char?.name || char?.id || ''}」图片`))) return
+    return runGenerateCharacterImage(char, options || { ...imageAiPayload(), ...workflowPresetPayload('character') })
   }
 
   // ── 角色库函数 ────────────────────────────────────────

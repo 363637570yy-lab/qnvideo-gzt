@@ -21,7 +21,25 @@ import { buildExtractTaskMeta, isEpisodeExtractRunning } from '@/composables/use
  * @param {object} deps.dramaAPI
  */
 export function useScenes(deps) {
-  const { store, dramaId, currentEpisodeId, getSelectedStyle, scriptLanguage, loadDrama, pollTask, pollUntilResourceHasImage, hasAssetImage, dramaAPI, isAdminUser, canManageLibrary } = deps
+  const {
+    store,
+    dramaId,
+    currentEpisodeId,
+    getSelectedStyle,
+    scriptLanguage,
+    loadDrama,
+    pollTask,
+    pollUntilResourceHasImage,
+    hasAssetImage,
+    dramaAPI,
+    isAdminUser,
+    canManageLibrary,
+    confirmAdminProjectOperation = async () => true,
+    trackFilmCreateAction = () => {},
+    textAiPayload = () => ({}),
+    imageAiPayload = () => ({}),
+    workflowPresetPayload = () => ({}),
+  } = deps
   const genStore = useGenerationTaskStore()
 
   function buildSceneImageMeta(scene) {
@@ -92,7 +110,7 @@ export function useScenes(deps) {
 
 
   // ── 函数 ──────────────────────────────────────────────
-  async function onExtractScenes(options = {}) {
+  async function runExtractScenes(options = {}) {
     if (!currentEpisodeId.value) return
     const epId = currentEpisodeId.value
     const meta = buildExtractTaskMeta(store, dramaId.value, epId, GEN_RESOURCE.EXTRACT_SCENES, '提取场景')
@@ -118,6 +136,24 @@ export function useScenes(deps) {
     } catch (e) {
       genStore.markFailed(meta, e.message || '提取失败')
       ElMessage.error(e.message || '提取失败')
+    }
+  }
+
+  async function onExtractScenes(options = null) {
+    if (!(await confirmAdminProjectOperation('提取场景'))) return
+    trackFilmCreateAction('extract_scenes_click')
+    const beforeCount = (store.currentEpisode?.scenes || []).length
+    try {
+      await runExtractScenes(options || textAiPayload())
+      const afterCount = (store.currentEpisode?.scenes || []).length
+      trackFilmCreateAction('extract_scenes_complete', {
+        extra: { before_count: beforeCount, after_count: afterCount },
+      })
+    } catch (e) {
+      trackFilmCreateAction('extract_scenes_failed', {
+        extra: { message: String(e?.message || 'failed').slice(0, 120) },
+      })
+      throw e
     }
   }
 
@@ -295,6 +331,7 @@ export function useScenes(deps) {
   }
 
   async function onDeleteScene(scene) {
+    if (!(await confirmAdminProjectOperation(`删除场景「${scene?.location || scene?.id || ''}」`))) return
     try {
       await ElMessageBox.confirm(
         `确定要删除场景「${(scene.location || scene.time || '未命名').slice(0, 20)}」吗？此操作不可恢复。`,
@@ -310,7 +347,7 @@ export function useScenes(deps) {
     }
   }
 
-  async function onGenerateSceneImage(scene, options = {}) {
+  async function runGenerateSceneImage(scene, options = {}) {
     scene.errorMsg = ''
     scene.error_msg = ''
     const meta = buildSceneImageMeta(scene)
@@ -349,6 +386,11 @@ export function useScenes(deps) {
     } finally {
       generatingSceneIds.delete(scene.id)
     }
+  }
+
+  async function onGenerateSceneImage(scene, options = null) {
+    if (!(await confirmAdminProjectOperation(`生成场景「${scene?.location || scene?.id || ''}」图片`))) return
+    return runGenerateSceneImage(scene, options || { ...imageAiPayload(), ...workflowPresetPayload('scene') })
   }
 
   // ── 场景库函数 ────────────────────────────────────────
