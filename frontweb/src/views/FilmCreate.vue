@@ -519,10 +519,17 @@ const {
   generatingSbVideoIds,
   generatingUniversalSegmentIds,
   frameTypeForSlot,
+  auxRoleFrameType,
+  auxRoleLabel,
+  buildKeyframeParamsJson,
+  compactKeyframeText,
+  defaultKeyframeDescription,
+  formatKeyframeSecond,
   getMovementLabel,
   getNextStoryboard,
   getPrevStoryboard,
   getQuadGridImage,
+  getStripItems,
   getSbAllImages,
   getSbAllVideos,
   getSbCharacterId,
@@ -539,6 +546,11 @@ const {
   getSbVideo,
   getSbVideoError,
   getVideoStripItems,
+  keyframeDescriptionFromParams,
+  keyframeIndexInfo,
+  keyframeItemLabel,
+  keyframeTimelineLine,
+  keyframeTimeRange,
   groupByStoryboardId,
   hasSbFirstLastPair,
   hasSbImage,
@@ -552,6 +564,9 @@ const {
   onStoryboardCharacterChange,
   onStoryboardPropChange,
   onStoryboardSceneChange,
+  parseImageParamsJson,
+  parseJsonObject,
+  quadPanelLabel,
   regeneratingLayoutSbIds,
   regenSbImagesForAsset,
   regenSbImagesProgress,
@@ -598,6 +613,7 @@ const {
   sbUniversalSegmentText,
   sbVideoErrors,
   sbVideos,
+  storyboardAuxRoleOptions,
   setSbCharacterId,
   setSbPropId,
   showFramePromptEditor,
@@ -620,6 +636,10 @@ const {
   videosAPI,
   videoClipDuration,
   storyboardUseFirstLastFrame,
+  storyboardFrameCount,
+  normalizeStoryboardFrameCount,
+  assetImageUrl: (...args) => assetImageUrl(...args),
+  assetThumbUrl: (...args) => assetThumbUrl(...args),
   assetVideoUrl: (...args) => assetVideoUrl(...args),
   recordHasPlayableVideoUrl: (...args) => recordHasPlayableVideoUrl(...args),
 })
@@ -1273,182 +1293,6 @@ async function recoverAndSyncEpisodeTasks(epId) {
   }
 }
 
-// ── 主图选择 ─────────────────────────────────────────────────────────
-
-/** 获取缩略图条数据：已绑定首尾帧以外的历史图 */
-function getStripItems(storyboardId) {
-  const allImgs = getSbAllImages(storyboardId)
-  const sb = (store.storyboards || []).find((b) => Number(b.id) === Number(storyboardId)) || null
-  const firstImg = storyboardUseFirstLastFrame.value ? getSbFirstImage(storyboardId) : getSbImage(storyboardId)
-  const lastImg = storyboardUseFirstLastFrame.value ? getSbLastImage(storyboardId) : null
-  const boundIds = new Set([firstImg?.id, lastImg?.id].filter((x) => x != null))
-  return allImgs
-    .filter((img) => !boundIds.has(img.id))
-    .sort((a, b) => {
-      const ba = String(a.batch_id || '')
-      const bb = String(b.batch_id || '')
-      if (ba !== bb) return String(b.created_at || '').localeCompare(String(a.created_at || ''))
-      return (Number(a.slot_index ?? 999) - Number(b.slot_index ?? 999)) || (Number(a.id || 0) - Number(b.id || 0))
-    })
-    .map((img) => ({
-      key: `img-${img.id}`,
-      src: assetImageUrl(img),
-      thumbSrc: assetThumbUrl(img, 160),
-      type: 'img',
-      img,
-      label: keyframeItemLabel(img),
-      frameBadge: img.frame_type === 'storyboard_first' ? '首' : img.frame_type === 'storyboard_last' ? '尾' : null,
-      prompt: img.prompt || '',
-      locked: !!img.locked,
-      selected: !!img.selected,
-      aux: isAuxStoryboardImage(img),
-      description: sb ? keyframeTimelineLine(sb, img) : '',
-    }))
-}
-
-function keyframeItemLabel(img) {
-  const aux = auxRoleLabel(img.aux_role)
-  if (aux) return aux
-  const panel = quadPanelLabel(img.frame_type)
-  if (panel) return panel
-  if (img.slot_index != null && img.batch_count) return `${Number(img.slot_index) + 1}/${img.batch_count}`
-  if (img.frame_type === 'storyboard_keyframe') return '关键帧'
-  return null
-}
-
-function parseJsonObject(value) {
-  if (!value) return {}
-  if (typeof value === 'object' && !Array.isArray(value)) return { ...value }
-  try {
-    const parsed = JSON.parse(String(value))
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function parseImageParamsJson(img) {
-  return parseJsonObject(img?.params_json)
-}
-
-function compactKeyframeText(value, max = 90) {
-  const text = (value || '').toString().replace(/\s+/g, ' ').trim()
-  if (!text) return ''
-  return text.length > max ? `${text.slice(0, max)}...` : text
-}
-
-function keyframeIndexInfo(img) {
-  const frameType = String(img?.frame_type || '')
-  const countRaw = Number(img?.batch_count)
-  const count = Number.isFinite(countRaw) && countRaw > 0
-    ? countRaw
-    : frameType === 'storyboard_first' || frameType === 'storyboard_last'
-      ? 2
-      : normalizeStoryboardFrameCount(storyboardFrameCount.value)
-  const idxRaw = Number(img?.slot_index)
-  const index = Number.isFinite(idxRaw) && idxRaw >= 0
-    ? idxRaw
-    : frameType === 'storyboard_last'
-      ? Math.max(0, count - 1)
-      : 0
-  return {
-    index: Math.min(Math.max(0, index), Math.max(0, count - 1)),
-    count: Math.max(1, count),
-  }
-}
-
-function keyframeTimeRange(sb, img) {
-  const { index, count } = keyframeIndexInfo(img)
-  const duration = Math.max(1, Number(sb?.duration) || Number(videoClipDuration.value) || 10)
-  const start = Math.round((duration * index / count) * 10) / 10
-  const end = Math.round((duration * (index + 1) / count) * 10) / 10
-  return { start, end, index, count, duration }
-}
-
-function formatKeyframeSecond(value) {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return '0'
-  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10)
-}
-
-function defaultKeyframeDescription(sb, img = {}) {
-  const { start, end, index, count } = keyframeTimeRange(sb, img)
-  const phase = count <= 2
-    ? (index === 0 ? '首帧' : '尾帧')
-    : index === 0
-      ? '开场'
-      : index === count - 1
-        ? '收束'
-        : '过渡'
-  const action = compactKeyframeText(sb?.action || sb?.description || sb?.image_prompt || '', 72)
-  const result = compactKeyframeText(sb?.result || '', 56)
-  const layout = compactKeyframeText(sb?.layout_description || '', 56)
-  const core = [
-    action || '承接本分镜动作时间线',
-    result ? `结果：${result}` : '',
-    layout ? `站位：${layout}` : '',
-  ].filter(Boolean).join('；')
-  return `${formatKeyframeSecond(start)}-${formatKeyframeSecond(end)}秒 ${phase}：${core}`
-}
-
-function keyframeDescriptionFromParams(img) {
-  const params = parseImageParamsJson(img)
-  return compactKeyframeText(
-    params.keyframe_description || params.timeline_description || params.description || '',
-    160
-  )
-}
-
-function keyframeTimelineLine(sb, img) {
-  if (!img || isAuxStoryboardImage(img)) return ''
-  return keyframeDescriptionFromParams(img) || defaultKeyframeDescription(sb, img)
-}
-
-function buildKeyframeParamsJson(sb, idx, count, extra = null, frameType = 'storyboard_keyframe') {
-  const base = parseJsonObject(extra)
-  if (auxRoleLabel(base.aux_role) || isAuxStoryboardImage({ frame_type: frameType, aux_role: base.aux_role })) return base
-  const imgLike = { slot_index: idx, batch_count: count, frame_type: frameType }
-  const range = keyframeTimeRange(sb, imgLike)
-  return {
-    ...base,
-    keyframe_index: range.index + 1,
-    keyframe_count: range.count,
-    keyframe_timeline_start: range.start,
-    keyframe_timeline_end: range.end,
-    keyframe_description: compactKeyframeText(base.keyframe_description || defaultKeyframeDescription(sb, imgLike), 180),
-  }
-}
-
-const storyboardAuxRoleOptions = [
-  { value: 'motion_sketch', label: '运动线稿', frameType: 'storyboard_motion_sketch' },
-  { value: 'layout_sketch', label: '构图稿', frameType: 'storyboard_layout_sketch' },
-  { value: 'pose_ref', label: '姿态参考', frameType: 'storyboard_pose_ref' },
-  { value: 'camera_path', label: '镜头路径', frameType: 'storyboard_camera_path' },
-  { value: 'aux_ref', label: '辅助参考', frameType: 'storyboard_aux_ref' },
-]
-
-function auxRoleLabel(role) {
-  return storyboardAuxRoleOptions.find((item) => item.value === role)?.label || ''
-}
-
-function auxRoleFrameType(role) {
-  return storyboardAuxRoleOptions.find((item) => item.value === role)?.frameType || 'storyboard_aux_ref'
-}
-
-function stripItemTitle(sbId, item) {
-  const lines = [item.label, item.description, item.prompt].filter(Boolean)
-  if (item.aux) {
-    lines.unshift('点击预览辅助稿')
-    return lines.join('\n\n')
-  }
-  if (storyboardUseFirstLastFrame.value) {
-    lines.unshift('点击：设为首帧或尾帧')
-  } else {
-    lines.unshift('点击设为主图')
-  }
-  return lines.join('\n\n')
-}
-
 async function updateStoryboardImageMeta(sbId, img, patch) {
   if (!img?.id) return null
   const updated = await imagesAPI.update(img.id, patch)
@@ -1686,17 +1530,6 @@ async function onStripItemClick(sb, item) {
       ElMessage.success('已设为尾帧')
     }
   }
-}
-
-/** 宫格子图位置标签 */
-function quadPanelLabel(frameType) {
-  const map = {
-    quad_panel_0: '左上', quad_panel_1: '右上', quad_panel_2: '左下', quad_panel_3: '右下',
-    nine_panel_0: '左上', nine_panel_1: '中上', nine_panel_2: '右上',
-    nine_panel_3: '左中', nine_panel_4: '中间', nine_panel_5: '右中',
-    nine_panel_6: '左下', nine_panel_7: '中下', nine_panel_8: '右下',
-  }
-  return map[frameType] || null
 }
 
 /** 点击缩略图条中的图片切换为主图 */
