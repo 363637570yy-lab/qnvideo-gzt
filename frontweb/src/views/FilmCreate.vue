@@ -614,6 +614,7 @@ const {
   sbVideoErrors,
   sbVideos,
   storyboardAuxRoleOptions,
+  stripItemTitle,
   setSbCharacterId,
   setSbPropId,
   showFramePromptEditor,
