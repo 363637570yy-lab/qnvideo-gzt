@@ -672,40 +672,10 @@ async function runConcurrently(items, concurrency, fn, options = {}) {
   return { paused: anyPaused }
 }
 
-const {
-  baseUrl,
-  previewImageUrl,
-  previewGallery,
-  previewImageIndex,
-  imageUrl,
-  staticThumbUrlFromRel,
-  thumbImageUrl,
-  assetImageUrl,
-  assetThumbUrl,
-  hasAssetImage,
-  collectImagePreviewGallery,
-  openImagePreview,
-  closeImagePreview,
-  showPreviewImage,
-  onImagePreviewKeydown,
-  assetVideoUrl,
-  isHttpVideoUrl,
-  recordHasPlayableVideoUrl,
-} = useMediaPreview({
-  getCharacters: () => characters.value || [],
-  getProps: () => props.value || [],
-  getScenes: () => scenes.value || [],
-  getStoryboardImagesMap: () => sbImages.value || {},
-  getStoryboards: () => store.storyboards || [],
-  getCharLibraryList: () => charLibraryList.value || [],
-  getDramaAllCharList: () => dramaAllCharList.value || [],
-  getPropLibraryList: () => propLibraryList.value || [],
-  getDramaAllPropList: () => dramaAllPropList.value || [],
-  getSceneLibraryList: () => sceneLibraryList.value || [],
-  getDramaAllSceneList: () => dramaAllSceneList.value || [],
-  parseExtraImages,
-  localPathToUrl,
-})
+function hasAssetImage(item) {
+  if (!item) return false
+  return !!(item.image_url || item.local_path)
+}
 
 // ── Composable: Characters ────────────────────────────
 const {
@@ -1073,6 +1043,39 @@ const sbUniversalSegmentText = ref({})
 // 分镜图片/视频列表（由 /images?storyboard_id=xx 和 /videos?storyboard_id=xx 拉取）
 const sbImages = ref({})
 const sbVideos = ref({})
+const {
+  baseUrl,
+  previewImageUrl,
+  previewGallery,
+  previewImageIndex,
+  imageUrl,
+  staticThumbUrlFromRel,
+  thumbImageUrl,
+  assetImageUrl,
+  assetThumbUrl,
+  collectImagePreviewGallery,
+  openImagePreview,
+  closeImagePreview,
+  showPreviewImage,
+  onImagePreviewKeydown,
+  assetVideoUrl,
+  isHttpVideoUrl,
+  recordHasPlayableVideoUrl,
+} = useMediaPreview({
+  getCharacters: () => characters.value || [],
+  getProps: () => props.value || [],
+  getScenes: () => scenes.value || [],
+  getStoryboardImagesMap: () => sbImages.value || {},
+  getStoryboards: () => store.storyboards || [],
+  getCharLibraryList: () => charLibraryList.value || [],
+  getDramaAllCharList: () => dramaAllCharList.value || [],
+  getPropLibraryList: () => propLibraryList.value || [],
+  getDramaAllPropList: () => dramaAllPropList.value || [],
+  getSceneLibraryList: () => sceneLibraryList.value || [],
+  getDramaAllSceneList: () => dramaAllSceneList.value || [],
+  parseExtraImages,
+  localPathToUrl,
+})
 const sbVideoErrors = ref({})
 const generatingSbImageIds = reactive(new Set())
 const generatingSbVideoIds = reactive(new Set())
