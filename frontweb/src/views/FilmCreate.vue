@@ -260,6 +260,7 @@ const {
   selectedWorkflowPreset,
   selectedWorkflowPresetName,
   workflowPresetPayload,
+  applyDefaultWorkflowSelections,
   loadWorkflowPresets,
 } = useWorkflowPresets()
 watch(showAiConfigDialog, (open) => {
