@@ -560,10 +560,18 @@ const {
   loadSingleStoryboardMedia,
   loadStoryboardMedia,
   onSbAddCharacterCommand,
+  onEditKeyframeDescription,
+  onRemoveSbHistoryImage,
+  onSelectSbFrameImage,
+  onSelectSbMainImage,
   onSelectSbMainVideo,
+  onSelectStripItem,
   onStoryboardCharacterChange,
   onStoryboardPropChange,
   onStoryboardSceneChange,
+  onStripItemClick,
+  onToggleKeyframeLocked,
+  onToggleKeyframeSelected,
   parseImageParamsJson,
   parseJsonObject,
   quadPanelLabel,
@@ -624,6 +632,7 @@ const {
   syncStoryboardStateFromEpisode,
   ttsSbIds,
   ttsSbNarrationIds,
+  updateStoryboardImageMeta,
   uploadingSbImageId,
   uploadingSbImageSlot,
   upscalingSbIds,
@@ -643,6 +652,8 @@ const {
   assetThumbUrl: (...args) => assetThumbUrl(...args),
   assetVideoUrl: (...args) => assetVideoUrl(...args),
   recordHasPlayableVideoUrl: (...args) => recordHasPlayableVideoUrl(...args),
+  openImagePreview: (...args) => openImagePreview(...args),
+  confirmAdminProjectOperation,
 })
 
 function getSbVideosRef() {
@@ -1294,73 +1305,6 @@ async function recoverAndSyncEpisodeTasks(epId) {
   }
 }
 
-async function updateStoryboardImageMeta(sbId, img, patch) {
-  if (!img?.id) return null
-  const updated = await imagesAPI.update(img.id, patch)
-  const list = sbImages.value[sbId] || []
-  sbImages.value = {
-    ...sbImages.value,
-    [sbId]: list.map((item) => Number(item.id) === Number(img.id) ? { ...item, ...updated } : item)
-  }
-  return updated
-}
-
-async function onEditKeyframeDescription(sb, item) {
-  if (!sb?.id || !item?.img || item.aux) return
-  const current = keyframeTimelineLine(sb, item.img)
-  let value = ''
-  try {
-    const res = await ElMessageBox.prompt('这段文字会随关键帧一起进入视频提示词，用来补充时间轴、动作承接和剪辑意图。', '编辑关键帧描述', {
-      confirmButtonText: '保存',
-      cancelButtonText: '取消',
-      inputType: 'textarea',
-      inputValue: current,
-      inputPlaceholder: '例如：0-5秒 首帧：角色站在门口迟疑，镜头缓慢推近，右侧留出进入空间',
-    })
-    value = (res?.value || '').toString().trim()
-  } catch {
-    return
-  }
-  const params = parseImageParamsJson(item.img)
-  const nextParams = {
-    ...params,
-    keyframe_description: value || defaultKeyframeDescription(sb, item.img),
-    keyframe_description_updated_at: new Date().toISOString(),
-  }
-  try {
-    await updateStoryboardImageMeta(sb.id, item.img, { params_json: nextParams })
-    ElMessage.success('关键帧描述已保存')
-  } catch (e) {
-    ElMessage.error(e.message || '保存失败')
-  }
-}
-
-async function onToggleKeyframeLocked(sb, item) {
-  if (!sb?.id || !item?.img) return
-  try {
-    await updateStoryboardImageMeta(sb.id, item.img, { locked: !item.img.locked })
-    ElMessage.success(item.img.locked ? '已解锁' : '已锁定')
-  } catch (e) {
-    ElMessage.error(e.message || '操作失败')
-  }
-}
-
-async function onToggleKeyframeSelected(sb, item) {
-  if (!sb?.id || !item?.img) return
-  if (item.aux || isAuxStoryboardImage(item.img)) {
-    ElMessage.info('辅助稿只作为视频参考，不设为主图')
-    return
-  }
-  try {
-    const next = !item.img.selected
-    await updateStoryboardImageMeta(sb.id, item.img, { selected: next })
-    if (next) sbSelectedImgId.value = { ...sbSelectedImgId.value, [sb.id]: item.img.id }
-    ElMessage.success(next ? '已确认该格' : '已取消确认')
-  } catch (e) {
-    ElMessage.error(e.message || '操作失败')
-  }
-}
-
 function imageReferenceUrlForApi(item) {
   const url = assetImageUrl(item)
   return url || ''
@@ -1504,114 +1448,6 @@ async function onGenerateStoryboardAux(sb, role) {
     ElMessage.error(e.message || '辅助稿生成失败')
   } finally {
     generatingSbImageIds.delete(sb.id)
-  }
-}
-
-async function onStripItemClick(sb, item) {
-  if (item?.aux || isAuxStoryboardImage(item?.img)) {
-    openImagePreview(item.src)
-    return
-  }
-  if (!storyboardUseFirstLastFrame.value) {
-    onSelectStripItem(sb, item)
-    return
-  }
-  try {
-    await ElMessageBox.confirm('将此图绑定到哪个槽位？', '设置参考帧', {
-      confirmButtonText: '设为首帧',
-      cancelButtonText: '设为尾帧',
-      distinguishCancelAndClose: true,
-      type: 'info',
-    })
-    onSelectSbFrameImage(sb, item.img, 'first')
-    ElMessage.success('已设为首帧')
-  } catch (action) {
-    if (action === 'cancel') {
-      onSelectSbFrameImage(sb, item.img, 'last')
-      ElMessage.success('已设为尾帧')
-    }
-  }
-}
-
-/** 点击缩略图条中的图片切换为主图 */
-function onSelectStripItem(sb, item) {
-  if (item?.aux || isAuxStoryboardImage(item?.img)) {
-    openImagePreview(item.src)
-    return
-  }
-  onSelectSbMainImage(sb, item.img)
-}
-
-/** 选定首帧或尾帧参考图（持久化到后端） */
-function onSelectSbFrameImage(sb, img, slot) {
-  if (!sb?.id || !img) return
-  const isLast = slot === 'last'
-
-  // 本地选中状态（用于部分回退逻辑）
-  if (isLast) {
-    sbSelectedLastImgId.value = { ...sbSelectedLastImgId.value, [sb.id]: img.id }
-  } else {
-    sbSelectedImgId.value = { ...sbSelectedImgId.value, [sb.id]: img.id }
-  }
-
-  // 关键：乐观更新 store 里分镜的权威绑定字段（storyboards 数组是 getSbFirst/LastImage 的主要数据源）
-  // 这样点击后立即生效，无需刷新页面；getStripItems 也会立即把这张图从历史条里过滤掉
-  const list = store.currentEpisode?.storyboards
-  if (Array.isArray(list)) {
-    const row = list.find((x) => Number(x.id) === Number(sb.id))
-    if (row) {
-      const now = new Date().toISOString()
-      if (isLast) {
-        row.last_frame_image_id = img.id
-        row.last_frame_image_url = img.image_url || null
-        row.last_frame_local_path = img.local_path || null
-      } else {
-        row.first_frame_image_id = img.id
-        row.image_url = img.image_url || null
-        row.local_path = img.local_path || null
-      }
-      row.updated_at = now
-    }
-  }
-
-  // 发送到后端持久化（静默，调用方按需提示）
-  const patch = { updated_at: new Date().toISOString() }
-  if (isLast) {
-    patch.last_frame_image_id = img.id
-    patch.last_frame_image_url = img.image_url || null
-    patch.last_frame_local_path = img.local_path || undefined
-  } else {
-    patch.image_url = img.image_url || null
-    patch.local_path = img.local_path || undefined
-    patch.first_frame_image_id = img.id
-  }
-
-  storyboardsAPI.update(sb.id, patch).catch((e) => console.warn('[参考帧] 保存失败', e))
-}
-
-/** 选定某张 API 图为主图（持久化到后端） */
-function onSelectSbMainImage(sb, img) {
-  onSelectSbFrameImage(sb, img, 'first')
-}
-
-/** 删除分镜历史参考图（strip 中的未绑定历史图，类似资源 extra 图的移除） */
-async function onRemoveSbHistoryImage(storyboardId, imageGenId) {
-  if (!storyboardId || !imageGenId) return
-  if (!(await confirmAdminProjectOperation('删除历史参考图'))) return
-  try {
-    await ElMessageBox.confirm('确定删除这张历史参考图？此操作不可恢复。', '删除历史图', {
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-      type: 'warning',
-      distinguishCancelAndClose: true,
-    })
-    await imagesAPI.delete(imageGenId)
-    await loadSingleStoryboardMedia(storyboardId)
-    ElMessage.success('历史图已删除')
-  } catch (err) {
-    if (err !== 'cancel' && err !== 'close') {
-      ElMessage.error(err?.message || '删除失败')
-    }
   }
 }
 

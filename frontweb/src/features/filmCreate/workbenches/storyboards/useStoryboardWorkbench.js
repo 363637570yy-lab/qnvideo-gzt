@@ -1,4 +1,5 @@
 import { reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { storyboardsAPI } from '@/api/storyboards'
 
 const EMPTY_ARR = []
@@ -23,6 +24,8 @@ export function useStoryboardWorkbench(deps = {}) {
     assetThumbUrl = () => '',
     assetVideoUrl = () => '',
     recordHasPlayableVideoUrl = () => false,
+    openImagePreview = () => {},
+    confirmAdminProjectOperation = async () => true,
   } = deps
 
   const sbCharacterIds = ref({})
@@ -699,6 +702,177 @@ export function useStoryboardWorkbench(deps = {}) {
     return map[frameType] || null
   }
 
+  async function updateStoryboardImageMeta(storyboardId, image, patch) {
+    if (!image?.id) return null
+    const updated = await imagesAPI.update(image.id, patch)
+    const list = sbImages.value[storyboardId] || []
+    sbImages.value = {
+      ...sbImages.value,
+      [storyboardId]: list.map((item) => Number(item.id) === Number(image.id) ? { ...item, ...updated } : item),
+    }
+    return updated
+  }
+
+  async function onEditKeyframeDescription(storyboard, item) {
+    if (!storyboard?.id || !item?.img || item.aux) return
+    const current = keyframeTimelineLine(storyboard, item.img)
+    let value = ''
+    try {
+      const result = await ElMessageBox.prompt(
+        '这段文字会随关键帧一起进入视频提示词，用来补充时间轴、动作承接和剪辑意图。',
+        '编辑关键帧描述',
+        {
+          confirmButtonText: '保存',
+          cancelButtonText: '取消',
+          inputType: 'textarea',
+          inputValue: current,
+          inputPlaceholder: '例如：0-5秒 首帧：角色站在门口迟疑，镜头缓慢推近，右侧留出进入空间',
+        }
+      )
+      value = (result?.value || '').toString().trim()
+    } catch {
+      return
+    }
+    const params = parseImageParamsJson(item.img)
+    const nextParams = {
+      ...params,
+      keyframe_description: value || defaultKeyframeDescription(storyboard, item.img),
+      keyframe_description_updated_at: new Date().toISOString(),
+    }
+    try {
+      await updateStoryboardImageMeta(storyboard.id, item.img, { params_json: nextParams })
+      ElMessage.success('关键帧描述已保存')
+    } catch (error) {
+      ElMessage.error(error.message || '保存失败')
+    }
+  }
+
+  async function onToggleKeyframeLocked(storyboard, item) {
+    if (!storyboard?.id || !item?.img) return
+    try {
+      await updateStoryboardImageMeta(storyboard.id, item.img, { locked: !item.img.locked })
+      ElMessage.success(item.img.locked ? '已解锁' : '已锁定')
+    } catch (error) {
+      ElMessage.error(error.message || '操作失败')
+    }
+  }
+
+  async function onToggleKeyframeSelected(storyboard, item) {
+    if (!storyboard?.id || !item?.img) return
+    if (item.aux || isAuxStoryboardImage(item.img)) {
+      ElMessage.info('辅助稿只作为视频参考，不设为主图')
+      return
+    }
+    try {
+      const next = !item.img.selected
+      await updateStoryboardImageMeta(storyboard.id, item.img, { selected: next })
+      if (next) sbSelectedImgId.value = { ...sbSelectedImgId.value, [storyboard.id]: item.img.id }
+      ElMessage.success(next ? '已确认该格' : '已取消确认')
+    } catch (error) {
+      ElMessage.error(error.message || '操作失败')
+    }
+  }
+
+  async function onStripItemClick(storyboard, item) {
+    if (item?.aux || isAuxStoryboardImage(item?.img)) {
+      openImagePreview(item.src)
+      return
+    }
+    if (!isFirstLastFrameMode()) {
+      onSelectStripItem(storyboard, item)
+      return
+    }
+    try {
+      await ElMessageBox.confirm('将此图绑定到哪个槽位？', '设置参考帧', {
+        confirmButtonText: '设为首帧',
+        cancelButtonText: '设为尾帧',
+        distinguishCancelAndClose: true,
+        type: 'info',
+      })
+      onSelectSbFrameImage(storyboard, item.img, 'first')
+      ElMessage.success('已设为首帧')
+    } catch (action) {
+      if (action === 'cancel') {
+        onSelectSbFrameImage(storyboard, item.img, 'last')
+        ElMessage.success('已设为尾帧')
+      }
+    }
+  }
+
+  function onSelectStripItem(storyboard, item) {
+    if (item?.aux || isAuxStoryboardImage(item?.img)) {
+      openImagePreview(item.src)
+      return
+    }
+    onSelectSbMainImage(storyboard, item.img)
+  }
+
+  function onSelectSbFrameImage(storyboard, image, slot) {
+    if (!storyboard?.id || !image) return
+    const isLast = slot === 'last'
+
+    if (isLast) {
+      sbSelectedLastImgId.value = { ...sbSelectedLastImgId.value, [storyboard.id]: image.id }
+    } else {
+      sbSelectedImgId.value = { ...sbSelectedImgId.value, [storyboard.id]: image.id }
+    }
+
+    const list = store?.currentEpisode?.storyboards
+    if (Array.isArray(list)) {
+      const row = list.find((item) => Number(item.id) === Number(storyboard.id))
+      if (row) {
+        const now = new Date().toISOString()
+        if (isLast) {
+          row.last_frame_image_id = image.id
+          row.last_frame_image_url = image.image_url || null
+          row.last_frame_local_path = image.local_path || null
+        } else {
+          row.first_frame_image_id = image.id
+          row.image_url = image.image_url || null
+          row.local_path = image.local_path || null
+        }
+        row.updated_at = now
+      }
+    }
+
+    const patch = { updated_at: new Date().toISOString() }
+    if (isLast) {
+      patch.last_frame_image_id = image.id
+      patch.last_frame_image_url = image.image_url || null
+      patch.last_frame_local_path = image.local_path || undefined
+    } else {
+      patch.image_url = image.image_url || null
+      patch.local_path = image.local_path || undefined
+      patch.first_frame_image_id = image.id
+    }
+
+    storyboardsAPI.update(storyboard.id, patch).catch((error) => console.warn('[参考帧] 保存失败', error))
+  }
+
+  function onSelectSbMainImage(storyboard, image) {
+    onSelectSbFrameImage(storyboard, image, 'first')
+  }
+
+  async function onRemoveSbHistoryImage(storyboardId, imageGenId) {
+    if (!storyboardId || !imageGenId) return
+    if (!(await confirmAdminProjectOperation('删除历史参考图'))) return
+    try {
+      await ElMessageBox.confirm('确定删除这张历史参考图？此操作不可恢复。', '删除历史图', {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        distinguishCancelAndClose: true,
+      })
+      await imagesAPI.delete(imageGenId)
+      await loadSingleStoryboardMedia(storyboardId)
+      ElMessage.success('历史图已删除')
+    } catch (error) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(error?.message || '删除失败')
+      }
+    }
+  }
+
   function onSelectSbMainVideo(storyboard, video) {
     sbSelectedVideoId.value = { ...sbSelectedVideoId.value, [storyboard.id]: video.id }
     storyboardsAPI.update(storyboard.id, {
@@ -933,10 +1107,18 @@ export function useStoryboardWorkbench(deps = {}) {
     loadSingleStoryboardMedia,
     loadStoryboardMedia,
     onSbAddCharacterCommand,
+    onEditKeyframeDescription,
+    onRemoveSbHistoryImage,
+    onSelectSbFrameImage,
+    onSelectSbMainImage,
     onSelectSbMainVideo,
+    onSelectStripItem,
     onStoryboardCharacterChange,
     onStoryboardPropChange,
     onStoryboardSceneChange,
+    onStripItemClick,
+    onToggleKeyframeLocked,
+    onToggleKeyframeSelected,
     parseImageParamsJson,
     parseJsonObject,
     quadPanelLabel,
@@ -952,6 +1134,7 @@ export function useStoryboardWorkbench(deps = {}) {
     syncStoryboardStateFromEpisode,
     ttsSbIds,
     ttsSbNarrationIds,
+    updateStoryboardImageMeta,
     uploadingSbImageId,
     uploadingSbImageSlot,
     upscalingSbIds,
