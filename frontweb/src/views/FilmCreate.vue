@@ -135,29 +135,37 @@ import AIConfigContent from '@/components/AIConfigContent.vue'
 import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
 import UsageCenterDialog from '@/components/UsageCenterDialog.vue'
-import FilmCreateHeader from '@/components/filmCreate/layout/FilmCreateHeader.vue'
-import FilmWorkbenchTabs from '@/components/filmCreate/layout/FilmWorkbenchTabs.vue'
-import ProjectPipelinePanel from '@/components/filmCreate/layout/ProjectPipelinePanel.vue'
-import QuickNav from '@/components/filmCreate/layout/QuickNav.vue'
-import ScriptWorkbench from '@/components/filmCreate/workbenches/script/ScriptWorkbench.vue'
-import CharacterWorkbench from '@/components/filmCreate/workbenches/characters/CharacterWorkbench.vue'
-import PropWorkbench from '@/components/filmCreate/workbenches/props/PropWorkbench.vue'
-import SceneWorkbench from '@/components/filmCreate/workbenches/scenes/SceneWorkbench.vue'
-import StoryboardWorkbench from '@/components/filmCreate/workbenches/storyboards/StoryboardWorkbench.vue'
-import VideoWorkbench from '@/components/filmCreate/workbenches/video/VideoWorkbench.vue'
+import FilmCreateHeader from '@/features/filmCreate/layout/FilmCreateHeader.vue'
+import FilmWorkbenchTabs from '@/features/filmCreate/layout/FilmWorkbenchTabs.vue'
+import ProjectPipelinePanel from '@/features/filmCreate/layout/ProjectPipelinePanel.vue'
+import QuickNav from '@/features/filmCreate/layout/QuickNav.vue'
+import ResourceRefImageInputs from '@/features/filmCreate/shared/components/ResourceRefImageInputs.vue'
+import FilmCreateCommonDialogs from '@/features/filmCreate/shared/components/FilmCreateCommonDialogs.vue'
+import ScriptWorkbench from '@/features/filmCreate/workbenches/script/ScriptWorkbench.vue'
+import ScriptDialogs from '@/features/filmCreate/workbenches/script/ScriptDialogs.vue'
+import CharacterWorkbench from '@/features/filmCreate/workbenches/characters/CharacterWorkbench.vue'
+import CharacterDialogs from '@/features/filmCreate/workbenches/characters/CharacterDialogs.vue'
+import PropWorkbench from '@/features/filmCreate/workbenches/props/PropWorkbench.vue'
+import PropDialogs from '@/features/filmCreate/workbenches/props/PropDialogs.vue'
+import SceneWorkbench from '@/features/filmCreate/workbenches/scenes/SceneWorkbench.vue'
+import SceneDialogs from '@/features/filmCreate/workbenches/scenes/SceneDialogs.vue'
+import StoryboardWorkbench from '@/features/filmCreate/workbenches/storyboards/StoryboardWorkbench.vue'
+import StoryboardDialogs from '@/features/filmCreate/workbenches/storyboards/StoryboardDialogs.vue'
+import VideoWorkbench from '@/features/filmCreate/workbenches/video/VideoWorkbench.vue'
 import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEditor.vue'
 import { backfillDramaStylePromptMetadataIfNeeded } from '@/constants/styleOptions'
-import { useNavigation } from '@/composables/filmCreate/shared/useNavigation'
-import { useAiRouteSelection } from '@/composables/filmCreate/shared/useAiRouteSelection'
-import { useProjectSettings } from '@/composables/filmCreate/shared/useProjectSettings'
-import { useWorkflowPresets } from '@/composables/filmCreate/shared/useWorkflowPresets'
-import { useWorkbenchLoader } from '@/composables/filmCreate/shared/useWorkbenchLoader'
-import { useMediaPreview } from '@/composables/filmCreate/shared/useMediaPreview'
-import { useTaskRuntime } from '@/composables/filmCreate/shared/useTaskRuntime'
+import { useNavigation } from '@/features/filmCreate/shared/composables/useNavigation'
+import { useAiRouteSelection } from '@/features/filmCreate/shared/composables/useAiRouteSelection'
+import { useProjectSettings } from '@/features/filmCreate/shared/composables/useProjectSettings'
+import { useWorkflowPresets } from '@/features/filmCreate/shared/composables/useWorkflowPresets'
+import { useWorkbenchLoader } from '@/features/filmCreate/shared/composables/useWorkbenchLoader'
+import { useMediaPreview } from '@/features/filmCreate/shared/composables/useMediaPreview'
+import { useTaskRuntime } from '@/features/filmCreate/shared/composables/useTaskRuntime'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
-import { useCharacters } from '@/composables/filmCreate/workbenches/characters/useCharacters'
-import { useProps as usePropsComposable } from '@/composables/filmCreate/workbenches/props/useProps'
-import { useScenes } from '@/composables/filmCreate/workbenches/scenes/useScenes'
+import { useCharacters } from '@/features/filmCreate/workbenches/characters/useCharacters'
+import { useProps as usePropsComposable } from '@/features/filmCreate/workbenches/props/useProps'
+import { useScenes } from '@/features/filmCreate/workbenches/scenes/useScenes'
+import { useStoryboardSettings } from '@/features/filmCreate/workbenches/storyboards/useStoryboardSettings'
 import { getCurrentUser, isAdmin } from '@/utils/auth'
 
 const route = useRoute()
@@ -427,6 +435,39 @@ const scriptGenerating = ref(false)
 const scriptContent = computed({
   get: () => store.scriptContent,
   set: (v) => store.setScriptContent(v)
+})
+const {
+  clipSecondsForStoryboardEstimate,
+  effectiveStoryboardFrameCount,
+  estimateVideoDurationSecFromCharLen,
+  exportingStoryboardSheet,
+  getStoryboardCountForApi,
+  getVideoDurationForApi,
+  hydrateStoryboardSettingsFromMetadata,
+  lastFrameUseFirstLayoutLock,
+  normalizeStoryboardFrameCount,
+  onStoryboardUseFirstLastFrameChange,
+  resetStoryboardSettings,
+  scriptEstimateStoryboardHint,
+  scriptEstimateStoryboardTitle,
+  scriptEstimateVideoDurationHint,
+  scriptEstimateVideoDurationTitle,
+  scriptStoryboardEstimate,
+  scriptTextTrimmedForEstimate,
+  shotCountEstimateFromDurationSec,
+  storyboardCount,
+  storyboardFrameCount,
+  storyboardFrameCountOptions,
+  storyboardIncludeNarration,
+  storyboardUniversalOmni,
+  storyboardUseFirstLastFrame,
+  userFilledStoryboardCount,
+  userFilledVideoDuration,
+  videoDuration,
+} = useStoryboardSettings({
+  scriptContent,
+  videoClipDuration,
+  scheduleProjectSettingsSave,
 })
 const videoMusic = ref('')
 const videoSfx = ref('')
@@ -988,127 +1029,6 @@ const resourceUploadId = ref(null)
 const uploadingResourceId = ref(null) // 'char-1' | 'prop-2' | 'scene-3'
 const dragOverResourceKey = ref(null) // 'char-1' | 'prop-2' | 'scene-3'
 const dragOverSbId = ref(null)
-// 公共库弹窗状态已移至各 composable
-const storyboardCount = ref(null) // 分镜数量
-const videoDuration = ref(null) // 视频总长度
-/** 分镜生成时是否要求 AI 输出 narration（解说旁白） */
-const storyboardIncludeNarration = ref(false)
-/** 分镜生成是否使用全能模式（universal_segment_text，对接 Seedance / 可灵 Omni） */
-const storyboardUniversalOmni = ref(false)
-const storyboardUseFirstLastFrame = ref(false)
-const exportingStoryboardSheet = ref(false)
-/** 生成尾帧时是否注入首帧作站位/构图参考（默认开启） */
-const lastFrameUseFirstLayoutLock = ref(true)
-const storyboardFrameCountOptions = [2, 4, 6, 9, 12]
-const storyboardFrameCount = ref(4)
-
-function normalizeStoryboardFrameCount(value) {
-  const n = Number(value)
-  if (storyboardFrameCountOptions.includes(n)) return n
-  return n === 1 ? 2 : 4
-}
-
-function effectiveStoryboardFrameCount(frameType = null) {
-  if (frameType) return 1
-  return normalizeStoryboardFrameCount(storyboardFrameCount.value)
-}
-
-// ── 剧本长度 → 估算总时长；自动分镜数与项目「每段秒数」(videoClipDuration) 对齐 ──
-
-/** 用于估算的每段时长（秒），与一键成片处「X秒/段」一致 */
-function clipSecondsForStoryboardEstimate() {
-  const c = Number(videoClipDuration.value)
-  return Math.max(2, Math.min(60, Number.isFinite(c) && c > 0 ? c : 10))
-}
-
-/** 由估算总时长与每段秒数得镜数中枢与宽松参考区间（±1 镜） */
-function shotCountEstimateFromDurationSec(sec) {
-  const s = Math.max(10, Math.min(600, Math.round(Number(sec) || 0)))
-  const clip = clipSecondsForStoryboardEstimate()
-  const ideal = s / clip
-  const locked = Math.max(1, Math.min(200, Math.round(ideal)))
-  const minR = Math.max(1, locked - 1)
-  const maxR = Math.min(200, locked + 1)
-  const range = minR >= maxR ? { min: locked, max: locked } : { min: minR, max: maxR }
-  return { locked, range, clip }
-}
-
-/** 由剧本字符数粗估成片总时长（短剧偏长镜）：秒数 = round(10 + (字数/600)×60)，夹在 10–600s */
-function estimateVideoDurationSecFromCharLen(charLen) {
-  const len = Math.max(0, Math.floor(Number(charLen) || 0))
-  if (len < 1) return null
-  const raw = Math.round(10 + (len / 600) * 60)
-  return Math.min(600, Math.max(10, raw))
-}
-
-/** 当前剧本下的估算：总秒数、镜数中枢、镜数区间、采用的每段秒数 */
-const scriptStoryboardEstimate = computed(() => {
-  const script = (scriptContent.value || '').toString().trim()
-  const len = script.length
-  if (!len) return null
-  const sec = estimateVideoDurationSecFromCharLen(len)
-  if (sec == null) return null
-  const { locked, range, clip } = shotCountEstimateFromDurationSec(sec)
-  return { sec, locked, range, clip, len }
-})
-
-const scriptEstimateVideoDurationHint = computed(() => {
-  const e = scriptStoryboardEstimate.value
-  if (!e) return ''
-  return `（约 ${e.sec}s）`
-})
-
-const scriptEstimateVideoDurationTitle = computed(() => {
-  const e = scriptStoryboardEstimate.value
-  if (!e) return ''
-  return `按当前剧本文本约 ${e.len} 个字符（含标点；常见汉字在浏览器里一字一算，并非按 UTF-8 字节翻倍）、短剧公式 round(10+(字符/600)×60) 粗估总时长约 ${e.sec} 秒；未填输入框时该值会作为约束传给生成接口。仅供参考`
-})
-
-const scriptEstimateStoryboardHint = computed(() => {
-  const e = scriptStoryboardEstimate.value
-  if (!e) return ''
-  if (e.range && e.range.min !== e.range.max) {
-    return `（约 ${e.locked} 镜，参考 ${e.range.min}–${e.range.max}）`
-  }
-  return `（约 ${e.locked} 镜）`
-})
-
-const scriptEstimateStoryboardTitle = computed(() => {
-  const e = scriptStoryboardEstimate.value
-  if (!e) return ''
-  return `按估算时长 ${e.sec}s ÷ 项目「每段 ${e.clip} 秒」四舍五入粗估约 ${e.locked} 镜；旁注区间为 ±1 镜供参考。切换「X秒/段」会同步改变本估算。`
-})
-
-function scriptTextTrimmedForEstimate() {
-  return (scriptContent.value || '').toString().trim()
-}
-
-function userFilledStoryboardCount() {
-  const v = storyboardCount.value
-  return v != null && Number.isFinite(Number(v)) && Number(v) >= 1
-}
-
-function userFilledVideoDuration() {
-  const v = videoDuration.value
-  return v != null && Number.isFinite(Number(v)) && Number(v) >= 10
-}
-
-/** 请求后端的视频总时长：仅未手动填时传剧本估算 */
-function getVideoDurationForApi() {
-  if (userFilledVideoDuration()) return Math.round(Number(videoDuration.value))
-  const len = scriptTextTrimmedForEstimate().length
-  if (len < 1) return undefined
-  return estimateVideoDurationSecFromCharLen(len) ?? undefined
-}
-
-/** 请求后端的分镜数量：仅未手动填时按「估算总时长 ÷ 每段秒数」推算，与项目 X秒/段 一致 */
-function getStoryboardCountForApi() {
-  if (userFilledStoryboardCount()) return Math.round(Number(storyboardCount.value))
-  const sec = getVideoDurationForApi()
-  if (sec == null || !Number.isFinite(sec)) return undefined
-  return shotCountEstimateFromDurationSec(sec).locked
-}
-
 function getFirstImageFile(dataTransfer) {
   if (!dataTransfer?.files?.length) return null
   const file = Array.from(dataTransfer.files).find((f) => f.type.startsWith('image/'))
@@ -1277,14 +1197,6 @@ function sbMainVideoPlayerKey(sbId) {
   const src = assetVideoUrl(v)
   return `${v.id}:${v.updated_at || ''}:${src.slice(0, 160)}`
 }
-function onStoryboardUseFirstLastFrameChange() {
-  if (storyboardUseFirstLastFrame.value && storyboardFrameCount.value !== 2) {
-    storyboardFrameCount.value = 2
-    ElMessage.info('首尾帧模式已开启，关键帧数量已切换为 2 张')
-  }
-  scheduleProjectSettingsSave(false)
-}
-
 function uploadingSbImageSlot(sbId) {
   return sbImageUploadSlotById.value[sbId] || null
 }
@@ -2836,13 +2748,8 @@ async function loadDrama({ force = false, recoverTasks = false } = {}) {
       storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
       storyType.value = d.genre || ''
       hydrateProjectSettingsFromDrama(d)
-      storyboardIncludeNarration.value = !!(d.metadata && d.metadata.storyboard_include_narration)
-      storyboardUniversalOmni.value = !!(d.metadata && d.metadata.storyboard_universal_omni)
-      storyboardUseFirstLastFrame.value = !!(d.metadata && d.metadata.storyboard_use_first_last_frame)
-      storyboardFrameCount.value = normalizeStoryboardFrameCount(d.metadata?.storyboard_frame_count)
-      lastFrameUseFirstLayoutLock.value = d.metadata?.last_frame_use_first_layout_lock !== false
+      hydrateStoryboardSettingsFromMetadata(d.metadata || {})
       applyProjectAiRouteSelection(d.metadata || {})
-      if (storyboardUseFirstLastFrame.value) storyboardFrameCount.value = 2
     } finally {
       nextTick(() => {
         setProjectSettingsHydrating(false)
@@ -6426,6 +6333,7 @@ function applyRouteToStore() {
     storyStyle.value = ''
     storyType.value = ''
     resetProjectSettings()
+    resetStoryboardSettings()
     applyProjectAiRouteSelection({})
   }
 }
