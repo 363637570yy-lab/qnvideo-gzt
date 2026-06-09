@@ -7560,7 +7560,6 @@ const filmCreateCtx = proxyRefs({
   waitForResume,
   WarningFilled,
   watch,
-  workbenchAPI,
   workbenchSummary,
   workbenchSummaryLoading,
   workbenchTabLoaded,
