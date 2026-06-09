@@ -501,6 +501,7 @@ const {
   batchVideoProgress,
   batchVideoRunning,
   batchVideoStopping,
+  charactersAvailableToAddToSb,
   dragOverSbId,
   editingFramePromptRegenerating,
   editingFramePromptSaving,
@@ -516,11 +517,23 @@ const {
   generatingSbLastImageIds,
   generatingSbVideoIds,
   generatingUniversalSegmentIds,
+  getMovementLabel,
+  getSbCharacterId,
+  getSbCharacterIds,
+  getSbPropId,
+  getSbPropIds,
+  getSbSelectedCharacters,
+  getSbSelectedProps,
+  getSbSelectedScene,
   groupByStoryboardId,
   inferringParams,
   linkingTailFrameIds,
   loadSingleStoryboardMedia,
   loadStoryboardMedia,
+  onSbAddCharacterCommand,
+  onStoryboardCharacterChange,
+  onStoryboardPropChange,
+  onStoryboardSceneChange,
   regeneratingLayoutSbIds,
   regenSbImagesForAsset,
   regenSbImagesProgress,
@@ -569,6 +582,7 @@ const {
   showSbPromptDialog,
   showVideoParamsDialog,
   splitByAudioLoading,
+  syncStoryboardStateFromEpisode,
   ttsSbIds,
   ttsSbNarrationIds,
   uploadingSbImageId,
@@ -581,6 +595,7 @@ const {
   store,
   imagesAPI,
   videosAPI,
+  videoClipDuration,
   getSbAllImages: (...args) => getSbAllImages(...args),
 })
 
@@ -2482,88 +2497,6 @@ function onSbImageFileChange(ev) {
   })
 }
 
-function syncStoryboardStateFromEpisode(ep) {
-  const boards = ep?.storyboards || []
-  const nextCharIds = {}
-  const nextPropIds = {}
-  const nextScene = {}
-  const nextDialogue = {}
-  const nextNarration = {}
-  const nextShot = {}
-  const nextTitle = {}
-  const nextLocation = {}
-  const nextTime = {}
-  const nextDuration = {}
-  const nextAction = {}
-  const nextResult = {}
-  const nextAtmosphere = {}
-  const nextAngle = {}
-  const nextAngleH = {}
-  const nextAngleV = {}
-  const nextAngleS = {}
-  const nextMovement = {}
-  const nextLighting = {}
-  const nextDof = {}
-  const nextLayoutDescription = {}
-  const nextCreationMode = {}
-  const nextUniversalSegment = {}
-  for (const sb of boards) {
-    nextScene[sb.id] = sb.scene_id ?? null
-    nextDialogue[sb.id] = sb.dialogue ?? ''
-    nextNarration[sb.id] = sb.narration ?? ''
-    nextShot[sb.id] = (sb.shot_type ?? '').toString() || ''
-    nextTitle[sb.id] = (sb.title ?? '').toString()
-    nextLocation[sb.id] = (sb.location ?? '').toString()
-    nextTime[sb.id] = (sb.time ?? '').toString()
-    nextDuration[sb.id] = sb.duration != null ? Number(sb.duration) : (Number(videoClipDuration.value) || 10)
-    nextAction[sb.id] = (sb.action ?? '').toString()
-    nextResult[sb.id] = (sb.result ?? '').toString()
-    nextAtmosphere[sb.id] = (sb.atmosphere ?? '').toString()
-    nextAngle[sb.id] = (sb.angle ?? '').toString()
-    nextAngleH[sb.id] = sb.angle_h || ''
-    nextAngleV[sb.id] = sb.angle_v || ''
-    nextAngleS[sb.id] = sb.angle_s || ''
-    nextMovement[sb.id] = (sb.movement ?? '').toString()
-    nextLighting[sb.id] = sb.lighting_style || ''
-    nextDof[sb.id] = sb.depth_of_field || ''
-    nextLayoutDescription[sb.id] = (sb.layout_description ?? '').toString()
-    const charList = Array.isArray(sb.characters) ? sb.characters : (sb.characters != null ? [sb.characters] : [])
-    nextCharIds[sb.id] = charList
-      .map((c) => (typeof c === 'object' && c != null ? Number(c.id) : Number(c)))
-      .filter((n) => Number.isFinite(n))
-      .slice(0, 1)
-    nextPropIds[sb.id] = (Array.isArray(sb.prop_ids) ? sb.prop_ids : [])
-      .map((id) => Number(id))
-      .filter((n) => Number.isFinite(n))
-      .slice(0, 1)
-    nextCreationMode[sb.id] = sb.creation_mode === 'universal' ? 'universal' : 'classic'
-    nextUniversalSegment[sb.id] = (sb.universal_segment_text ?? '').toString()
-  }
-  sbCharacterIds.value = nextCharIds
-  sbPropIds.value = nextPropIds
-  sbSceneId.value = nextScene
-  sbDialogue.value = nextDialogue
-  sbNarration.value = nextNarration
-  sbShotType.value = nextShot
-  sbTitle.value = nextTitle
-  sbLocation.value = nextLocation
-  sbTime.value = nextTime
-  sbDuration.value = nextDuration
-  sbAction.value = nextAction
-  sbResult.value = nextResult
-  sbAtmosphere.value = nextAtmosphere
-  sbAngle.value = nextAngle
-  sbAngleH.value = nextAngleH
-  sbAngleV.value = nextAngleV
-  sbAngleS.value = nextAngleS
-  sbMovement.value = nextMovement
-  sbLighting.value = nextLighting
-  sbDof.value = nextDof
-  sbLayoutDescription.value = nextLayoutDescription
-  sbCreationMode.value = nextCreationMode
-  sbUniversalSegmentText.value = nextUniversalSegment
-}
-
 function onEpisodeSelect(epId) {
   if (epId == null) {
     store.setCurrentEpisode(null)
@@ -2644,128 +2577,8 @@ async function loadDrama({ force = false, recoverTasks = false } = {}) {
   }
 }
 
-const EMPTY_ARR = []
-/** 当前分镜已选角色 id 列表（供 el-select 绑定） */
-function getSbCharacterIds(sbId) {
-  const arr = sbCharacterIds.value[sbId]
-  return Array.isArray(arr) && arr.length > 0 ? arr : EMPTY_ARR
-}
-
-function getSbCharacterId(sbId) {
-  const arr = getSbCharacterIds(sbId)
-  return arr.length ? arr[0] : null
-}
-
-/** 运镜值的简短中文标签（用于分镜控制栏显示） */
-function getMovementLabel(m) {
-  if (!m) return ''
-  const map = {
-    static: '固定',
-    push: '推镜',
-    pull: '拉镜',
-    pan: '横摇',
-    tilt: '纵摇',
-    tracking: '跟镜',
-    crane_up: '升镜',
-    crane_dn: '降镜',
-    orbit: '环绕',
-    handheld: '手持',
-    zoom: '变焦',
-    roll: '旋转',
-    whip_pan: '甩镜',
-    spiral: '螺旋',
-    hitchcock_zoom: '希区柯克',
-    bullet_time: '子弹时间',
-    dutch_angle_move: '荷兰角',
-    dolly_track: '推轨',
-    slowmo_orbit: '升格环绕'
-  }
-  return map[m] || m
-}
-
-function setSbCharacterId(sbId, v) {
-  const id = Number(v)
-  const next = Number.isFinite(id) && id > 0 ? [id] : []
-  sbCharacterIds.value = { ...sbCharacterIds.value, [sbId]: next }
-  onStoryboardCharacterChange(sbId)
-}
-
-/** 当前分镜尚未勾选的角色（供缩略图旁「+」下拉添加） */
-function charactersAvailableToAddToSb(sbId) {
-  const all = characters.value ?? []
-  const currentId = Number(getSbCharacterId(sbId))
-  return all.filter((c) => c && Number(c.id) !== currentId)
-}
-
-function onSbAddCharacterCommand(sbId, charId) {
-  const id = Number(charId)
-  if (!Number.isFinite(id)) return
-  setSbCharacterId(sbId, id)
-}
-
-/** 当前分镜已选物品 id 列表 */
-function getSbPropIds(sbId) {
-  const arr = sbPropIds.value[sbId]
-  return Array.isArray(arr) && arr.length > 0 ? arr : EMPTY_ARR
-}
-
-function getSbPropId(sbId) {
-  const arr = getSbPropIds(sbId)
-  return arr.length ? arr[0] : null
-}
-
-function setSbPropId(sbId, v) {
-  const id = Number(v)
-  sbPropIds.value = { ...sbPropIds.value, [sbId]: Number.isFinite(id) && id > 0 ? [id] : [] }
-  onStoryboardPropChange(sbId)
-}
-
-function onStoryboardPropChange(sbId) {
-  const ids = sbPropIds.value[sbId] || []
-  storyboardsAPI.update(sbId, { prop_ids: ids }).catch(() => {})
-}
-
-/** 当前分镜选中的场景对象（用于下方缩略图） */
-function getSbSelectedScene(sbId) {
-  const sceneId = sbSceneId.value[sbId]
-  if (sceneId == null) return null
-  const list = scenes.value ?? []
-  return list.find((s) => Number(s.id) === Number(sceneId)) || null
-}
-
-/** 当前分镜选中的角色对象列表（用于下方缩略图） */
-function getSbSelectedCharacters(sbId) {
-  const ids = getSbCharacterIds(sbId)
-  if (!ids.length) return []
-  const list = characters.value ?? []
-  return ids.map((id) => list.find((c) => Number(c.id) === Number(id))).filter(Boolean)
-}
-
-/** 当前分镜选中的物品对象列表（用于下方缩略图） */
-function getSbSelectedProps(sbId) {
-  const ids = getSbPropIds(sbId)
-  if (!ids.length) return []
-  const list = props.value ?? []
-  return ids.map((id) => list.find((p) => Number(p.id) === Number(id))).filter(Boolean)
-}
-
-async function onStoryboardCharacterChange(sbId) {
-  const ids = sbCharacterIds.value[sbId] || []
-  try {
-    await storyboardsAPI.update(sbId, { character_ids: ids })
-    // 首/尾帧提示词保留（含用户手动保存版）；图生时后端会按当前勾选做 sanitize
-  } catch (e) {
-    console.warn('[分镜] 保存角色失败', e)
-  }
-}
-
 function onLastFrameLayoutLockChange() {
   scheduleProjectSettingsSave(false)
-}
-
-function onStoryboardSceneChange(sbId) {
-  const sceneId = sbSceneId.value[sbId] ?? null
-  storyboardsAPI.update(sbId, { scene_id: sceneId }).catch(() => {})
 }
 
 /** 同镜号多行时只保留 id 最大的一条（与后端 dedupe 一致，避免「影响的分镜」重复 #N） */
@@ -6034,7 +5847,6 @@ const filmCreateCtx = proxyRefs({
   effectiveStoryboardFrameCount,
   ElMessage,
   ElMessageBox,
-  EMPTY_ARR,
   ensureProfessionalFramePrompt,
   estimateVideoDurationSecFromCharLen,
   Expand,
