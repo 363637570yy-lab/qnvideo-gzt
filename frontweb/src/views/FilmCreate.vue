@@ -122,7 +122,6 @@ import { aiAPI } from '@/api/ai'
 import { characterAPI } from '@/api/characters'
 import { propAPI } from '@/api/props'
 import { sceneAPI } from '@/api/scenes'
-import { taskAPI } from '@/api/task'
 import { imagesAPI } from '@/api/images'
 import { videosAPI } from '@/api/videos'
 import { storyboardsAPI } from '@/api/storyboards'
@@ -175,6 +174,7 @@ import { useAiRouteSelection } from '@/composables/filmCreate/useAiRouteSelectio
 import { useWorkflowPresets } from '@/composables/filmCreate/useWorkflowPresets'
 import { useWorkbenchLoader } from '@/composables/filmCreate/useWorkbenchLoader'
 import { useMediaPreview } from '@/composables/filmCreate/useMediaPreview'
+import { useTaskRuntime } from '@/composables/filmCreate/useTaskRuntime'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useCharacters } from '@/composables/filmCreate/useCharacters'
 import { useProps as usePropsComposable } from '@/composables/filmCreate/useProps'
@@ -902,117 +902,51 @@ const navSteps = computed(() => {
   ]
 })
 
-/** 聚合所有当前正在运行的任务标签，用于悬浮任务面板（含跨剧跨集） */
-const allActiveTasks = computed(() => {
-  const tasks = []
-  const seen = new Set()
-  function addTask(label) {
-    const s = (label || '').trim()
-    if (!s || seen.has(s)) return
-    seen.add(s)
-    tasks.push(s)
-  }
-  for (const t of genStore.getAllRunningTasks()) {
-    addTask(t.label)
-  }
-  // 一键全流程 pipeline
-  if (pipelineRunning.value) {
-    const step = pipelineCurrentStep.value
-    addTask(step ? step.replace(/^\[步骤 \d+\/\d+\] /, '') : '一键全流程运行中...')
-  }
-  // 整体操作
-  if (storyGenerating.value || scriptGenerating.value) addTask('生成剧本...')
-  if (universalOmniPolishRunning.value) {
-    const p = universalOmniPolishProgress.value
-    addTask(`润色全能分镜 ${p.current}/${p.total}${p.label ? ' ' + p.label : ''}`)
-  }
-  if (batchImageRunning.value) addTask('批量生成分镜图...')
-  if (batchVideoRunning.value) addTask('批量生成分镜视频...')
-  return tasks
+const {
+  allActiveTasks,
+  taskClockNow,
+  buildResourceTaskMeta,
+  getRunningResourceTask,
+  isResourceGenerating,
+  formatElapsed,
+  resourceElapsedLabel,
+  clearLocalGeneratingState,
+  stopResourceGeneration,
+  stopSbFramePair,
+  stopEpisodeTask,
+  pollUntilResourceHasImage,
+  pollTask,
+  pollTaskWithPause,
+} = useTaskRuntime({
+  genStore,
+  store,
+  dramaId,
+  currentEpisodeId,
+  loadDrama,
+  confirmAdminProjectOperation,
+  getLocalGeneratingSets: () => ({
+    generatingCharIds,
+    generatingPropIds,
+    generatingSceneIds,
+    generatingSbImageIds,
+    generatingSbFirstImageIds,
+    generatingSbLastImageIds,
+    generatingSbVideoIds,
+  }),
+  getPipelineState: () => ({
+    pipelineRunning,
+    pipelineCurrentStep,
+    pipelinePaused,
+  }),
+  getGlobalGenerationState: () => ({
+    storyGenerating,
+    scriptGenerating,
+    universalOmniPolishRunning,
+    universalOmniPolishProgress,
+    batchImageRunning,
+    batchVideoRunning,
+  }),
 })
-
-const taskClockNow = ref(Date.now())
-let taskClockTimer = null
-
-function buildResourceTaskMeta(resourceType, resourceId) {
-  return {
-    dramaId: dramaId.value,
-    episodeId: currentEpisodeId.value,
-    resourceType,
-    resourceId,
-  }
-}
-
-function getRunningResourceTask(resourceType, resourceId) {
-  if (dramaId.value == null || currentEpisodeId.value == null || resourceId == null) return null
-  return genStore.getRunningTask(buildResourceTaskMeta(resourceType, resourceId))
-}
-
-function isResourceGenerating(resourceType, resourceId) {
-  return !!getRunningResourceTask(resourceType, resourceId)
-}
-
-function formatElapsed(ms) {
-  const total = Math.max(0, Math.floor(Number(ms || 0) / 1000))
-  const m = Math.floor(total / 60)
-  const s = total % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-function resourceElapsedLabel(resourceType, resourceId) {
-  const task = getRunningResourceTask(resourceType, resourceId)
-  return formatElapsed(task?.startedAt ? taskClockNow.value - task.startedAt : 0)
-}
-
-function clearLocalGeneratingState(resourceType, resourceId) {
-  const id = Number(resourceId)
-  switch (resourceType) {
-    case GEN_RESOURCE.CHAR_IMAGE:
-      generatingCharIds.delete(id)
-      break
-    case GEN_RESOURCE.PROP_IMAGE:
-      generatingPropIds.delete(id)
-      break
-    case GEN_RESOURCE.SCENE_IMAGE:
-      generatingSceneIds.delete(id)
-      break
-    case GEN_RESOURCE.SB_IMAGE:
-      generatingSbImageIds.delete(id)
-      break
-    case GEN_RESOURCE.SB_FIRST_IMAGE:
-      generatingSbFirstImageIds.delete(id)
-      break
-    case GEN_RESOURCE.SB_LAST_IMAGE:
-      generatingSbLastImageIds.delete(id)
-      break
-    case GEN_RESOURCE.SB_VIDEO:
-      generatingSbVideoIds.delete(id)
-      break
-    default:
-      break
-  }
-}
-
-async function stopResourceGeneration(resourceType, resourceId, reason = '已停止生成', skipConfirm = false) {
-  if (!skipConfirm && !(await confirmAdminProjectOperation('停止当前生成任务'))) return
-  genStore.stopResourceTask(buildResourceTaskMeta(resourceType, resourceId), reason)
-  clearLocalGeneratingState(resourceType, resourceId)
-  ElMessage.info('已停止生成，可修改提示词后重新生成')
-}
-
-async function stopSbFramePair(sb) {
-  if (!sb?.id) return
-  if (!(await confirmAdminProjectOperation('停止首尾帧生成任务'))) return
-  stopResourceGeneration(GEN_RESOURCE.SB_FIRST_IMAGE, sb.id, '已停止首帧生成', true)
-  stopResourceGeneration(GEN_RESOURCE.SB_LAST_IMAGE, sb.id, '已停止尾帧生成', true)
-}
-
-async function stopEpisodeTask(resourceType, reason = '已停止生成') {
-  if (!currentEpisodeId.value) return
-  if (!(await confirmAdminProjectOperation('停止当前集任务'))) return
-  genStore.stopResourceTask(buildResourceTaskMeta(resourceType, currentEpisodeId.value), reason)
-  ElMessage.info('已停止生成，可调整设置后重新生成')
-}
 const sbCharacterIds = ref({})  // sbId -> number[]，当前仅保留 0/1 个主角色，保持后端数组接口兼容
 const sbPropIds = ref({})       // sbId -> number[]，当前仅保留 0/1 个主道具，保持后端数组接口兼容
 const sbSceneId = ref({})
@@ -5700,76 +5634,6 @@ async function onGenerateVideo() {
   }
 }
 
-/** 无 task_id 时轮询刷新直到资源出现图片或超时（用于角色/道具/场景图生成） */
-async function pollUntilResourceHasImage(checker, maxAttempts = 20, intervalMs = 3000) {
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise((r) => setTimeout(r, intervalMs))
-    await loadDrama()
-    if (checker()) return
-  }
-}
-
-function pollTask(taskId, onDone, meta = {}) {
-  const resolvedMeta = {
-    dramaId: meta.dramaId ?? dramaId.value,
-    episodeId: meta.episodeId ?? currentEpisodeId.value,
-    dramaTitle: meta.dramaTitle ?? store.drama?.title,
-    episodeNumber: meta.episodeNumber ?? store.currentEpisode?.episode_number,
-    resourceType: meta.resourceType || 'unknown',
-    resourceId: meta.resourceId,
-    label: meta.label,
-    ...meta,
-  }
-  const longVideoTask =
-    resolvedMeta.resourceType === GEN_RESOURCE.SB_VIDEO ||
-    resolvedMeta.resourceType === GEN_RESOURCE.EPISODE_MERGE
-  return genStore.pollTask(taskId, resolvedMeta, onDone, {
-    ElMessage,
-    maxAttempts: longVideoTask ? 1800 : 450,
-    timeoutMessage: longVideoTask
-      ? '视频任务仍在排队或生成中，请稍后刷新查看'
-      : undefined,
-  })
-}
-
-/** 一键生成视频：暂停时等待，返回 { paused: true } 表示被暂停中断 */
-function pollTaskWithPause(taskId, onDone) {
-  const maxAttempts = 1800  // 1800 × 2s = 60 分钟；排队/待开始不计入次数
-  const interval = 2000
-  let attempts = 0
-  return new Promise((resolve) => {
-    const tick = async () => {
-      if (pipelinePaused.value) {
-        resolve({ paused: true })
-        return
-      }
-      attempts++
-      try {
-        const t = await taskAPI.get(taskId)
-        if (t.status === 'completed') {
-          if (onDone) await onDone()
-          resolve({ result: t.result })
-          return
-        }
-        if (t.status === 'failed') {
-          resolve({ error: t.error || '任务失败' })
-          return
-        }
-        if (t.status === 'queued' || t.status === 'pending') {
-          attempts = 0
-        }
-      } catch (pollErr) {
-        console.warn('[pollTaskWithPause] poll attempt failed:', pollErr?.message)
-      }
-      if (attempts < maxAttempts) setTimeout(tick, interval)
-      else {
-        resolve({ error: '任务查询超时（超过60分钟）' })
-      }
-    }
-    setTimeout(tick, interval)
-  })
-}
-
 function waitForResume() {
   return new Promise((resolve) => {
     pipelineResolveResume = resolve
@@ -6639,10 +6503,6 @@ async function runRepairPipeline() {
 onBeforeUnmount(() => {
   clearPendingProjectSettingsSave()
   window.removeEventListener('keydown', onImagePreviewKeydown)
-  if (taskClockTimer) {
-    clearInterval(taskClockTimer)
-    taskClockTimer = null
-  }
 })
 
 function applyRouteToStore() {
@@ -7493,9 +7353,7 @@ const filmCreateCtx = proxyRefs({
   switchWorkbenchTabForAnchor,
   syncGeneratingSetsFromStore,
   syncStoryboardStateFromEpisode,
-  taskAPI,
   taskClockNow,
-  taskClockTimer,
   textAiPayload,
   thumbImageUrl,
   toAbsoluteImageUrl,
@@ -7573,9 +7431,6 @@ const filmCreateCtx = proxyRefs({
 
 onMounted(async () => {
   window.addEventListener('keydown', onImagePreviewKeydown)
-  taskClockTimer = setInterval(() => {
-    taskClockNow.value = Date.now()
-  }, 1000)
   loadPipelineConcurrency()
   loadWorkflowPresets()
   loadRuntimeAiConfigs()
