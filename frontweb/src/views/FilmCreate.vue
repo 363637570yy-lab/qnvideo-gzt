@@ -578,6 +578,8 @@ const {
   sbUniversalSegmentText,
   sbVideoErrors,
   sbVideos,
+  setSbCharacterId,
+  setSbPropId,
   showFramePromptEditor,
   showSbPromptDialog,
   showVideoParamsDialog,
