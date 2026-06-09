@@ -1309,6 +1309,7 @@ const {
   ACTIVE_VIDEO_AI_CONFIG_TTL_MS,
   buildSbAuxTimelinePrompt,
   buildSbKeyframeTimelinePrompt,
+  buildUniversalSegmentFieldOverrides,
   buildSbVideoContextPrompt,
   buildSbVideoPromptForApi,
   canUseUniversalOmniVideoApi,
