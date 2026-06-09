@@ -130,7 +130,6 @@ import { characterLibraryAPI } from '@/api/characterLibrary'
 import { sceneLibraryAPI } from '@/api/sceneLibrary'
 import { propLibraryAPI } from '@/api/propLibrary'
 import { parseScriptIntoEpisodes } from '@/utils/scriptEpisodes'
-import { exportStoryboardSheet } from '@/utils/exportStoryboardSheet'
 import AIConfigContent from '@/components/AIConfigContent.vue'
 import WorkflowPresetConfigDialog from '@/components/WorkflowPresetConfigDialog.vue'
 import AccountMenu from '@/components/AccountMenu.vue'
@@ -171,6 +170,7 @@ import { useCharacters } from '@/features/filmCreate/workbenches/characters/useC
 import { useProps as usePropsComposable } from '@/features/filmCreate/workbenches/props/useProps'
 import { useScenes } from '@/features/filmCreate/workbenches/scenes/useScenes'
 import { useStoryboardSettings } from '@/features/filmCreate/workbenches/storyboards/useStoryboardSettings'
+import { useStoryboardAuxActions } from '@/features/filmCreate/workbenches/storyboards/useStoryboardAuxActions'
 import { useStoryboardWorkbench } from '@/features/filmCreate/workbenches/storyboards/useStoryboardWorkbench'
 import { useStoryboardVideoWorkflow } from '@/features/filmCreate/workbenches/storyboards/useStoryboardVideoWorkflow'
 import { useVideoWorkbench } from '@/features/filmCreate/workbenches/video/useVideoWorkbench'
@@ -743,6 +743,58 @@ const {
   restoreSelectionsFromBackend,
 })
 
+const {
+  formatSrtTimestamp,
+  normalizeAudioRelPath,
+  onExportNarrationSrt,
+  onExportStoryboardSheet,
+  onSaveSbNarrationField,
+  onTtsSbDialogue,
+  onTtsSbNarration,
+  onUpscaleSbImage,
+  playSbDialogueTts,
+  playSbNarrationTts,
+  playSbTtsFromRel,
+  sbDialogueAudioRelPath,
+  sbNarrationAudioRelPath,
+  stopSbTtsPreview,
+} = useStoryboardAuxActions({
+  store,
+  storyboardsAPI,
+  currentEpisodeId,
+  storyboards,
+  exportingStoryboardSheet,
+  upscalingSbIds,
+  ttsSbIds,
+  ttsSbNarrationIds,
+  sbDialogueAudioPaths,
+  sbNarrationAudioPaths,
+  sbNarration,
+  sbTitle,
+  sbLocation,
+  sbTime,
+  sbDuration,
+  sbDialogue,
+  sbAction,
+  sbResult,
+  sbAtmosphere,
+  sbShotType,
+  sbMovement,
+  sbLayoutDescription,
+  sbUniversalSegmentText,
+  storyboardUseFirstLastFrame,
+  loadSingleStoryboardMedia,
+  ttsAiPayload,
+  getSbFirstImage,
+  getSbLastImage,
+  buildFirstFrameImagePrompt,
+  buildLastFrameImagePrompt,
+  getSbSelectedScene,
+  getSbSelectedCharacters,
+  getSbSelectedProps,
+  getMovementLabel,
+})
+
 function trackFilmCreateAction(_action, _payload = {}) {
   // 单机版：无埋点上报
 }
@@ -1280,9 +1332,6 @@ const {
   getFinalizeMergeOptions,
 })
 
-/** 分镜 TTS 试听：避免多条同时播放 */
-let sbTtsPreviewAudio = null
-
 function getGeneratingSetsBag() {
   return {
     generatingCharIds,
@@ -1796,291 +1845,6 @@ async function onAddEpisode() {
   } catch (e) {
     ElMessage.error(e.message || '添加失败')
   }
-}
-
-/** P0-3: 对分镜图执行超分辨率（2x） */
-async function onUpscaleSbImage(sb) {
-  if (!sb?.id || upscalingSbIds.has(sb.id)) return
-  upscalingSbIds.add(sb.id)
-  try {
-    await storyboardsAPI.upscale(sb.id)
-    ElMessage.success('超分完成，图片已更新为高清版本')
-    await loadSingleStoryboardMedia(sb.id)
-  } catch (e) {
-    ElMessage.error(e.message || '超分辨率失败')
-  } finally {
-    upscalingSbIds.delete(sb.id)
-  }
-}
-
-function normalizeAudioRelPath(raw) {
-  const s = String(raw != null ? raw : '').trim().replace(/^\//, '')
-  return s
-}
-
-/** 对白 TTS 相对路径 */
-function sbDialogueAudioRelPath(sb) {
-  if (!sb?.id) return ''
-  const fromCache = sbDialogueAudioPaths.value[sb.id]
-  const fromRow = sb.audio_local_path
-  const raw = (fromCache != null && String(fromCache).trim() !== '') ? fromCache : (fromRow != null ? fromRow : '')
-  return normalizeAudioRelPath(raw)
-}
-
-/** 解说旁白 TTS 相对路径 */
-function sbNarrationAudioRelPath(sb) {
-  if (!sb?.id) return ''
-  const fromCache = sbNarrationAudioPaths.value[sb.id]
-  const fromRow = sb.narration_audio_local_path
-  const raw = (fromCache != null && String(fromCache).trim() !== '') ? fromCache : (fromRow != null ? fromRow : '')
-  return normalizeAudioRelPath(raw)
-}
-
-function playSbTtsFromRel(rel) {
-  if (!rel) return
-  const url = `/static/${rel}`
-  try {
-    if (sbTtsPreviewAudio) {
-      sbTtsPreviewAudio.pause()
-      sbTtsPreviewAudio = null
-    }
-    const a = new Audio(url)
-    sbTtsPreviewAudio = a
-    a.addEventListener('ended', () => {
-      if (sbTtsPreviewAudio === a) sbTtsPreviewAudio = null
-    })
-    a.play().catch(() => {
-      ElMessage.warning('无法播放音频，请检查文件是否存在')
-      if (sbTtsPreviewAudio === a) sbTtsPreviewAudio = null
-    })
-  } catch (_) {
-    ElMessage.warning('无法播放音频')
-  }
-}
-
-function playSbDialogueTts(sb) {
-  playSbTtsFromRel(sbDialogueAudioRelPath(sb))
-}
-
-function playSbNarrationTts(sb) {
-  playSbTtsFromRel(sbNarrationAudioRelPath(sb))
-}
-
-/** P2-4: 为分镜对白生成 TTS 配音 */
-async function onTtsSbDialogue(sb) {
-  if (!sb?.id || ttsSbIds.has(sb.id)) return
-  if (!sb.dialogue?.trim()) {
-    ElMessage.warning('该分镜没有对白内容')
-    return
-  }
-  ttsSbIds.add(sb.id)
-  try {
-    const res = await fetch('/api/v1/audio/extract', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ storyboard_id: sb.id, text: sb.dialogue, tts_kind: 'dialogue', ...ttsAiPayload() }),
-    })
-    const data = await res.json()
-    const businessOk = data.success === true || Number(data.code) === 200
-    if (!res.ok || !businessOk) {
-      throw new Error(data.error?.message || data.message || '配音失败')
-    }
-    if (data.data?.local_path) {
-      sbDialogueAudioPaths.value = { ...sbDialogueAudioPaths.value, [sb.id]: data.data.local_path }
-      sb.audio_local_path = data.data.local_path
-      ElMessage.success('配音已生成')
-    }
-  } catch (e) {
-    ElMessage.error(e.message || 'TTS 配音失败')
-  } finally {
-    ttsSbIds.delete(sb.id)
-  }
-}
-
-/** 为分镜解说旁白生成 TTS（与对白共用接口，文本不同） */
-async function onTtsSbNarration(sb) {
-  if (!sb?.id || ttsSbNarrationIds.has(sb.id)) return
-  const text = ((sbNarration.value[sb.id] ?? sb.narration) || '').toString().trim()
-  if (!text) {
-    ElMessage.warning('该分镜没有解说旁白内容')
-    return
-  }
-  ttsSbNarrationIds.add(sb.id)
-  try {
-    const res = await fetch('/api/v1/audio/extract', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ storyboard_id: sb.id, text, tts_kind: 'narration', ...ttsAiPayload() }),
-    })
-    const data = await res.json()
-    const businessOk = data.success === true || Number(data.code) === 200
-    if (!res.ok || !businessOk) {
-      throw new Error(data.error?.message || data.message || '解说配音失败')
-    }
-    if (data.data?.local_path) {
-      sbNarrationAudioPaths.value = { ...sbNarrationAudioPaths.value, [sb.id]: data.data.local_path }
-      sb.narration_audio_local_path = data.data.local_path
-      ElMessage.success('解说配音已生成')
-    }
-  } catch (e) {
-    ElMessage.error(e.message || '解说 TTS 失败')
-  } finally {
-    ttsSbNarrationIds.delete(sb.id)
-  }
-}
-
-function formatSrtTimestamp(ms) {
-  if (!Number.isFinite(ms) || ms < 0) ms = 0
-  const h = Math.floor(ms / 3600000)
-  const m = Math.floor((ms % 3600000) / 60000)
-  const s = Math.floor((ms % 60000) / 1000)
-  const z = Math.floor(ms % 1000)
-  const p2 = (n) => String(n).padStart(2, '0')
-  return `${p2(h)}:${p2(m)}:${p2(s)},${String(z).padStart(3, '0')}`
-}
-
-/** 导出当前集分镜表（每镜一行；首尾帧模式含首/尾帧专用提示词） */
-async function onExportStoryboardSheet() {
-  const boards = storyboards.value || []
-  if (!boards.length) {
-    ElMessage.warning('暂无分镜')
-    return
-  }
-  const epNum = store.currentEpisode?.episode_number
-  const dramaTitle = (store.drama?.title || 'project').replace(/[\\/:*?"<>|]/g, '_')
-  const epLabel = epNum != null ? `第${epNum}集` : `ep${currentEpisodeId.value || '1'}`
-  const filenameBase = `${dramaTitle}-${epLabel}-分镜表`
-  const useFirstLast = !!storyboardUseFirstLastFrame.value
-
-  exportingStoryboardSheet.value = true
-  const framePromptBySbId = {}
-  try {
-    await Promise.all(
-      boards.map(async (sb) => {
-        try {
-          const res = await storyboardsAPI.getFramePrompts(sb.id)
-          const fps = res?.frame_prompts || []
-          framePromptBySbId[sb.id] = {
-            first: fps.find((r) => r.frame_type === 'first')?.prompt?.trim() || '',
-            last: fps.find((r) => r.frame_type === 'last')?.prompt?.trim() || '',
-          }
-        } catch (_) {
-          framePromptBySbId[sb.id] = { first: '', last: '' }
-        }
-      })
-    )
-  } finally {
-    exportingStoryboardSheet.value = false
-  }
-
-  function resolveFirstFramePrompt(sbId) {
-    const cached = framePromptBySbId[sbId]?.first
-    if (cached) return cached
-    const imgPrompt = getSbFirstImage(sbId)?.prompt?.trim()
-    if (imgPrompt) return imgPrompt
-    if (useFirstLast) return buildFirstFrameImagePrompt(sbId)
-    return ''
-  }
-
-  function resolveLastFramePrompt(sbId) {
-    const cached = framePromptBySbId[sbId]?.last
-    if (cached) return cached
-    const imgPrompt = getSbLastImage(sbId)?.prompt?.trim()
-    if (imgPrompt) return imgPrompt
-    if (useFirstLast) return buildLastFrameImagePrompt(sbId)
-    return ''
-  }
-
-  const result = exportStoryboardSheet(
-    {
-      storyboards: boards,
-      getScene: (sbId) => getSbSelectedScene(sbId),
-      getCharacters: (sbId) => getSbSelectedCharacters(sbId),
-      getProps: (sbId) => getSbSelectedProps(sbId),
-      getMovementLabel,
-      getFirstFramePrompt: resolveFirstFramePrompt,
-      getLastFramePrompt: resolveLastFramePrompt,
-      getField(sb, key) {
-        const id = sb.id
-        const map = {
-          title: sbTitle.value[id],
-          location: sbLocation.value[id],
-          time: sbTime.value[id],
-          duration: sbDuration.value[id] ?? sb.duration,
-          dialogue: sbDialogue.value[id],
-          narration: sbNarration.value[id],
-          action: sbAction.value[id],
-          result: sbResult.value[id],
-          atmosphere: sbAtmosphere.value[id],
-          shot_type: sbShotType.value[id],
-          movement: sbMovement.value[id],
-          layout_description: sbLayoutDescription.value[id],
-          universal_segment_text: sbUniversalSegmentText.value[id],
-        }
-        if (Object.prototype.hasOwnProperty.call(map, key)) {
-          const v = map[key]
-          return v != null && v !== '' ? v : sb[key]
-        }
-        return sb[key]
-      },
-    },
-    filenameBase
-  )
-
-  if (!result.ok) {
-    ElMessage.warning('当前分镜没有可导出的内容')
-    return
-  }
-  ElMessage.success(`已导出分镜表（${result.count} 个镜头）`)
-}
-
-function onExportNarrationSrt() {
-  const boards = storyboards.value || []
-  if (!boards.length) {
-    ElMessage.warning('暂无分镜')
-    return
-  }
-  let tMs = 0
-  const lines = []
-  let idx = 1
-  for (const sb of boards) {
-    const durSec = Number(sbDuration.value[sb.id] ?? sb.duration)
-    const sec = Number.isFinite(durSec) && durSec > 0 ? durSec : 5
-    const durMs = Math.round(sec * 1000)
-    const text = ((sbNarration.value[sb.id] ?? sb.narration) || '').toString().trim()
-    if (text) {
-      const start = formatSrtTimestamp(tMs)
-      const end = formatSrtTimestamp(tMs + durMs)
-      lines.push(String(idx++), `${start} --> ${end}`, text, '')
-    }
-    tMs += durMs
-  }
-  if (!lines.length) {
-    ElMessage.warning('当前分镜没有可导出的解说文案')
-    return
-  }
-  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `narration-${currentEpisodeId.value || 'episode'}.srt`
-  a.click()
-  URL.revokeObjectURL(a.href)
-  ElMessage.success('已下载解说 SRT')
-}
-
-async function onSaveSbNarrationField(sb) {
-  if (!sb?.id) return
-  const next = (sbNarration.value[sb.id] || '').toString().trim()
-  const prev = (sb.narration || '').toString().trim()
-  if (next === prev) return
-  try {
-    await storyboardsAPI.update(sb.id, { narration: next || null })
-    const list = store.currentEpisode?.storyboards
-    if (Array.isArray(list)) {
-      const row = list.find((x) => Number(x.id) === Number(sb.id))
-      if (row) row.narration = next || null
-    }
-  } catch (_) { /* 静默失败，避免打断输入 */ }
 }
 
 function isSbUniversalMode(sbId) {
@@ -2850,6 +2614,7 @@ async function onInsertStoryboardBefore(sb) {
 
 onBeforeUnmount(() => {
   clearPendingProjectSettingsSave()
+  stopSbTtsPreview()
   window.removeEventListener('keydown', onImagePreviewKeydown)
 })
 
@@ -3086,7 +2851,6 @@ const filmCreateCtx = proxyRefs({
   estimateVideoDurationSecFromCharLen,
   Expand,
   exportingStoryboardSheet,
-  exportStoryboardSheet,
   extractIdentityAnchors,
   extractingAnchors,
   extractingCharAppearance,
@@ -3532,7 +3296,6 @@ const filmCreateCtx = proxyRefs({
   sbTitle,
   sbTruncatedDismissed,
   sbTruncatedWarning,
-  sbTtsPreviewAudio,
   sbUniversalSegmentText,
   sbUniversalSegmentTrimmed,
   sbVideoErrors,
