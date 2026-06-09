@@ -16,6 +16,31 @@ export function useStoryboardWorkbench(deps = {}) {
     store,
     imagesAPI,
     videosAPI,
+    uploadAPI,
+    genStore,
+    genResource = {},
+    getDramaId = () => null,
+    getCurrentEpisodeId = () => null,
+    getSelectedStyle = () => undefined,
+    getSelectedStylePrompt = () => '',
+    getSelectedStylePromptZh = () => '',
+    projectAspectRatio,
+    lastFrameUseFirstLayoutLock,
+    effectiveStoryboardFrameCount = () => 1,
+    storyboardImageAiPayload = () => ({}),
+    pipelineRunning,
+    pipelineConcurrency,
+    runConcurrently = async (items, _limit, worker) => {
+      for (const item of items) await worker(item)
+    },
+    pollTask = async () => null,
+    pollTaskWithPause = async () => null,
+    loadDrama = async () => {},
+    buildSbGenMeta = () => ({}),
+    angleToPromptFragment = () => ({ label: '' }),
+    imageReferenceUrlForApi = () => '',
+    getStoryboardAssetReferenceImages = () => [],
+    getSbStoryboardReferenceImages = () => [],
     videoClipDuration,
     storyboardUseFirstLastFrame,
     storyboardFrameCount,
@@ -117,6 +142,7 @@ export function useStoryboardWorkbench(deps = {}) {
 
   let storyboardMediaPromise = null
   let storyboardMediaKey = ''
+  let sbImageUploadPreconfirm = null
 
   function defaultStoryboardDuration() {
     return Number(videoClipDuration?.value ?? videoClipDuration) || 10
@@ -124,6 +150,40 @@ export function useStoryboardWorkbench(deps = {}) {
 
   function isFirstLastFrameMode() {
     return !!(storyboardUseFirstLastFrame?.value ?? storyboardUseFirstLastFrame)
+  }
+
+  function getDramaIdValue() {
+    const value = typeof getDramaId === 'function' ? getDramaId() : getDramaId
+    return value?.value ?? value
+  }
+
+  function getCurrentEpisodeIdValue() {
+    const value = typeof getCurrentEpisodeId === 'function' ? getCurrentEpisodeId() : getCurrentEpisodeId
+    return value?.value ?? value
+  }
+
+  function getRefValue(source, fallback = undefined) {
+    return source?.value ?? source ?? fallback
+  }
+
+  function isFreshUploadPreconfirm(marker) {
+    return !!(marker && Number(marker.expiresAt) > Date.now())
+  }
+
+  function consumeSbImageUploadPreconfirm(storyboardId, slot) {
+    const marker = sbImageUploadPreconfirm
+    sbImageUploadPreconfirm = null
+    return !!(
+      isFreshUploadPreconfirm(marker) &&
+      String(marker.storyboardId) === String(storyboardId) &&
+      String(marker.slot) === String(slot)
+    )
+  }
+
+  function getFirstImageFile(dataTransfer) {
+    if (!dataTransfer?.files?.length) return null
+    const file = Array.from(dataTransfer.files).find((item) => item.type.startsWith('image/'))
+    return file || null
   }
 
   function syncStoryboardStateFromEpisode(episode) {
@@ -873,6 +933,764 @@ export function useStoryboardWorkbench(deps = {}) {
     }
   }
 
+  function getNeighborKeyframeRefs(storyboardId, image) {
+    const all = getSbAllImages(storyboardId)
+      .filter((item) => item.frame_type === 'storyboard_keyframe' && item.batch_id && item.batch_id === image.batch_id)
+    const prev = all.find((item) => Number(item.slot_index) === Number(image.slot_index) - 1)
+    const next = all.find((item) => Number(item.slot_index) === Number(image.slot_index) + 1)
+    return { prev, next }
+  }
+
+  function buildRegenerateKeyframePrompt(storyboard, image, userNote = '') {
+    const base = storyboard.polished_prompt || storyboard.image_prompt || storyboard.description || ''
+    if (image?.aux_role) {
+      return [
+        `请重生成该分镜的「${auxRoleLabel(image.aux_role) || '辅助稿'}」。`,
+        '保持与已确认关键帧、角色、场景、道具一致；只改进辅助表达，不改变本镜头叙事。',
+        userNote ? `用户修改要求：${userNote}` : '',
+        base,
+      ].filter(Boolean).join('\n')
+    }
+    const slotText = image?.batch_count ? `第 ${Number(image.slot_index ?? 0) + 1}/${image.batch_count} 格` : '当前格'
+    return [
+      `请重生成同一条分镜连贯关键帧组中的${slotText}。`,
+      '必须承接上一格动作状态，并自然过渡到下一格；保持角色、服装、场景、道具、光影和镜头方向连续。',
+      '只修改当前格，不要生成拼图、分屏、宫格或多画面并列。',
+      userNote ? `用户修改要求：${userNote}` : '',
+      base,
+    ].filter(Boolean).join('\n')
+  }
+
+  async function onRegenerateKeyframeItem(storyboard, item) {
+    if (!storyboard?.id || !item?.img) return
+    if (item.img.locked) {
+      ElMessage.warning('该格已锁定，先解锁再重生')
+      return
+    }
+    let userNote = ''
+    try {
+      const res = await ElMessageBox.prompt('写下这一格要调整的内容；留空则只按前后格做连贯重生。', '单格重生', {
+        confirmButtonText: '开始重生',
+        cancelButtonText: '取消',
+        inputType: 'textarea',
+        inputPlaceholder: '例如：人物表情更紧张，镜头稍微推近，手部动作更清晰',
+      })
+      userNote = res?.value || ''
+    } catch {
+      return
+    }
+    generatingSbImageIds.add(storyboard.id)
+    try {
+      const { prev, next } = getNeighborKeyframeRefs(storyboard.id, item.img)
+      const refs = [
+        imageReferenceUrlForApi(prev),
+        imageReferenceUrlForApi(item.img),
+        imageReferenceUrlForApi(next),
+        ...getStoryboardAssetReferenceImages(storyboard.id),
+      ].filter(Boolean)
+      const result = await createStoryboardImageTasks(storyboard, {
+        prompt: buildRegenerateKeyframePrompt(storyboard, item.img, userNote),
+        frameType: item.img.frame_type || 'storyboard_keyframe',
+        batchId: item.img.batch_id || createStoryboardImageBatchId(storyboard.id, 'kf'),
+        slotIndex: Number(item.img.slot_index ?? 0),
+        batchCount: Number(item.img.batch_count || storyboardFrameCount?.value || storyboardFrameCount || 1),
+        referenceImages: refs,
+        auxRole: item.img.aux_role || undefined,
+        selected: !!item.img.selected,
+        paramsJson: {
+          ...parseImageParamsJson(item.img),
+          keyframe_description: keyframeTimelineLine(storyboard, item.img),
+          regenerate_from_image_id: item.img.id,
+          user_note: userNote,
+          prev_image_id: prev?.id || null,
+          next_image_id: next?.id || null,
+        },
+      })
+      if (result.failed > 0) throw new Error(result.error || '重生失败')
+      if (item.img.selected) await updateStoryboardImageMeta(storyboard.id, item.img, { selected: false })
+      ElMessage.success('该格已重生')
+      await loadSingleStoryboardMedia(storyboard.id)
+    } catch (error) {
+      ElMessage.error(error.message || '重生失败')
+    } finally {
+      generatingSbImageIds.delete(storyboard.id)
+    }
+  }
+
+  function buildAuxPrompt(storyboard, role) {
+    const roleLabel = auxRoleLabel(role) || '辅助参考'
+    const base = storyboard.polished_prompt || storyboard.image_prompt || storyboard.description || ''
+    const confirmed = getSbStoryboardReferenceImages(storyboard, { includeAux: false, fallbackMain: true })
+    return [
+      `基于当前分镜已确认关键帧生成「${roleLabel}」。`,
+      role === 'motion_sketch' ? '输出清晰的运动线稿，只表达人物动作方向、镜头运动路径和关键位移，不继承彩色成片风格。' : '',
+      role === 'layout_sketch' ? '输出构图草图，强调主体位置、前中后景、视线方向和画面重心，不追求成片细节。' : '',
+      role === 'pose_ref' ? '输出姿态参考，强调角色肢体动作、重心、手势与动态张力。' : '',
+      role === 'camera_path' ? '输出镜头路径参考，表达推拉摇移、视角变化和运动轨迹。' : '',
+      role === 'aux_ref' ? '输出辅助参考图，只服务于视频生成的运动/构图理解，不改变角色身份和场景设定。' : '',
+      confirmed.length ? `已确认关键帧数量：${confirmed.length}` : '',
+      base,
+    ].filter(Boolean).join('\n')
+  }
+
+  async function onGenerateStoryboardAux(storyboard, role) {
+    const dramaIdValue = getDramaIdValue()
+    if (!storyboard?.id || !dramaIdValue) return
+    generatingSbImageIds.add(storyboard.id)
+    try {
+      const refs = [
+        ...getSbStoryboardReferenceImages(storyboard, { includeAux: false, fallbackMain: true }).map(imageReferenceUrlForApi),
+        ...getStoryboardAssetReferenceImages(storyboard.id),
+      ].filter(Boolean)
+      const result = await createStoryboardImageTasks(storyboard, {
+        prompt: buildAuxPrompt(storyboard, role),
+        frameType: auxRoleFrameType(role),
+        batchId: createStoryboardImageBatchId(storyboard.id, 'aux'),
+        slotIndex: 0,
+        batchCount: 1,
+        referenceImages: refs,
+        auxRole: role,
+        selected: false,
+        paramsJson: { aux_role: role, source: 'confirmed_keyframes' },
+      })
+      if (result.failed > 0) throw new Error(result.error || '辅助稿生成失败')
+      ElMessage.success(`${auxRoleLabel(role)}已生成`)
+      await loadSingleStoryboardMedia(storyboard.id)
+    } catch (error) {
+      ElMessage.error(error.message || '辅助稿生成失败')
+    } finally {
+      generatingSbImageIds.delete(storyboard.id)
+    }
+  }
+
+  function buildFirstFrameImagePrompt(storyboardId) {
+    const storyboard = (store?.storyboards || []).find((item) => item.id === storyboardId)
+    return (storyboard?.polished_prompt || storyboard?.image_prompt || storyboard?.description || '').toString().trim()
+  }
+
+  function buildLastFrameImagePrompt(storyboardId) {
+    const parts = []
+    const loc = (sbLocation.value[storyboardId] || '').toString().trim()
+    const time = (sbTime.value[storyboardId] || '').toString().trim()
+    if (loc) parts.push(time ? `${loc}，${time}` : loc)
+    const shotType = (sbShotType.value[storyboardId] || '').toString().trim()
+    if (shotType) parts.push(shotType)
+    const angleH = sbAngleH.value[storyboardId] || ''
+    const angleV = sbAngleV.value[storyboardId] || ''
+    const angleS = sbAngleS.value[storyboardId] || ''
+    if (angleH && angleV && angleS) {
+      const { label } = angleToPromptFragment(angleH, angleV, angleS)
+      parts.push(label)
+    }
+    const result = (sbResult.value[storyboardId] || '').toString().trim()
+    const action = (sbAction.value[storyboardId] || '').toString().trim()
+    if (result) parts.push(result)
+    else if (action) parts.push(action)
+    const atmosphere = (sbAtmosphere.value[storyboardId] || '').toString().trim()
+    if (atmosphere) parts.push(atmosphere)
+    const style = getSelectedStylePromptZh() || getSelectedStylePrompt() || ''
+    if (style) parts.push(style)
+    parts.push('尾帧静止画面，展示动作完成后的最终状态与情绪余韵')
+    return parts.join('，')
+  }
+
+  async function getCachedFramePromptFromDb(storyboardId, slot) {
+    const frameType = slot === 'last' ? 'last' : 'first'
+    try {
+      const res = await storyboardsAPI.getFramePrompts(storyboardId)
+      const row = (res?.frame_prompts || []).find((item) => item.frame_type === frameType)
+      return row?.prompt?.trim() || ''
+    } catch (_) {
+      return ''
+    }
+  }
+
+  async function ensureProfessionalFramePrompt(storyboard, slot, { forceRegenerate = false } = {}) {
+    const frameType = slot === 'last' ? 'last' : 'first'
+    if (!forceRegenerate) {
+      const cached = await getCachedFramePromptFromDb(storyboard.id, slot)
+      if (cached) return cached
+    }
+    try {
+      const genRes = await storyboardsAPI.generateFramePrompt(storyboard.id, { frame_type: frameType })
+      if (!genRes?.task_id) throw new Error('帧提示词任务未创建')
+      const pollRes = await pollTask(genRes.task_id)
+      if (pollRes?.status !== 'completed') {
+        throw new Error(pollRes?.error || '帧提示词生成失败')
+      }
+      const fromTask = pollRes.result?.response?.single_frame?.prompt
+      if (fromTask && String(fromTask).trim()) return String(fromTask).trim()
+      const cached2 = await getCachedFramePromptFromDb(storyboard.id, slot)
+      if (cached2) return cached2
+    } catch (error) {
+      console.warn('[首尾帧] 专业帧提示词生成失败，使用拼接回退', error?.message)
+    }
+    return slot === 'last' ? buildLastFrameImagePrompt(storyboard.id) : buildFirstFrameImagePrompt(storyboard.id)
+  }
+
+  async function openFramePromptEditor(storyboard, slot) {
+    if (!storyboard?.id) return
+    editingFramePromptSb.value = storyboard
+    editingFramePromptSlot.value = slot
+    editingFramePromptText.value = ''
+    showFramePromptEditor.value = true
+    try {
+      const prompt = await ensureProfessionalFramePrompt(storyboard, slot)
+      editingFramePromptText.value = prompt || ''
+    } catch (_) {
+      editingFramePromptText.value = slot === 'last'
+        ? buildLastFrameImagePrompt(storyboard.id)
+        : buildFirstFrameImagePrompt(storyboard.id)
+    }
+  }
+
+  async function saveEditingFramePrompt() {
+    const storyboard = editingFramePromptSb.value
+    const slot = editingFramePromptSlot.value
+    if (!storyboard?.id || !slot) return
+    const text = (editingFramePromptText.value || '').trim()
+    if (!text) {
+      ElMessage.warning('提示词不能为空')
+      return
+    }
+    editingFramePromptSaving.value = true
+    try {
+      const frameType = slot === 'last' ? 'last' : 'first'
+      await storyboardsAPI.saveFramePrompt(storyboard.id, frameType, { prompt: text })
+      ElMessage.success('提示词已保存，后续生成将使用此版本')
+      showFramePromptEditor.value = false
+    } catch (error) {
+      ElMessage.error(error.message || '保存失败')
+    } finally {
+      editingFramePromptSaving.value = false
+    }
+  }
+
+  async function regenerateEditingFramePrompt() {
+    const storyboard = editingFramePromptSb.value
+    const slot = editingFramePromptSlot.value
+    if (!storyboard?.id || !slot) return
+    editingFramePromptRegenerating.value = true
+    try {
+      ElMessage.info('正在重新生成专业帧提示词…')
+      const fresh = await ensureProfessionalFramePrompt(storyboard, slot, { forceRegenerate: true })
+      editingFramePromptText.value = fresh || ''
+      ElMessage.success('已重新生成，可编辑后保存')
+    } catch (error) {
+      ElMessage.error(error.message || '生成失败')
+    } finally {
+      editingFramePromptRegenerating.value = false
+    }
+  }
+
+  const showSbFramePromptPreview = openFramePromptEditor
+
+  function projectAspectRatioValue() {
+    return projectAspectRatio?.value || projectAspectRatio || '16:9'
+  }
+
+  function isLastFrameLayoutLockEnabled() {
+    return !!(lastFrameUseFirstLayoutLock?.value ?? lastFrameUseFirstLayoutLock)
+  }
+
+  async function submitSbFrameImageTask(storyboard, slot, {
+    dramaIdValue = getDramaIdValue(),
+    style = getSelectedStyle(),
+    meta = {},
+    pollWithPause = false,
+  } = {}) {
+    const isLast = slot === 'last'
+    let idsToSave = sbCharacterIds.value[storyboard.id]
+    if (idsToSave === undefined) {
+      const row = (store?.storyboards || []).find((item) => item.id === storyboard.id)
+      const charList = Array.isArray(row?.characters) ? row.characters : []
+      idsToSave = charList
+        .map((character) => Number(typeof character === 'object' && character != null ? character.id : character))
+        .filter((id) => Number.isFinite(id))
+    }
+    const row = (store?.storyboards || []).find((item) => item.id === storyboard.id)
+    let prompt = ''
+    if (isFirstLastFrameMode()) {
+      prompt = await ensureProfessionalFramePrompt(storyboard, isLast ? 'last' : 'first')
+    } else if (isLast) {
+      prompt = buildLastFrameImagePrompt(storyboard.id) || row?.image_prompt || row?.description || ''
+    } else {
+      prompt = row?.polished_prompt || row?.image_prompt || row?.description || ''
+    }
+    await storyboardsAPI.update(storyboard.id, { character_ids: Array.isArray(idsToSave) ? idsToSave : [] })
+
+    let referenceImagesForCreate = undefined
+    const useFirstLayoutLock = isLast && isLastFrameLayoutLockEnabled()
+    if (useFirstLayoutLock) {
+      const firstImg = getSbFirstImage(storyboard.id)
+      if (firstImg) {
+        const firstUrl = assetImageUrl(firstImg) || firstImg.image_url || firstImg.local_path
+        if (firstUrl) referenceImagesForCreate = [firstUrl]
+      }
+    }
+
+    const res = await imagesAPI.create({
+      storyboard_id: storyboard.id,
+      drama_id: dramaIdValue,
+      prompt,
+      model: undefined,
+      style,
+      frame_type: frameTypeForSlot(slot),
+      batch_id: createStoryboardImageBatchId(storyboard.id, 'fl'),
+      slot_index: isLast ? 1 : 0,
+      batch_count: 2,
+      selected: true,
+      params_json: buildKeyframeParamsJson(storyboard, isLast ? 1 : 0, 2, null, frameTypeForSlot(slot)),
+      aspect_ratio: projectAspectRatioValue(),
+      reference_images: referenceImagesForCreate,
+      use_first_frame_layout_lock: isLast ? isLastFrameLayoutLockEnabled() : undefined,
+      ...storyboardImageAiPayload(),
+    })
+
+    const onDone = () => loadSingleStoryboardMedia(storyboard.id)
+    if (res?.task_id) {
+      if (pollWithPause) {
+        const result = await pollTaskWithPause(res.task_id, onDone)
+        if (result?.paused) return { paused: true, failed: 0 }
+        if (result?.error) throw new Error(result.error)
+      } else {
+        const pollRes = await pollTask(res.task_id, onDone, meta)
+        if (pollRes?.status === 'failed') throw new Error(pollRes.error || '生成失败')
+      }
+    } else {
+      await loadSingleStoryboardMedia(storyboard.id)
+    }
+
+    if (isFirstLastFrameMode()) {
+      if (isLast) delete sbSelectedLastImgId.value[storyboard.id]
+      else delete sbSelectedImgId.value[storyboard.id]
+    }
+    return { paused: false, failed: 0 }
+  }
+
+  async function onGenerateSbFrameImage(storyboard, slot) {
+    const dramaIdValue = getDramaIdValue()
+    if (!dramaIdValue || !storyboard?.id) return
+    if (!(await confirmAdminProjectOperation(slot === 'last' ? '生成尾帧' : '生成首帧'))) return
+    const isLast = slot === 'last'
+    const loadingSet = isLast ? generatingSbLastImageIds : generatingSbFirstImageIds
+    const meta = buildSbGenMeta(
+      storyboard,
+      isLast ? genResource.SB_LAST_IMAGE : genResource.SB_FIRST_IMAGE,
+      isLast ? '尾帧' : '首帧'
+    )
+    storyboard.errorMsg = ''
+    storyboard.error_msg = ''
+    loadingSet.add(storyboard.id)
+    genStore?.markRunning?.(meta)
+    try {
+      let idsToSave = sbCharacterIds.value[storyboard.id]
+      if (idsToSave === undefined) {
+        const row = (store?.storyboards || []).find((item) => item.id === storyboard.id)
+        const charList = Array.isArray(row?.characters) ? row.characters : []
+        idsToSave = charList
+          .map((character) => Number(typeof character === 'object' && character != null ? character.id : character))
+          .filter((id) => Number.isFinite(id))
+      }
+      const row = (store?.storyboards || []).find((item) => item.id === storyboard.id)
+      let prompt = ''
+      if (isFirstLastFrameMode()) {
+        prompt = await ensureProfessionalFramePrompt(storyboard, isLast ? 'last' : 'first')
+      } else if (isLast) {
+        prompt = buildLastFrameImagePrompt(storyboard.id) || row?.image_prompt || row?.description || ''
+      } else {
+        prompt = row?.polished_prompt || row?.image_prompt || row?.description || ''
+      }
+      try {
+        await storyboardsAPI.update(storyboard.id, { character_ids: Array.isArray(idsToSave) ? idsToSave : [] })
+      } catch (_) {
+        ElMessage.warning('保存分镜角色失败')
+        genStore?.markFailed?.(meta, '保存分镜角色失败')
+        return
+      }
+
+      let referenceImagesForCreate = undefined
+      const useFirstLayoutLock = isLast && isLastFrameLayoutLockEnabled()
+      if (useFirstLayoutLock) {
+        const firstImg = getSbFirstImage(storyboard.id)
+        if (firstImg) {
+          const firstUrl = assetImageUrl(firstImg) || firstImg.image_url || firstImg.local_path
+          if (firstUrl) referenceImagesForCreate = [firstUrl]
+        }
+      }
+      const res = await imagesAPI.create({
+        storyboard_id: storyboard.id,
+        drama_id: dramaIdValue,
+        prompt,
+        model: undefined,
+        style: getSelectedStyle(),
+        frame_type: frameTypeForSlot(slot),
+        batch_id: createStoryboardImageBatchId(storyboard.id, 'fl'),
+        slot_index: isLast ? 1 : 0,
+        batch_count: 2,
+        selected: true,
+        params_json: buildKeyframeParamsJson(storyboard, isLast ? 1 : 0, 2, null, frameTypeForSlot(slot)),
+        aspect_ratio: projectAspectRatioValue(),
+        reference_images: referenceImagesForCreate,
+        use_first_frame_layout_lock: isLast ? isLastFrameLayoutLockEnabled() : undefined,
+        ...storyboardImageAiPayload(),
+      })
+      ElMessage.success(isLast ? '尾帧生成任务已提交' : '首帧生成任务已提交')
+      if (res?.task_id) {
+        const pollRes = await pollTask(res.task_id, () => loadSingleStoryboardMedia(storyboard.id), meta)
+        if (pollRes?.status === 'completed') {
+          await loadDrama()
+          restoreSelectionsFromBackend()
+          if (isFirstLastFrameMode()) {
+            if (isLast) delete sbSelectedLastImgId.value[storyboard.id]
+            else delete sbSelectedImgId.value[storyboard.id]
+          }
+        } else if (pollRes?.status === 'failed') {
+          storyboard.errorMsg = pollRes.error || '生成失败'
+        }
+      } else {
+        await loadSingleStoryboardMedia(storyboard.id)
+        restoreSelectionsFromBackend()
+        genStore?.markDone?.(meta)
+        if (isFirstLastFrameMode()) {
+          if (isLast) delete sbSelectedLastImgId.value[storyboard.id]
+          else delete sbSelectedImgId.value[storyboard.id]
+        }
+      }
+    } catch (error) {
+      storyboard.errorMsg = error.message || '生成失败'
+      genStore?.markFailed?.(meta, error.message || '生成失败')
+      ElMessage.error(error.message || '生成失败')
+    } finally {
+      loadingSet.delete(storyboard.id)
+    }
+  }
+
+  async function onGenerateSbFramePair(storyboard) {
+    const hasFirst = !!(getSbFirstImage(storyboard.id) || (storyboard.image_url || storyboard.composed_image))
+    if (!hasFirst) {
+      await onGenerateSbFrameImage(storyboard, 'first')
+      if (!getSbFirstImage(storyboard.id) && !(storyboard.image_url || storyboard.composed_image)) return
+    }
+    await onGenerateSbFrameImage(storyboard, 'last')
+  }
+
+  function buildStoryboardKeyframePrompt(basePrompt, index, count) {
+    const body = (basePrompt || '').toString().trim()
+    if (count <= 1) return body
+    const positionHint = index === 0
+      ? '开场关键帧，承接本分镜动作开始状态'
+      : index === count - 1
+        ? '收束关键帧，承接前一张并展示动作结束状态'
+        : '中间过渡关键帧，承上启下，保持动作方向与画面连贯'
+    return [
+      `这是同一条分镜的连续关键帧组，请生成第 ${index + 1}/${count} 张独立完整画面。`,
+      positionHint,
+      '保持角色身份、服装、场景、道具、光影和画风连续；不要生成拼图、分屏、宫格或多画面并列。',
+      body,
+    ].filter(Boolean).join('\n')
+  }
+
+  function createStoryboardImageBatchId(storyboardId, kind = 'kf') {
+    const rand = Math.random().toString(36).slice(2, 8)
+    return `${kind}-${storyboardId}-${Date.now()}-${rand}`
+  }
+
+  async function createStoryboardImageTasks(storyboard, {
+    prompt,
+    frameType = undefined,
+    dramaIdValue = getDramaIdValue(),
+    model = undefined,
+    style = getSelectedStyle(),
+    meta = {},
+    pollWithPause = false,
+    batchId = null,
+    slotIndex = null,
+    batchCount = null,
+    referenceImages = null,
+    auxRole = null,
+    paramsJson = null,
+    selected = null,
+  } = {}) {
+    const resolvedFrameType = frameType || 'storyboard_keyframe'
+    const count = batchCount || effectiveStoryboardFrameCount(frameType)
+    const indexes = slotIndex != null ? [Number(slotIndex)] : Array.from({ length: count }, (_, index) => index)
+    const resolvedBatchId = batchId || createStoryboardImageBatchId(storyboard.id, auxRole ? 'aux' : 'kf')
+    let failed = 0
+    let paused = false
+    let lastError = ''
+
+    await runConcurrently(indexes, Math.min(3, count), async (index) => {
+      try {
+        const frameParamsJson = buildKeyframeParamsJson(storyboard, index, count, paramsJson, resolvedFrameType)
+        const res = await imagesAPI.create({
+          storyboard_id: storyboard.id,
+          drama_id: dramaIdValue,
+          prompt: buildStoryboardKeyframePrompt(prompt, index, count),
+          model,
+          style,
+          frame_type: resolvedFrameType,
+          batch_id: resolvedBatchId,
+          slot_index: index,
+          batch_count: count,
+          selected: selected == null ? count === 1 : !!selected,
+          aux_role: auxRole || undefined,
+          reference_images: Array.isArray(referenceImages) ? referenceImages : undefined,
+          params_json: Object.keys(frameParamsJson || {}).length ? frameParamsJson : undefined,
+          aspect_ratio: projectAspectRatioValue(),
+          ...storyboardImageAiPayload(),
+        })
+        if (res?.task_id) {
+          const onDone = () => loadSingleStoryboardMedia(storyboard.id)
+          if (pollWithPause) {
+            const result = await pollTaskWithPause(res.task_id, onDone)
+            if (result?.paused) {
+              paused = true
+              return { paused: true }
+            }
+            if (result?.error) throw new Error(result.error)
+          } else {
+            const pollRes = await pollTask(res.task_id, onDone, meta)
+            if (pollRes?.status === 'failed') throw new Error(pollRes.error || '生成失败')
+          }
+        } else {
+          await loadSingleStoryboardMedia(storyboard.id)
+        }
+      } catch (error) {
+        failed += 1
+        lastError = error.message || String(error)
+      }
+    })
+
+    return { count, failed, paused, error: lastError, batchId: resolvedBatchId }
+  }
+
+  async function onGenerateSbImage(storyboard) {
+    const dramaIdValue = getDramaIdValue()
+    if (!dramaIdValue || !storyboard?.id) return
+    if (!(await confirmAdminProjectOperation('生成分镜参考图'))) return
+    storyboard.errorMsg = ''
+    storyboard.error_msg = ''
+    const meta = buildSbGenMeta(storyboard, genResource.SB_IMAGE, '分镜图')
+    generatingSbImageIds.add(storyboard.id)
+    genStore?.markRunning?.(meta)
+    try {
+      let idsToSave = sbCharacterIds.value[storyboard.id]
+      if (idsToSave === undefined) {
+        const charList = Array.isArray(storyboard.characters) ? storyboard.characters : []
+        idsToSave = charList
+          .map((character) => Number(typeof character === 'object' && character != null ? character.id : character))
+          .filter((id) => Number.isFinite(id))
+      }
+      try {
+        await storyboardsAPI.update(storyboard.id, { character_ids: Array.isArray(idsToSave) ? idsToSave : [] })
+      } catch (error) {
+        console.warn('[分镜图] 保存角色勾选失败', error)
+        ElMessage.warning('保存分镜角色失败，请稍后重试')
+        genStore?.markFailed?.(meta, '保存分镜角色失败')
+        return
+      }
+      const result = await createStoryboardImageTasks(storyboard, {
+        prompt: storyboard.polished_prompt || storyboard.image_prompt || storyboard.description || '',
+        model: undefined,
+        style: getSelectedStyle(),
+        meta,
+      })
+      ElMessage.success(`已提交 ${result.count} 张分镜关键帧生成任务`)
+      if (result.failed > 0) {
+        storyboard.errorMsg = result.error || `${result.failed} 张生成失败`
+        genStore?.markFailed?.(meta, storyboard.errorMsg)
+      } else {
+        genStore?.markDone?.(meta)
+        ElMessage.success(result.count > 1 ? `${result.count} 张分镜关键帧生成完成` : '分镜图生成完成')
+      }
+    } catch (error) {
+      console.error(error)
+      storyboard.errorMsg = error.message || '生成失败'
+      genStore?.markFailed?.(meta, error.message || '生成失败')
+      ElMessage.error(error.message || '生成失败')
+    } finally {
+      generatingSbImageIds.delete(storyboard.id)
+    }
+  }
+
+  async function startBatchImageGeneration() {
+    const episodeId = getCurrentEpisodeIdValue()
+    if (!episodeId || batchImageRunning.value || getRefValue(pipelineRunning, false)) return
+    if (!(await confirmAdminProjectOperation('批量生成分镜图'))) return
+    batchImageErrors.value = []
+    batchImageStopping.value = false
+    batchImageRunning.value = true
+    try {
+      if (Object.keys(sbImages.value).length === 0) {
+        await loadStoryboardMedia()
+      }
+      const boards = store?.storyboards || []
+      const todo = boards.filter((storyboard) => !hasSbImage(storyboard))
+      if (todo.length === 0) {
+        ElMessage.info('所有分镜均已有图片，无需重新生成')
+        return
+      }
+      batchImageProgress.value = { current: 0, total: todo.length, failed: 0 }
+      const concurrency = getRefValue(pipelineConcurrency, 3) || 3
+      let doneCount = 0
+      let queueIndex = 0
+
+      const worker = async () => {
+        while (queueIndex < todo.length) {
+          if (batchImageStopping.value) break
+          const storyboard = todo[queueIndex++]
+          const useFirstLast = isFirstLastFrameMode()
+          try {
+            if (useFirstLast) {
+              await submitSbFrameImageTask(storyboard, 'first', { dramaIdValue: getDramaIdValue(), style: getSelectedStyle() })
+              await submitSbFrameImageTask(storyboard, 'last', { dramaIdValue: getDramaIdValue(), style: getSelectedStyle() })
+            } else {
+              const result = await createStoryboardImageTasks(storyboard, {
+                prompt: storyboard.polished_prompt || storyboard.image_prompt || storyboard.description || '',
+                dramaIdValue: getDramaIdValue(),
+                style: getSelectedStyle(),
+              })
+              if (result.failed > 0) {
+                batchImageErrors.value.push(`#${storyboard.storyboard_number ?? storyboard.id}: ${result.error || result.failed + ' 张生成失败'}`)
+                batchImageProgress.value = { ...batchImageProgress.value, failed: batchImageProgress.value.failed + 1 }
+              }
+            }
+          } catch (error) {
+            batchImageErrors.value.push(`#${storyboard.storyboard_number ?? storyboard.id}: ${error.message || '提交失败'}`)
+            batchImageProgress.value = { ...batchImageProgress.value, failed: batchImageProgress.value.failed + 1 }
+          }
+          doneCount++
+          batchImageProgress.value = { ...batchImageProgress.value, current: doneCount }
+        }
+      }
+
+      await Promise.allSettled(Array.from({ length: Math.min(concurrency, todo.length) }, () => worker()))
+      if (!batchImageStopping.value) {
+        restoreSelectionsFromBackend()
+        if (batchImageProgress.value.failed === 0) ElMessage.success(`分镜图批量生成完成（共 ${todo.length} 条）`)
+        else ElMessage.warning(`批量完成，${batchImageProgress.value.failed}/${todo.length} 条失败`)
+      } else {
+        ElMessage.info('批量生成已停止')
+      }
+    } finally {
+      batchImageRunning.value = false
+    }
+  }
+
+  async function stopBatchImageGeneration() {
+    if (!(await confirmAdminProjectOperation('停止批量生成分镜图'))) return
+    batchImageStopping.value = true
+  }
+
+  async function onUploadSbImageClick(storyboard, slot = 'first') {
+    if (!storyboard?.id) return
+    const useSlot = isFirstLastFrameMode() ? slot : 'first'
+    if (!(await confirmAdminProjectOperation(useSlot === 'last' ? '上传尾帧图片' : '上传分镜图片'))) return
+    sbImageUploadPreconfirm = {
+      storyboardId: String(storyboard.id),
+      slot: String(useSlot),
+      expiresAt: Date.now() + 60000,
+    }
+    sbImageUploadForId.value = storyboard.id
+    sbImageUploadSlotById.value = { ...sbImageUploadSlotById.value, [storyboard.id]: slot }
+    if (!isFirstLastFrameMode()) {
+      uploadingSbImageId.value = storyboard.id
+    }
+    if (sbImageFileInput.value) {
+      sbImageFileInput.value.value = ''
+      sbImageFileInput.value.click()
+    }
+  }
+
+  async function doUploadSbImage(storyboardId, file, slot = 'first') {
+    const dramaIdValue = getDramaIdValue()
+    if (!file || !storyboardId || !dramaIdValue) return
+    const useSlot = isFirstLastFrameMode() ? slot : 'first'
+    if (
+      !consumeSbImageUploadPreconfirm(storyboardId, useSlot) &&
+      !(await confirmAdminProjectOperation(useSlot === 'last' ? '上传尾帧图片' : '上传分镜图片'))
+    ) {
+      return
+    }
+    if (isFirstLastFrameMode()) {
+      sbImageUploadSlotById.value = { ...sbImageUploadSlotById.value, [storyboardId]: useSlot }
+    } else {
+      uploadingSbImageId.value = storyboardId
+    }
+    try {
+      if (!uploadAPI?.uploadImage) throw new Error('上传接口不可用')
+      const res = await uploadAPI.uploadImage(file, { dramaId: dramaIdValue })
+      const url = res?.url || res?.path
+      const localPath = res?.local_path
+      if (!url && !localPath) {
+        ElMessage.error('上传未返回地址')
+        return
+      }
+      const uploaded = await imagesAPI.upload({
+        storyboard_id: storyboardId,
+        drama_id: dramaIdValue,
+        image_url: url || '',
+        local_path: localPath || undefined,
+        frame_type: isFirstLastFrameMode() ? frameTypeForSlot(useSlot) : undefined,
+      })
+      ElMessage.success(useSlot === 'last' ? '尾帧上传成功' : '首帧上传成功')
+      if (uploaded?.id) {
+        const storyboard = (store?.storyboards || []).find((item) => item.id === storyboardId)
+        if (storyboard) onSelectSbFrameImage(storyboard, uploaded, useSlot)
+      } else if (!isFirstLastFrameMode()) {
+        const { [storyboardId]: _removed, ...rest } = sbSelectedImgId.value
+        sbSelectedImgId.value = rest
+      }
+      await loadSingleStoryboardMedia(storyboardId)
+      restoreSelectionsFromBackend()
+    } catch (error) {
+      ElMessage.error(error.message || '上传失败')
+    } finally {
+      uploadingSbImageId.value = null
+      const nextSlots = { ...sbImageUploadSlotById.value }
+      delete nextSlots[storyboardId]
+      sbImageUploadSlotById.value = nextSlots
+    }
+  }
+
+  function onSbImageFileChange(event) {
+    const file = event.target?.files?.[0]
+    const storyboardId = sbImageUploadForId.value
+    if (!file || !storyboardId) {
+      sbImageUploadPreconfirm = null
+      event.target.value = ''
+      return
+    }
+    const slot = sbImageUploadSlotById.value[storyboardId] || 'first'
+    doUploadSbImage(storyboardId, file, slot).finally(() => {
+      sbImageUploadForId.value = null
+      event.target.value = ''
+    })
+  }
+
+  function onSbImageDragOver(event, storyboardId) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+    dragOverSbId.value = storyboardId
+  }
+
+  function onSbImageDragLeave(event, storyboardId) {
+    event.preventDefault()
+    if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget)) return
+    if (storyboardId != null && dragOverSbId.value !== storyboardId) return
+    dragOverSbId.value = null
+  }
+
+  function onSbImageDrop(event, storyboard) {
+    event.preventDefault()
+    event.stopPropagation()
+    dragOverSbId.value = null
+    const file = getFirstImageFile(event.dataTransfer)
+    if (file && storyboard?.id) doUploadSbImage(storyboard.id, file)
+  }
+
   function onSelectSbMainVideo(storyboard, video) {
     sbSelectedVideoId.value = { ...sbSelectedVideoId.value, [storyboard.id]: video.id }
     storyboardsAPI.update(storyboard.id, {
@@ -1007,6 +1825,7 @@ export function useStoryboardWorkbench(deps = {}) {
     charactersAvailableToAddToSb,
     canUsePrevTailAsFirst,
     dragOverSbId,
+    doUploadSbImage,
     editingFramePromptRegenerating,
     editingFramePromptSaving,
     editingFramePromptSb,
@@ -1024,8 +1843,14 @@ export function useStoryboardWorkbench(deps = {}) {
     frameTypeForSlot,
     auxRoleFrameType,
     auxRoleLabel,
+    buildFirstFrameImagePrompt,
     buildKeyframeParamsJson,
+    buildLastFrameImagePrompt,
+    buildRegenerateKeyframePrompt,
+    buildStoryboardKeyframePrompt,
     compactKeyframeText,
+    createStoryboardImageBatchId,
+    createStoryboardImageTasks,
     defaultKeyframeDescription,
     formatKeyframeSecond,
     getMovementLabel,
@@ -1109,6 +1934,15 @@ export function useStoryboardWorkbench(deps = {}) {
     onSbAddCharacterCommand,
     onEditKeyframeDescription,
     onRemoveSbHistoryImage,
+    onSbImageDragLeave,
+    onSbImageDragOver,
+    onSbImageDrop,
+    onSbImageFileChange,
+    onGenerateSbFrameImage,
+    onGenerateSbFramePair,
+    onGenerateSbImage,
+    onGenerateStoryboardAux,
+    onRegenerateKeyframeItem,
     onSelectSbFrameImage,
     onSelectSbMainImage,
     onSelectSbMainVideo,
@@ -1119,18 +1953,24 @@ export function useStoryboardWorkbench(deps = {}) {
     onStripItemClick,
     onToggleKeyframeLocked,
     onToggleKeyframeSelected,
+    onUploadSbImageClick,
     parseImageParamsJson,
     parseJsonObject,
     quadPanelLabel,
+    regenerateEditingFramePrompt,
     resolveSbImageById,
     restoreSelectionsFromBackend,
     sbMainVideoPlayerKey,
     setSbCharacterId,
     setSbPropId,
+    saveEditingFramePrompt,
     showFramePromptEditor,
+    showSbFramePromptPreview,
     showSbPromptDialog,
     showVideoParamsDialog,
     splitByAudioLoading,
+    startBatchImageGeneration,
+    stopBatchImageGeneration,
     syncStoryboardStateFromEpisode,
     ttsSbIds,
     ttsSbNarrationIds,
@@ -1142,5 +1982,7 @@ export function useStoryboardWorkbench(deps = {}) {
     videoFrameContiguity,
     videoParamsSaving,
     videoParamsTarget,
+    openFramePromptEditor,
+    submitSbFrameImageTask,
   }
 }
