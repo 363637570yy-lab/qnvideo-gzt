@@ -61,6 +61,8 @@ function createDb() {
       storyboard_number INTEGER,
       title TEXT,
       duration INTEGER,
+      image_url TEXT,
+      local_path TEXT,
       video_url TEXT,
       updated_at TEXT,
       created_at TEXT,
@@ -175,6 +177,7 @@ function createDb() {
   db.prepare('INSERT INTO scenes (id, drama_id, location, updated_at) VALUES (30, 1, ?, ?)').run('街道', '2026-06-09T01:30:00.000Z');
   db.prepare('INSERT INTO props (id, drama_id, name, updated_at) VALUES (40, 1, ?, ?)').run('钥匙', '2026-06-09T01:40:00.000Z');
   db.prepare('INSERT INTO storyboards (id, episode_id, storyboard_number, title, duration, updated_at, created_at) VALUES (50, 10, 1, ?, 15, ?, ?)').run('开场', '2026-06-09T01:50:00.000Z', '2026-06-09T01:45:00.000Z');
+  db.prepare('UPDATE storyboards SET image_url = ?, local_path = ? WHERE id = 50').run('data:image/png;base64,AAA', 'storyboards/sb50.png');
   db.prepare('INSERT INTO video_generations (id, drama_id, storyboard_id, provider, model, video_url, status, created_at, updated_at, completed_at) VALUES (60, 1, 50, ?, ?, ?, ?, ?, ?, ?)').run('mock', 'video-test', 'videos/sb50.mp4', 'completed', '2026-06-09T02:00:00.000Z', '2026-06-09T02:05:00.000Z', '2026-06-09T02:05:00.000Z');
   db.prepare('INSERT INTO video_merges (id, drama_id, episode_id, title, provider, status, merged_url, duration, created_at, updated_at, completed_at) VALUES (70, 1, 10, ?, ?, ?, ?, 15, ?, ?, ?)').run('第一集合成', 'ffmpeg', 'completed', 'videos/merged.mp4', '2026-06-09T02:10:00.000Z', '2026-06-09T02:15:00.000Z', '2026-06-09T02:15:00.000Z');
   db.prepare('INSERT INTO async_tasks (id, type, status, drama_id, resource_type, resource_id) VALUES (?, ?, ?, ?, ?, ?)').run('task-1', 'image_generation', 'processing', 1, 'character', 'character_20');
@@ -221,6 +224,10 @@ test('workbench storyboard and video compose tabs return current episode data on
   assert.equal(storyboards.episode.id, 10);
   assert.equal(storyboards.storyboards.length, 1);
   assert.equal(storyboards.storyboards[0].title, '开场');
+  assert.equal(storyboards.storyboards[0].image_url, null);
+  assert.equal(storyboards.storyboards[0].thumbnail_url, '/static-thumb/320/storyboards/sb50.png');
+  assert.equal(Object.hasOwn(storyboards.storyboards[0], 'images'), false);
+  assert.equal(Object.hasOwn(storyboards.storyboards[0], 'videos'), false);
 
   const videoCompose = workbenchService.getVideoComposeTab(db, 1, { episode_id: 10 });
   assert.equal(videoCompose.episode.video_url, null);

@@ -3,7 +3,6 @@ const {
   resolveProjectImageSpecFromMetadata,
   resolveProjectVideoSpecFromMetadata,
 } = require('./projectMediaSpec');
-const episodeStoryboardService = require('./episodeStoryboardService');
 
 const RUNNING_TASK_STATUSES = ['queued', 'pending', 'processing', 'running'];
 const SERVICE_TYPE_LABELS = {
@@ -578,19 +577,70 @@ function normalizeVideoMergeRow(row) {
   };
 }
 
+function normalizeStoryboardRow(row) {
+  return {
+    id: row.id,
+    episode_id: row.episode_id ?? null,
+    scene_id: row.scene_id ?? null,
+    storyboard_number: row.storyboard_number ?? 0,
+    title: row.title || '',
+    description: row.description || '',
+    layout_description: row.layout_description || '',
+    location: row.location || '',
+    time: row.time || '',
+    duration: row.duration ?? null,
+    dialogue: row.dialogue || '',
+    narration: row.narration || '',
+    action: row.action || '',
+    atmosphere: row.atmosphere || '',
+    image_prompt: row.image_prompt || '',
+    polished_prompt: row.polished_prompt || '',
+    video_prompt: row.video_prompt || '',
+    characters: row.characters || '',
+    shot_type: row.shot_type || '',
+    angle: row.angle || '',
+    angle_h: row.angle_h || '',
+    angle_v: row.angle_v || '',
+    angle_s: row.angle_s || '',
+    movement: row.movement || '',
+    lighting_style: row.lighting_style || '',
+    depth_of_field: row.depth_of_field || '',
+    image_url: cleanUrl(row.image_url),
+    local_path: row.local_path || null,
+    thumbnail_url: localPathToThumb(row.local_path, 320),
+    main_panel_idx: row.main_panel_idx ?? null,
+    video_url: cleanUrl(row.video_url),
+    composed_image: cleanUrl(row.composed_image),
+    result: row.result || '',
+    emotion: row.emotion || '',
+    emotion_intensity: row.emotion_intensity ?? null,
+    error_msg: row.error_msg || null,
+    segment_index: row.segment_index ?? 0,
+    segment_title: row.segment_title || '',
+    continuity_snapshot: row.continuity_snapshot || null,
+    audio_local_path: row.audio_local_path || null,
+    narration_audio_local_path: row.narration_audio_local_path || null,
+    creation_mode: row.creation_mode || 'classic',
+    universal_segment_text: row.universal_segment_text || '',
+    first_frame_image_id: row.first_frame_image_id ?? null,
+    last_frame_image_id: row.last_frame_image_id ?? null,
+    last_frame_image_url: cleanUrl(row.last_frame_image_url),
+    last_frame_local_path: row.last_frame_local_path || null,
+    status: row.status || 'draft',
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+  };
+}
+
 function storyboardsForEpisode(db, episodeId) {
-  try {
-    return episodeStoryboardService.getStoryboardsForEpisode(db, episodeId);
-  } catch (_) {
-    return safeAll(
-      db,
-      `SELECT *
-       FROM storyboards
-       WHERE episode_id = ? AND deleted_at IS NULL
-       ORDER BY storyboard_number ASC, id ASC`,
-      episodeId
-    );
-  }
+  return safeAll(
+    db,
+    `SELECT *
+     FROM storyboards
+     WHERE episode_id = ? AND deleted_at IS NULL
+     ORDER BY storyboard_number ASC, id ASC`,
+    episodeId
+  ).map(normalizeStoryboardRow);
 }
 
 function videoGenerationsForStoryboards(db, dramaId, storyboardIds) {
