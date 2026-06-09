@@ -157,6 +157,7 @@ import { useNavigation } from '@/features/filmCreate/shared/composables/useNavig
 import { useAiRouteSelection } from '@/features/filmCreate/shared/composables/useAiRouteSelection'
 import { useProjectSettings } from '@/features/filmCreate/shared/composables/useProjectSettings'
 import { useWorkflowPresets } from '@/features/filmCreate/shared/composables/useWorkflowPresets'
+import { useFilmCreateProject } from '@/features/filmCreate/shared/composables/useFilmCreateProject'
 import { useWorkbenchLoader } from '@/features/filmCreate/shared/composables/useWorkbenchLoader'
 import { useMediaPreview } from '@/features/filmCreate/shared/composables/useMediaPreview'
 import { useTaskRuntime } from '@/features/filmCreate/shared/composables/useTaskRuntime'
@@ -183,6 +184,7 @@ const genStore = useGenerationTaskStore()
 const { isDark, toggle: toggleTheme } = useTheme()
 const currentUser = ref(getCurrentUser())
 const isAdminUser = ref(isAdmin())
+let loadDrama = async () => {}
 const projectOwnerLabel = computed(() => {
   const owner = store.drama?.owner_user || store.drama?.created_by_user || {}
   return owner.display_name || owner.username || store.drama?.owner_user_id || '未知用户'
@@ -1515,6 +1517,44 @@ async function recoverAndSyncEpisodeTasks(epId) {
   }
 }
 
+const filmCreateProject = useFilmCreateProject({
+  route,
+  store,
+  dramaAPI,
+  backfillDramaStylePromptMetadataIfNeeded,
+  workbenchTabLoaded,
+  filmWorkbenchTab,
+  selectedEpisodeId,
+  savedCurrentEpisodeNumber,
+  scriptTitle,
+  storyInput,
+  storyStyle,
+  storyType,
+  workbenchSummary,
+  clearPendingProjectSettingsSave,
+  setProjectSettingsHydrating,
+  hydrateProjectSettingsFromDrama,
+  hydrateStoryboardSettingsFromMetadata,
+  applyProjectAiRouteSelection,
+  syncStoryboardStateFromEpisode,
+  loadStoryboardMedia,
+  markAllWorkbenchTabsLoaded,
+  loadWorkbenchSummary,
+  loadWorkbenchTab,
+  loadInitialWorkbenchData,
+  resetWorkbenchTabLoaded,
+  resetScriptWorkbenchState,
+  resetProjectSettings,
+  resetStoryboardSettings,
+  recoverAndSyncEpisodeTasks,
+})
+loadDrama = filmCreateProject.loadDrama
+const {
+  applyRouteToStore,
+  loadDramaPromise,
+  onEpisodeSelect,
+} = filmCreateProject
+
 function imageReferenceUrlForApi(item) {
   const url = assetImageUrl(item)
   return url || ''
@@ -1530,86 +1570,6 @@ function getStoryboardAssetReferenceImages(sbId) {
   getSbSelectedCharacters(sbId).forEach((c) => add(imageReferenceUrlForApi(c)))
   getSbSelectedProps(sbId).forEach((p) => add(imageReferenceUrlForApi(p)))
   return refs.filter(Boolean)
-}
-
-function onEpisodeSelect(epId) {
-  if (epId == null) {
-    store.setCurrentEpisode(null)
-    store.setScriptContent('')
-    scriptTitle.value = ''
-    syncStoryboardStateFromEpisode(null)
-    return
-  }
-  ;['characters', 'scenes', 'props', 'storyboards', 'videoCompose'].forEach((key) => {
-    workbenchTabLoaded[key] = false
-  })
-  const list = store.drama?.episodes || []
-  const ep = list.find((e) => Number(e.id) === Number(epId))
-  if (!ep) return
-  store.setCurrentEpisode(ep)
-  store.setScriptContent(ep.script_content || '')
-  scriptTitle.value = ep.title || '第' + (ep.episode_number || 0) + '集'
-  syncStoryboardStateFromEpisode(ep)
-  loadWorkbenchTab(filmWorkbenchTab.value, { force: true }).catch(() => {})
-  recoverAndSyncEpisodeTasks(epId)
-}
-
-let loadDramaPromise = null
-
-async function loadDrama({ force = false, recoverTasks = false } = {}) {
-  if (!store.dramaId) return
-  if (!force && loadDramaPromise) return loadDramaPromise
-  loadDramaPromise = (async () => {
-    let d = await dramaAPI.get(store.dramaId)
-    d = await backfillDramaStylePromptMetadataIfNeeded(dramaAPI, store.dramaId, d)
-    store.setDrama(d)
-    setProjectSettingsHydrating(true)
-    try {
-      // 恢复「故事生成」框的梗概（项目 description 存的是故事梗概）和项目级生成设置
-      storyInput.value = (d.description || '').toString().trim()
-      storyStyle.value = (d.metadata && d.metadata.story_style) ? d.metadata.story_style : ''
-      storyType.value = d.genre || ''
-      hydrateProjectSettingsFromDrama(d)
-      hydrateStoryboardSettingsFromMetadata(d.metadata || {})
-      applyProjectAiRouteSelection(d.metadata || {})
-    } finally {
-      nextTick(() => {
-        setProjectSettingsHydrating(false)
-      })
-    }
-    const list = d.episodes || []
-    // 优先保持当前选中的集（按 id 在最新列表中查找），避免 AI 生成角色等操作后误切到其他集
-    const currentId = selectedEpisodeId.value
-    let ep = currentId != null ? list.find((e) => Number(e.id) === Number(currentId)) : null
-    if (!ep) {
-      const wantNum = savedCurrentEpisodeNumber.value
-      ep = list.find((e) => Number(e.episode_number) === Number(wantNum)) || list[0] || null
-    }
-    store.setCurrentEpisode(ep)
-    if (ep) {
-      store.setScriptContent(ep.script_content || '')
-      scriptTitle.value = ep.title || '第' + (ep.episode_number || 0) + '集'
-      selectedEpisodeId.value = ep.id
-    } else {
-      store.setScriptContent('')
-      scriptTitle.value = ''
-      selectedEpisodeId.value = null
-    }
-    syncStoryboardStateFromEpisode(ep)
-    await loadStoryboardMedia()
-    markAllWorkbenchTabsLoaded()
-    loadWorkbenchSummary({ applySettings: false })
-    if (recoverTasks) {
-      await recoverAndSyncEpisodeTasks(ep?.id)
-    }
-  })()
-  try {
-    return await loadDramaPromise
-  } catch (e) {
-    ElMessage.error(e.message || '加载失败')
-  } finally {
-    loadDramaPromise = null
-  }
 }
 
 function onLastFrameLayoutLockChange() {
@@ -1981,27 +1941,6 @@ onBeforeUnmount(() => {
   stopSbTtsPreview()
   window.removeEventListener('keydown', onImagePreviewKeydown)
 })
-
-function applyRouteToStore() {
-  clearPendingProjectSettingsSave()
-  const id = route.params.id
-  if (id && id !== 'new') {
-    resetWorkbenchTabLoaded()
-    store.setDrama({ id: Number(id) })
-    if (route.query.episode) {
-      selectedEpisodeId.value = Number(route.query.episode)
-    }
-    loadInitialWorkbenchData({ recoverTasks: true })
-  } else {
-    store.reset()
-    resetWorkbenchTabLoaded()
-    workbenchSummary.value = null
-    resetScriptWorkbenchState()
-    resetProjectSettings()
-    resetStoryboardSettings()
-    applyProjectAiRouteSelection({})
-  }
-}
 
 // 过渡桥接：主要 UI 模板已拆出组件，业务状态暂留父页面；后续按 tab 下沉到 composables。
 const filmCreateCtx = proxyRefs({
