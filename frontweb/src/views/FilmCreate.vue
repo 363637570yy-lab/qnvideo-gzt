@@ -168,6 +168,7 @@ import { useCharacters } from '@/features/filmCreate/workbenches/characters/useC
 import { useProps as usePropsComposable } from '@/features/filmCreate/workbenches/props/useProps'
 import { useScenes } from '@/features/filmCreate/workbenches/scenes/useScenes'
 import { useStoryboardSettings } from '@/features/filmCreate/workbenches/storyboards/useStoryboardSettings'
+import { useStoryboardWorkbench } from '@/features/filmCreate/workbenches/storyboards/useStoryboardWorkbench'
 import { useVideoWorkbench } from '@/features/filmCreate/workbenches/video/useVideoWorkbench'
 import { getCurrentUser, isAdmin } from '@/utils/auth'
 
@@ -871,36 +872,88 @@ const navSteps = computed(() => {
   ]
 })
 
-const sbCharacterIds = ref({})  // sbId -> number[]，当前仅保留 0/1 个主角色，保持后端数组接口兼容
-const sbPropIds = ref({})       // sbId -> number[]，当前仅保留 0/1 个主道具，保持后端数组接口兼容
-const sbSceneId = ref({})
-const sbDialogue = ref({})
-const sbNarration = ref({})
-const sbShotType = ref({})
-/** 视频提示词组成（可编辑），key 为分镜 id */
-const sbTitle = ref({})
-const sbLocation = ref({})
-const sbTime = ref({})
-const sbDuration = ref({})
-const sbAction = ref({})
-const sbResult = ref({})
-const sbAtmosphere = ref({})
-const sbAngle = ref({})
-const sbAngleH = ref({})   // 结构化视角：水平方向
-const sbAngleV = ref({})   // 结构化视角：俯仰角度
-const sbAngleS = ref({})   // 结构化视角：景别
-const sbMovement = ref({})
-const sbLighting = ref({})   // 灯光风格
-const sbDof = ref({})        // 景深
-const sbLayoutDescription = ref({})  // 空间布局与人物站位描述（生成分镜时 AI 输出的最高优先级合同，用于首尾帧强制一致）
-const regeneratingLayoutSbIds = reactive(new Set())  // 正在 AI 重新生成布局描述的分镜 id 集合
-/** 分镜创作模式：classic | universal（默认 classic，存库 storyboards.creation_mode） */
-const sbCreationMode = ref({})
-/** 全能模式片段描述（存库 universal_segment_text，与经典参考图字段独立） */
-const sbUniversalSegmentText = ref({})
-// 分镜图片/视频列表（由 /images?storyboard_id=xx 和 /videos?storyboard_id=xx 拉取）
-const sbImages = ref({})
-const sbVideos = ref({})
+const {
+  batchImageErrors,
+  batchImageProgress,
+  batchImageRunning,
+  batchImageStopping,
+  batchVideoErrors,
+  batchVideoProgress,
+  batchVideoRunning,
+  batchVideoStopping,
+  dragOverSbId,
+  editingFramePromptRegenerating,
+  editingFramePromptSaving,
+  editingFramePromptSb,
+  editingFramePromptSlot,
+  editingFramePromptText,
+  editingSbImagePromptId,
+  editingSbImagePromptText,
+  editingSbVideoPromptId,
+  editingSbVideoPromptText,
+  generatingSbFirstImageIds,
+  generatingSbImageIds,
+  generatingSbLastImageIds,
+  generatingSbVideoIds,
+  generatingUniversalSegmentIds,
+  inferringParams,
+  linkingTailFrameIds,
+  regeneratingLayoutSbIds,
+  regenSbImagesForAsset,
+  regenSbImagesProgress,
+  sbAction,
+  sbAngle,
+  sbAngleH,
+  sbAngleS,
+  sbAngleV,
+  sbAtmosphere,
+  sbCharacterIds,
+  sbCreationMode,
+  sbDialogue,
+  sbDialogueAudioPaths,
+  sbDof,
+  sbDuration,
+  sbImageFileInput,
+  sbImages,
+  sbImageUploadForId,
+  sbImageUploadSlotById,
+  sbLayoutDescription,
+  sbLighting,
+  sbLocation,
+  sbMovement,
+  sbNarration,
+  sbNarrationAudioPaths,
+  sbPropIds,
+  sbPromptImageText,
+  sbPromptPolishedText,
+  sbPromptPolishing,
+  sbPromptSaving,
+  sbPromptTarget,
+  sbPromptVideoText,
+  sbResult,
+  sbSceneId,
+  sbSelectedImgId,
+  sbSelectedLastImgId,
+  sbSelectedVideoId,
+  sbShotType,
+  sbTime,
+  sbTitle,
+  sbUniversalSegmentText,
+  sbVideoErrors,
+  sbVideos,
+  showFramePromptEditor,
+  showSbPromptDialog,
+  showVideoParamsDialog,
+  splitByAudioLoading,
+  ttsSbIds,
+  ttsSbNarrationIds,
+  uploadingSbImageId,
+  upscalingSbIds,
+  usingPrevTailAsFirstIds,
+  videoFrameContiguity,
+  videoParamsSaving,
+  videoParamsTarget,
+} = useStoryboardWorkbench()
 const {
   baseUrl,
   previewImageUrl,
@@ -934,76 +987,14 @@ const {
   parseExtraImages,
   localPathToUrl,
 })
-const sbVideoErrors = ref({})
-const generatingSbImageIds = reactive(new Set())
-const generatingSbVideoIds = reactive(new Set())
-const generatingUniversalSegmentIds = reactive(new Set())
-// 重新生成角色/场景/道具关联分镜图的 loading set，key: 'char-{id}' | 'scene-{id}' | 'prop-{id}'
-const regenSbImagesForAsset = reactive(new Set())
-const regenSbImagesProgress = ref({})
-// 批量生成分镜图
-const batchImageRunning = ref(false)
-const batchImageStopping = ref(false)
-const batchImageProgress = ref({ current: 0, total: 0, failed: 0 })
-const inferringParams = ref(false)
-const showVideoParamsDialog = ref(false)
-const videoParamsTarget = ref(null)
-const videoParamsSaving = ref(false)
-const splitByAudioLoading = ref(false)
-const batchImageErrors = ref([])
-// 批量生成分镜视频
-const batchVideoRunning = ref(false)
-const batchVideoStopping = ref(false)
-const batchVideoProgress = ref({ current: 0, total: 0, failed: 0 })
-const batchVideoErrors = ref([])
-// P0-1: 连贯帧模式
-const videoFrameContiguity = ref(false)
-// P0-3: 分镜超分辨率 loading set
-const upscalingSbIds = reactive(new Set())
-// P2-4: TTS 状态
-const ttsSbIds = reactive(new Set())
-const ttsSbNarrationIds = reactive(new Set())
-// 尾帧衔接 loading 状态
-const linkingTailFrameIds = reactive(new Set())
-// “上镜尾帧”（将上一分镜尾帧图片直接设为当前首帧）loading 状态
-const usingPrevTailAsFirstIds = reactive(new Set())
-/** 对白 TTS 路径缓存（与 storyboards.audio_local_path 一致） */
-const sbDialogueAudioPaths = ref({})
-/** 解说旁白 TTS 路径缓存（与 storyboards.narration_audio_local_path 一致） */
-const sbNarrationAudioPaths = ref({})
 /** 分镜 TTS 试听：避免多条同时播放 */
 let sbTtsPreviewAudio = null
-/** 正在编辑视频提示词的分镜 id；编辑中显示文本框与保存/取消 */
-const editingSbVideoPromptId = ref(null)
-const editingSbVideoPromptText = ref('')
-/** 正在编辑图片提示词的分镜 id（行内编辑，保留供内部 onSaveSbImagePrompt 使用） */
-const editingSbImagePromptId = ref(null)
-const editingSbImagePromptText = ref('')
-/** 分镜提示词弹窗 */
-const showSbPromptDialog = ref(false)
-const sbPromptTarget = ref(null)
-const sbPromptImageText = ref('')       // 原始 image_prompt
-const sbPromptPolishedText = ref('')    // AI 优化后 polished_prompt
-const sbPromptVideoText = ref('')       // video_prompt
-const sbPromptSaving = ref(false)
-const sbPromptPolishing = ref(false)
-/** 首尾帧提示词编辑器 */
-const showFramePromptEditor = ref(false)
-const editingFramePromptSb = ref(null)
-const editingFramePromptSlot = ref('first') // 'first' | 'last'
-const editingFramePromptText = ref('')
-const editingFramePromptSaving = ref(false)
-const editingFramePromptRegenerating = ref(false)
-const uploadingSbImageId = ref(null)
-const sbImageFileInput = ref(null)
-const sbImageUploadForId = ref(null)
 // 角色/道具/场景 上传图片
 const resourceImageFileInput = ref(null)
 const resourceUploadType = ref(null) // 'character' | 'prop' | 'scene'
 const resourceUploadId = ref(null)
 const uploadingResourceId = ref(null) // 'char-1' | 'prop-2' | 'scene-3'
 const dragOverResourceKey = ref(null) // 'char-1' | 'prop-2' | 'scene-3'
-const dragOverSbId = ref(null)
 function getFirstImageFile(dataTransfer) {
   if (!dataTransfer?.files?.length) return null
   const file = Array.from(dataTransfer.files).find((f) => f.type.startsWith('image/'))
@@ -1514,14 +1505,6 @@ async function loadSingleStoryboardMedia(sbId) {
 }
 
 // ── 主图选择 ─────────────────────────────────────────────────────────
-
-const sbSelectedImgId = ref({})   // sbId → 选中的首帧/主图 image_generation.id
-const sbSelectedLastImgId = ref({}) // sbId → 选中的尾帧 image_generation.id
-const sbSelectedVideoId = ref({}) // sbId → 选中的 video_generation.id
-const generatingSbFirstImageIds = reactive(new Set())
-const generatingSbLastImageIds = reactive(new Set())
-/** sbId → 'first' | 'last'，上传目标槽位 */
-const sbImageUploadSlotById = ref({})
 
 /**
  * 从后端 storyboard.image_url / local_path 恢复主图选择状态。
