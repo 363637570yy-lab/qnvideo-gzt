@@ -743,6 +743,9 @@ const {
   restoreSelectionsFromBackend,
 })
 
+const sbTruncatedWarning = ref(false)
+const sbTruncatedDismissed = ref(false)
+
 const {
   canSplitSbByAudio,
   countDialogueLinesInSb,
@@ -839,7 +842,7 @@ const {
   workflowPresetPayload,
   textAiPayload,
   ttsAiPayload,
-  pollTask,
+  pollTask: (...args) => pollTask(...args),
   polishUniversalSegmentsAfterGeneration,
   getSbFirstImage,
   getSbLastImage,
@@ -888,8 +891,6 @@ const storyboardGenerating = computed(() =>
 /** 分镜批量生成结束后，按镜序逐个润色全能片段（仅勾选全能模式且各镜为 universal 且有正文时） */
 const universalOmniPolishRunning = ref(false)
 const universalOmniPolishProgress = ref({ current: 0, total: 0, label: '' })
-const sbTruncatedWarning = ref(false)
-const sbTruncatedDismissed = ref(false)
 async function loadPipelineConcurrency() {
   try {
     const res = await aiAPI.runtimeRoutes()
