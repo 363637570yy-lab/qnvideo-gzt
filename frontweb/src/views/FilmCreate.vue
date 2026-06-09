@@ -164,6 +164,7 @@ import { useTaskRuntime } from '@/features/filmCreate/shared/composables/useTask
 import { usePipelineRunner } from '@/features/filmCreate/shared/composables/usePipelineRunner'
 import { usePipelineOrchestrator } from '@/features/filmCreate/shared/composables/usePipelineOrchestrator'
 import { useResourceImageManager } from '@/features/filmCreate/shared/composables/useResourceImageManager'
+import { useAssetStoryboardLinks } from '@/features/filmCreate/shared/composables/useAssetStoryboardLinks'
 import { localPathToUrl as resourceLocalPathToUrl, parseExtraImages as parseResourceExtraImages } from '@/features/filmCreate/shared/utils/resourceImages'
 import { runGenerateStoryFromPremise } from '@/composables/useStoryGeneration'
 import { useScriptWorkbench } from '@/features/filmCreate/workbenches/script/useScriptWorkbench'
@@ -746,6 +747,25 @@ const {
   groupByStoryboardId,
   getSbVideosRef,
   restoreSelectionsFromBackend,
+})
+
+const {
+  dedupeStoryboardsForAssetLink,
+  getCharAffectedStoryboards,
+  getSceneAffectedStoryboards,
+  getPropAffectedStoryboards,
+  scrollToStoryboard,
+  onRegenAffectedSbImages,
+} = useAssetStoryboardLinks({
+  storyboards,
+  filmWorkbenchTab,
+  regenSbImagesForAsset,
+  regenSbImagesProgress,
+  storyboardUseFirstLastFrame,
+  dramaId,
+  submitSbFrameImageTask,
+  createStoryboardImageTasks,
+  getSelectedStyle,
 })
 
 const sbTruncatedWarning = ref(false)
@@ -1574,107 +1594,6 @@ function getStoryboardAssetReferenceImages(sbId) {
 
 function onLastFrameLayoutLockChange() {
   scheduleProjectSettingsSave(false)
-}
-
-/** 同镜号多行时只保留 id 最大的一条（与后端 dedupe 一致，避免「影响的分镜」重复 #N） */
-function dedupeStoryboardsForAssetLink(list) {
-  const byNum = new Map()
-  const extras = []
-  for (const sb of list || []) {
-    const n = Number(sb?.storyboard_number)
-    if (Number.isFinite(n) && n > 0) {
-      const prev = byNum.get(n)
-      if (!prev || Number(sb.id) > Number(prev.id)) byNum.set(n, sb)
-    } else {
-      extras.push(sb)
-    }
-  }
-  return [...byNum.values(), ...extras].sort(
-    (a, b) => (Number(a.storyboard_number) || 0) - (Number(b.storyboard_number) || 0)
-  )
-}
-
-/** 返回包含指定角色的所有分镜（已排序） */
-function getCharAffectedStoryboards(charId) {
-  const matched = (storyboards.value || []).filter((sb) => {
-    if (!sb.characters) return false
-    const chars = Array.isArray(sb.characters) ? sb.characters : []
-    return chars.some((c) => Number(typeof c === 'object' && c != null ? c.id : c) === Number(charId))
-  })
-  return dedupeStoryboardsForAssetLink(matched)
-}
-
-/** 返回指定场景关联的所有分镜 */
-function getSceneAffectedStoryboards(sceneId) {
-  const matched = (storyboards.value || []).filter(
-    (sb) => sb.scene_id != null && Number(sb.scene_id) === Number(sceneId)
-  )
-  return dedupeStoryboardsForAssetLink(matched)
-}
-
-/** 返回包含指定道具的所有分镜（已排序） */
-function getPropAffectedStoryboards(propId) {
-  const matched = (storyboards.value || []).filter((sb) => {
-    if (!sb.prop_ids) return false
-    const pids = Array.isArray(sb.prop_ids) ? sb.prop_ids : []
-    return pids.some((pid) => Number(pid) === Number(propId))
-  })
-  return dedupeStoryboardsForAssetLink(matched)
-}
-
-/** 点击分镜 chip → 滚动到对应分镜行 */
-async function scrollToStoryboard(sbId) {
-  filmWorkbenchTab.value = 'storyboards'
-  await nextTick()
-  const el = document.getElementById('sb-' + sbId)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-}
-
-/** 对关联分镜批量重新生成图片 */
-async function onRegenAffectedSbImages(assetKey, affectedBoards) {
-  if (!affectedBoards.length || regenSbImagesForAsset.has(assetKey)) return
-  try {
-    await ElMessageBox.confirm(
-      `将为 ${affectedBoards.length} 个关联分镜重新生成图片（#${affectedBoards.map((s) => s.storyboard_number).join('、#')}），原有图片将被覆盖，是否继续？`,
-      '重新生成关联分镜图',
-      { confirmButtonText: '确认生成', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  regenSbImagesForAsset.add(assetKey)
-  // 用 Map 存进度以便响应式更新
-  if (!regenSbImagesProgress.value) regenSbImagesProgress.value = {}
-  regenSbImagesProgress.value[assetKey] = { current: 0, total: affectedBoards.length }
-  let failed = 0
-  try {
-    for (let i = 0; i < affectedBoards.length; i++) {
-      regenSbImagesProgress.value[assetKey] = { current: i + 1, total: affectedBoards.length }
-      const sb = affectedBoards[i]
-      try {
-        const useFirstLast = storyboardUseFirstLastFrame.value
-        if (useFirstLast) {
-          await submitSbFrameImageTask(sb, 'first', { dramaIdValue: dramaId.value, style: getSelectedStyle() })
-          await submitSbFrameImageTask(sb, 'last', { dramaIdValue: dramaId.value, style: getSelectedStyle() })
-        } else {
-          const result = await createStoryboardImageTasks(sb, {
-            prompt: sb.polished_prompt || sb.image_prompt || sb.description || '',
-            dramaIdValue: dramaId.value,
-            style: getSelectedStyle(),
-          })
-          if (result.failed > 0) failed++
-        }
-      } catch (_) {
-        failed++
-      }
-      if (i < affectedBoards.length - 1) await new Promise((r) => setTimeout(r, 500))
-    }
-    if (failed === 0) ElMessage.success(`已重新生成 ${affectedBoards.length} 张关联分镜图`)
-    else ElMessage.warning(`完成，${failed}/${affectedBoards.length} 条失败`)
-  } finally {
-    regenSbImagesForAsset.delete(assetKey)
-    if (regenSbImagesProgress.value) delete regenSbImagesProgress.value[assetKey]
-  }
 }
 
 function updateStoryboardDialogue(sbId) {
