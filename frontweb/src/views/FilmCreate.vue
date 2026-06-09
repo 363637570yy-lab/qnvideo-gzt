@@ -3097,7 +3097,6 @@ const filmCreateCtx = proxyRefs({
   FilmCreateHeader,
   filmWorkbenchTab,
   FilmWorkbenchTabs,
-  findResource,
   Fold,
   formatElapsed,
   formatKeyframeSecond,
