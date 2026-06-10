@@ -128,7 +128,25 @@ export default {
   },
   components: { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, DataAnalysis },
   setup(props) {
-    return props.ctx
+    const exposed = {}
+    for (const key of Object.keys(props.ctx || {})) {
+      if (key === 'storyboardNavItems') continue
+      Object.defineProperty(exposed, key, {
+        enumerable: true,
+        get: () => props.ctx[key],
+        set: (value) => { props.ctx[key] = value },
+      })
+    }
+    Object.defineProperty(exposed, 'storyboardNavItems', {
+      enumerable: true,
+      get: () => {
+        const outline = props.ctx.storyboardOutline || []
+        if (Array.isArray(outline) && outline.length > 0) return outline
+        const boards = props.ctx.storyboards || []
+        return Array.isArray(boards) ? boards : []
+      },
+    })
+    return exposed
   },
 }
 </script>

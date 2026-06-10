@@ -1101,12 +1101,6 @@ const { navSteps } = useQuickNavProgress({
   workbenchSummary,
 })
 
-const storyboardNavItems = computed(() => {
-  const outline = storyboardOutline.value || []
-  if (Array.isArray(outline) && outline.length > 0) return outline
-  return storyboards.value || []
-})
-
 const {
   baseUrl,
   previewImageUrl,
@@ -2330,7 +2324,6 @@ const filmCreateCtx = proxyRefs({
   storyboardMenuExpanded,
   storyboardRefName,
   storyboards,
-  storyboardNavItems,
   storyboardOutline,
   storyboardsAPI,
   StoryboardWorkbench,
