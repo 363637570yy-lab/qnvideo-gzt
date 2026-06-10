@@ -137,7 +137,7 @@
             <div class="episode-preview">{{ (ep.script_content || '').slice(0, 20) || '暂无剧本' }}</div>
             <div class="episode-stats">
               <span class="ep-stat">
-                <span class="ep-stat-num">{{ ep.storyboards?.length ?? 0 }}</span> 分镜
+                <span class="ep-stat-num">{{ ep.storyboard_count ?? ep.storyboards?.length ?? 0 }}</span> 分镜
               </span>
               <span v-if="ep.status" class="ep-stat ep-stat--status" :class="'ep-status--' + ep.status">{{ epStatusLabel(ep.status) }}</span>
             </div>
@@ -256,9 +256,9 @@
         </template>
         <!-- 本剧制作角色 -->
         <template v-if="activeResTab === 'drama-char'">
-          <div class="drama-res-list">
-            <template v-if="drama?.characters?.length">
-              <div v-for="item in drama.characters" :key="item.id" class="drama-res-item">
+          <div v-loading="dramaCharLoading" class="drama-res-list">
+            <template v-if="dramaCharacters.length">
+              <div v-for="item in dramaCharacters" :key="item.id" class="drama-res-item">
                 <div class="drama-res-cover" @click="openPreview(assetImageUrl(item))">
                   <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
                   <span v-else class="library-placeholder">暂无图</span>
@@ -281,9 +281,9 @@
 
         <!-- 本剧制作场景 -->
         <template v-if="activeResTab === 'drama-scene'">
-          <div class="drama-res-list">
-            <template v-if="drama?.scenes?.length">
-              <div v-for="item in drama.scenes" :key="item.id" class="drama-res-item">
+          <div v-loading="dramaSceneLoading" class="drama-res-list">
+            <template v-if="dramaScenes.length">
+              <div v-for="item in dramaScenes" :key="item.id" class="drama-res-item">
                 <div class="drama-res-cover" @click="openPreview(assetImageUrl(item))">
                   <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
                   <span v-else class="library-placeholder">暂无图</span>
@@ -306,9 +306,9 @@
 
         <!-- 本剧制作道具 -->
         <template v-if="activeResTab === 'drama-prop'">
-          <div class="drama-res-list">
-            <template v-if="drama?.props?.length">
-              <div v-for="item in drama.props" :key="item.id" class="drama-res-item">
+          <div v-loading="dramaPropLoading" class="drama-res-list">
+            <template v-if="dramaProps.length">
+              <div v-for="item in dramaProps" :key="item.id" class="drama-res-item">
                 <div class="drama-res-cover" @click="openPreview(assetImageUrl(item))">
                   <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
                   <span v-else class="library-placeholder">暂无图</span>
@@ -685,7 +685,7 @@ async function saveDramaChar() {
     })
     ElMessage.success('已保存')
     editDramaCharVisible.value = false
-    loadDrama()
+    loadDramaCharacters(true)
   } catch (e) { ElMessage.error(e.message || '保存失败') }
   finally { editDramaCharSaving.value = false }
 }
@@ -703,7 +703,7 @@ async function uploadDramaCharImg(event) {
     form.image_url = url
     form.local_path = data?.local_path ?? null
     await characterAPI.putImage(form.id, { image_url: url, local_path: null })
-    loadDrama()
+    loadDramaCharacters(true)
     ElMessage.success('图片已更新')
   } catch (e) { ElMessage.error(e.message || '上传失败') }
   finally { form.imgUploading = false }
@@ -728,7 +728,7 @@ async function generateDramaCharImg() {
     if (!task || task.status !== 'completed') throw new Error('生成超时')
     form.image_url = task.result?.image_url || ''
     form.local_path = task.result?.local_path ?? null
-    loadDrama()
+    loadDramaCharacters(true)
     ElMessage.success('AI 图片已生成')
   } catch (e) { ElMessage.error(e.message || '生成失败') }
   finally { form.imgGenerating = false }
@@ -755,7 +755,7 @@ async function saveDramaScene() {
     })
     ElMessage.success('已保存')
     editDramaSceneVisible.value = false
-    loadDrama()
+    loadDramaScenes(true)
   } catch (e) { ElMessage.error(e.message || '保存失败') }
   finally { editDramaSceneSaving.value = false }
 }
@@ -773,7 +773,7 @@ async function uploadDramaSceneImg(event) {
     form.image_url = url
     form.local_path = data?.local_path ?? null
     await sceneAPI.update(form.id, { image_url: url, local_path: null })
-    loadDrama()
+    loadDramaScenes(true)
     ElMessage.success('图片已更新')
   } catch (e) { ElMessage.error(e.message || '上传失败') }
   finally { form.imgUploading = false }
@@ -800,7 +800,7 @@ async function generateDramaSceneImg() {
     if (!task || task.status !== 'completed') throw new Error('生成超时')
     form.image_url = task.result?.image_url || ''
     form.local_path = task.result?.local_path ?? null
-    loadDrama()
+    loadDramaScenes(true)
     ElMessage.success('AI 图片已生成')
   } catch (e) { ElMessage.error(e.message || '生成失败') }
   finally { form.imgGenerating = false }
@@ -827,7 +827,7 @@ async function saveDramaProp() {
     })
     ElMessage.success('已保存')
     editDramaPropVisible.value = false
-    loadDrama()
+    loadDramaProps(true)
   } catch (e) { ElMessage.error(e.message || '保存失败') }
   finally { editDramaPropSaving.value = false }
 }
@@ -845,7 +845,7 @@ async function uploadDramaPropImg(event) {
     form.image_url = url
     form.local_path = data?.local_path ?? null
     await propAPI.update(form.id, { image_url: url, local_path: null })
-    loadDrama()
+    loadDramaProps(true)
     ElMessage.success('图片已更新')
   } catch (e) { ElMessage.error(e.message || '上传失败') }
   finally { form.imgUploading = false }
@@ -870,7 +870,7 @@ async function generateDramaPropImg() {
     if (!task || task.status !== 'completed') throw new Error('生成超时')
     form.image_url = task.result?.image_url || ''
     form.local_path = task.result?.local_path ?? null
-    loadDrama()
+    loadDramaProps(true)
     ElMessage.success('AI 图片已生成')
   } catch (e) { ElMessage.error(e.message || '生成失败') }
   finally { form.imgGenerating = false }
@@ -879,6 +879,13 @@ async function generateDramaPropImg() {
 const loading = ref(false)
 const drama = ref(null)
 const episodes = ref([])
+const dramaCharacters = ref([])
+const dramaScenes = ref([])
+const dramaProps = ref([])
+const dramaCharLoading = ref(false)
+const dramaSceneLoading = ref(false)
+const dramaPropLoading = ref(false)
+const dramaResourceLoaded = reactive({ characters: false, scenes: false, props: false })
 const nextEpisodeNumber = computed(() => (
   episodes.value.length > 0
     ? Math.max(...episodes.value.map((e) => Number(e.episode_number) || 0), 0) + 1
@@ -902,8 +909,8 @@ function formatDate(val) {
 async function loadDrama() {
   loading.value = true
   try {
-    let d = await dramaAPI.get(dramaId)
-    d = await backfillDramaStylePromptMetadataIfNeeded(dramaAPI, dramaId, d)
+    let d = await dramaAPI.getBasic(dramaId)
+    d = await backfillDramaStylePromptMetadataIfNeeded({ ...dramaAPI, get: dramaAPI.getBasic }, dramaId, d)
     drama.value = d
     episodes.value = d.episodes || []
     infoForm.title = d.title || ''
@@ -1051,6 +1058,48 @@ async function deleteChar(item) {
   if (!canManageLibrary(item)) { ElMessage.warning('只能删除自己创建的素材'); return }
   try { await ElMessageBox.confirm(`确定删除「${(item.name || '未命名').slice(0, 20)}」？`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) } catch { return }
   try { await characterLibraryAPI.delete(item.id); ElMessage.success('已删除'); loadCharList() } catch (e) { ElMessage.error(e.message || '删除失败') }
+}
+
+async function loadDramaCharacters(force = false) {
+  if (!force && dramaResourceLoaded.characters) return
+  dramaCharLoading.value = true
+  try {
+    const list = await dramaAPI.getCharacters(dramaId)
+    dramaCharacters.value = Array.isArray(list) ? list : []
+    dramaResourceLoaded.characters = true
+  } catch {
+    dramaCharacters.value = []
+  } finally {
+    dramaCharLoading.value = false
+  }
+}
+
+async function loadDramaScenes(force = false) {
+  if (!force && dramaResourceLoaded.scenes) return
+  dramaSceneLoading.value = true
+  try {
+    const list = await sceneAPI.list(dramaId)
+    dramaScenes.value = Array.isArray(list) ? list : []
+    dramaResourceLoaded.scenes = true
+  } catch {
+    dramaScenes.value = []
+  } finally {
+    dramaSceneLoading.value = false
+  }
+}
+
+async function loadDramaProps(force = false) {
+  if (!force && dramaResourceLoaded.props) return
+  dramaPropLoading.value = true
+  try {
+    const list = await propAPI.list(dramaId)
+    dramaProps.value = Array.isArray(list) ? list : []
+    dramaResourceLoaded.props = true
+  } catch {
+    dramaProps.value = []
+  } finally {
+    dramaPropLoading.value = false
+  }
 }
 
 // 场景
@@ -1203,6 +1252,9 @@ watch(activeResTab, (tab) => {
   if (tab === 'lib-char') loadCharList()
   else if (tab === 'lib-scene') loadSceneList()
   else if (tab === 'lib-prop') loadPropList()
+  else if (tab === 'drama-char') loadDramaCharacters()
+  else if (tab === 'drama-scene') loadDramaScenes()
+  else if (tab === 'drama-prop') loadDramaProps()
 })
 
 onMounted(() => {

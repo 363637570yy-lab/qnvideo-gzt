@@ -104,11 +104,13 @@ function setupRouter(cfg, db, log) {
   });
   r.get('/dramas/examples', drama.listExamples);
   r.post('/dramas/import-example', drama.importExample);
+  r.get('/dramas/:id/basic', drama.getDramaBasic);
   r.put('/dramas/:id/outline', drama.saveOutline);
   r.get('/dramas/:id/characters', drama.getCharacters);
   r.put('/dramas/:id/characters', drama.saveCharacters);
   r.put('/dramas/:id/episodes', drama.saveEpisodes);
   r.put('/dramas/:id/progress', drama.saveProgress);
+  r.get('/dramas/:id/scenes', drama.listScenes);
   r.get('/dramas/:id/props', drama.listProps);
   r.get('/dramas/:id', drama.getDrama);
   r.put('/dramas/:id', drama.updateDrama);

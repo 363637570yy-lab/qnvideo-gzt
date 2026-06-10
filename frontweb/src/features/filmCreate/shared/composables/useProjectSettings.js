@@ -36,6 +36,7 @@ export function useProjectSettings(options = {}) {
   const projectSettingsHydrating = ref(false)
   const projectSettingsSaveTimer = ref(null)
   const pendingProjectStyleSave = ref(false)
+  const projectSettingsSaveSuppressedUntil = ref(0)
 
   const scriptLanguage = ref('zh')
   const scriptStoryboardStyle = ref('')
@@ -48,7 +49,7 @@ export function useProjectSettings(options = {}) {
   const imageSpecDraft = ref(defaultImageSpec())
 
   function scheduleProjectSettingsSave(includeGenerationStyle = false) {
-    if (projectSettingsHydrating.value || !store?.dramaId) return
+    if (projectSettingsHydrating.value || Date.now() < projectSettingsSaveSuppressedUntil.value || !store?.dramaId) return
     pendingProjectStyleSave.value = pendingProjectStyleSave.value || !!includeGenerationStyle
     if (projectSettingsSaveTimer.value) clearTimeout(projectSettingsSaveTimer.value)
     projectSettingsSaveTimer.value = setTimeout(() => {
@@ -68,7 +69,13 @@ export function useProjectSettings(options = {}) {
   }
 
   function setProjectSettingsHydrating(value) {
-    projectSettingsHydrating.value = !!value
+    const hydrating = !!value
+    projectSettingsHydrating.value = hydrating
+    if (hydrating) {
+      clearPendingProjectSettingsSave()
+      return
+    }
+    projectSettingsSaveSuppressedUntil.value = Date.now() + PROJECT_SETTINGS_SAVE_DELAY_MS + 300
   }
 
   function hydrateProjectSettingsFromDrama(drama) {
@@ -217,6 +224,7 @@ export function useProjectSettings(options = {}) {
     projectMediaSpecMetadata,
     projectSettingsHydrating,
     projectSettingsSaveTimer,
+    projectSettingsSaveSuppressedUntil,
     projectStylePromptMetadata,
     projectVideoResolution,
     projectVideoSpec,

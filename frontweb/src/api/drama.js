@@ -10,6 +10,9 @@ export const dramaAPI = {
   get(id) {
     return request.get(`/dramas/${id}`)
   },
+  getBasic(id) {
+    return request.get(`/dramas/${id}/basic`)
+  },
   update(id, data) {
     return request.put(`/dramas/${id}`, data)
   },
@@ -21,6 +24,9 @@ export const dramaAPI = {
   },
   saveCharacters(id, data) {
     return request.put(`/dramas/${id}/characters`, data)
+  },
+  getCharacters(id, params) {
+    return request.get(`/dramas/${id}/characters`, { params: params || {} })
   },
   /** 保存梗概/故事摘要到项目（outline），body: { summary, title?, genre?, tags? } */
   saveOutline(id, data) {

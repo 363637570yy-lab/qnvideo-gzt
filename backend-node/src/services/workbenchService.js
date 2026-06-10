@@ -382,18 +382,25 @@ function storyboardProgressStats(db, dramaId, episodeId = null) {
 function storyboardOutlineForEpisode(db, episodeId) {
   const id = parsePositiveId(episodeId);
   if (!id) return [];
-  const columns = existingColumns(db, 'storyboards', ['segment_index', 'segment_title', 'updated_at']);
-  const segmentIndexSelect = columns.includes('segment_index') ? 'segment_index' : '0 AS segment_index';
-  const segmentTitleSelect = columns.includes('segment_title') ? 'segment_title' : "'' AS segment_title";
-  const updatedAtSelect = columns.includes('updated_at') ? 'updated_at' : 'NULL AS updated_at';
-  return safeAll(
-    db,
-    `SELECT id, episode_id, storyboard_number, title, ${segmentIndexSelect}, ${segmentTitleSelect}, ${updatedAtSelect}
-     FROM storyboards
-     WHERE episode_id = ? AND deleted_at IS NULL
-     ORDER BY storyboard_number ASC, id ASC`,
-    id
-  ).map((row) => ({
+  let rows = [];
+  try {
+    rows = db.prepare(
+      `SELECT id, episode_id, storyboard_number, title, segment_index, segment_title, updated_at
+       FROM storyboards
+       WHERE episode_id = ? AND deleted_at IS NULL
+       ORDER BY storyboard_number ASC, id ASC`
+    ).all(id) || [];
+  } catch (_) {
+    rows = safeAll(
+      db,
+      `SELECT id, episode_id, storyboard_number, title, 0 AS segment_index, '' AS segment_title, NULL AS updated_at
+       FROM storyboards
+       WHERE episode_id = ? AND deleted_at IS NULL
+       ORDER BY storyboard_number ASC, id ASC`,
+      id
+    );
+  }
+  return rows.map((row) => ({
     id: row.id,
     episode_id: row.episode_id ?? id,
     storyboard_number: row.storyboard_number ?? 0,

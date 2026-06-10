@@ -60,6 +60,8 @@ function createDb() {
       episode_id INTEGER,
       storyboard_number INTEGER,
       title TEXT,
+      segment_index INTEGER,
+      segment_title TEXT,
       duration INTEGER,
       image_url TEXT,
       local_path TEXT,
@@ -176,7 +178,7 @@ function createDb() {
   db.prepare('INSERT INTO characters (id, drama_id, name, updated_at) VALUES (20, 1, ?, ?)').run('主角', '2026-06-09T01:20:00.000Z');
   db.prepare('INSERT INTO scenes (id, drama_id, location, updated_at) VALUES (30, 1, ?, ?)').run('街道', '2026-06-09T01:30:00.000Z');
   db.prepare('INSERT INTO props (id, drama_id, name, updated_at) VALUES (40, 1, ?, ?)').run('钥匙', '2026-06-09T01:40:00.000Z');
-  db.prepare('INSERT INTO storyboards (id, episode_id, storyboard_number, title, duration, updated_at, created_at) VALUES (50, 10, 1, ?, 15, ?, ?)').run('开场', '2026-06-09T01:50:00.000Z', '2026-06-09T01:45:00.000Z');
+  db.prepare('INSERT INTO storyboards (id, episode_id, storyboard_number, title, segment_index, segment_title, duration, updated_at, created_at) VALUES (50, 10, 1, ?, 0, ?, 15, ?, ?)').run('开场', '序章', '2026-06-09T01:50:00.000Z', '2026-06-09T01:45:00.000Z');
   db.prepare('UPDATE storyboards SET image_url = ?, local_path = ? WHERE id = 50').run('data:image/png;base64,AAA', 'storyboards/sb50.png');
   db.prepare('INSERT INTO video_generations (id, drama_id, storyboard_id, provider, model, video_url, status, created_at, updated_at, completed_at) VALUES (60, 1, 50, ?, ?, ?, ?, ?, ?, ?)').run('mock', 'video-test', 'videos/sb50.mp4', 'completed', '2026-06-09T02:00:00.000Z', '2026-06-09T02:05:00.000Z', '2026-06-09T02:05:00.000Z');
   db.prepare('INSERT INTO video_merges (id, drama_id, episode_id, title, provider, status, merged_url, duration, created_at, updated_at, completed_at) VALUES (70, 1, 10, ?, ?, ?, ?, 15, ?, ?, ?)').run('第一集合成', 'ffmpeg', 'completed', 'videos/merged.mp4', '2026-06-09T02:10:00.000Z', '2026-06-09T02:15:00.000Z', '2026-06-09T02:15:00.000Z');
@@ -209,13 +211,15 @@ test('workbench summary returns lightweight counts and project settings', () => 
   assert.equal(summary.storyboard_outline.length, 1);
   assert.equal(summary.storyboard_outline[0].id, 50);
   assert.equal(summary.storyboard_outline[0].title, '开场');
+  assert.equal(summary.storyboard_outline[0].segment_index, 0);
+  assert.equal(summary.storyboard_outline[0].segment_title, '序章');
   assert.equal(Object.hasOwn(summary.storyboard_outline[0], 'image_url'), false);
   assert.equal(Object.hasOwn(summary.storyboard_outline[0], 'video_url'), false);
   assert.equal(Object.hasOwn(summary.project, 'episodes'), false);
   assert.equal(Object.hasOwn(summary, 'storyboards'), false);
 
   db.prepare('INSERT INTO episodes (id, drama_id, episode_number, title, script_content, updated_at) VALUES (11, 1, 2, ?, ?, ?)').run('第二集', '', '2026-06-09T03:00:00.000Z');
-  db.prepare('INSERT INTO storyboards (id, episode_id, storyboard_number, title, duration, updated_at, created_at) VALUES (51, 11, 1, ?, 15, ?, ?)').run('第二集开场', '2026-06-09T03:10:00.000Z', '2026-06-09T03:05:00.000Z');
+  db.prepare('INSERT INTO storyboards (id, episode_id, storyboard_number, title, segment_index, segment_title, duration, updated_at, created_at) VALUES (51, 11, 1, ?, 0, ?, 15, ?, ?)').run('第二集开场', '第二序章', '2026-06-09T03:10:00.000Z', '2026-06-09T03:05:00.000Z');
   const scoped = workbenchService.getWorkbenchSummary(db, 1, { episode_id: 10 });
   const scopedProgressByKey = Object.fromEntries(scoped.progress_steps.map((step) => [step.key, step]));
   assert.equal(scoped.progress_scope.type, 'episode');

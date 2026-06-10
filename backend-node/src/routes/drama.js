@@ -1,5 +1,6 @@
 const dramaService = require('../services/dramaService');
 const propService = require('../services/propService');
+const sceneService = require('../services/sceneService');
 const response = require('../response');
 const dramaExportService = require('../services/dramaExportService');
 const dramaImportService = require('../services/dramaImportService');
@@ -29,6 +30,14 @@ function createDrama(db, log) {
 function getDrama(db, cfg) {
   return async (req, res) => {
     const drama = dramaService.getDrama(db, req.params.id, cfg?.storage?.base_url);
+    if (!drama) return response.notFound(res, '剧本不存在');
+    response.success(res, await attachDramaUsers([drama], null).then((items) => items[0]));
+  };
+}
+
+function getDramaBasic(db) {
+  return async (req, res) => {
+    const drama = dramaService.getDramaBasic(db, req.params.id);
     if (!drama) return response.notFound(res, '剧本不存在');
     response.success(res, await attachDramaUsers([drama], null).then((items) => items[0]));
   };
@@ -158,6 +167,13 @@ function listProps(db) {
   return (req, res) => {
     const props = propService.listByDramaId(db, req.params.id);
     response.success(res, props);
+  };
+}
+
+function listScenes(db) {
+  return (req, res) => {
+    const scenes = sceneService.listByDramaId(db, req.params.id);
+    response.success(res, scenes);
   };
 }
 
@@ -305,6 +321,7 @@ module.exports = function dramaRoutes(db, cfg, log) {
   return {
     createDrama: createDrama(db, log),
     getDrama: getDrama(db, cfg),
+    getDramaBasic: getDramaBasic(db),
     listDramas: listDramas(db, log),
     updateDrama: updateDrama(db, log),
     deleteDrama: deleteDrama(db, log),
@@ -314,6 +331,7 @@ module.exports = function dramaRoutes(db, cfg, log) {
     saveCharacters: saveCharacters(db, log),
     saveEpisodes: saveEpisodes(db, log),
     saveProgress: saveProgress(db, log),
+    listScenes: listScenes(db),
     listProps: listProps(db),
     finalizeEpisode: finalizeEpisode(db, log, cfg),
     downloadEpisodeVideo: downloadEpisodeVideo(db),

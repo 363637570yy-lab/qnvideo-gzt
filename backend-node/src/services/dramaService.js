@@ -223,6 +223,41 @@ function getDrama(db, dramaId, baseUrl) {
   return drama;
 }
 
+function getDramaBasic(db, dramaId) {
+  const drama = getDramaById(db, Number(dramaId));
+  if (!drama) return null;
+  const episodeRows = db.prepare(
+    'SELECT * FROM episodes WHERE drama_id = ? AND deleted_at IS NULL ORDER BY episode_number ASC'
+  ).all(drama.id);
+  const episodes = episodeRows.map((e) => rowToEpisode(e));
+  const episodeIds = episodes.map((ep) => ep.id);
+  const countByEpisode = new Map();
+  if (episodeIds.length > 0) {
+    const rows = db.prepare(
+      `SELECT episode_id, COUNT(*) AS storyboard_count, COALESCE(SUM(duration), 0) AS storyboard_duration
+       FROM storyboards
+       WHERE episode_id IN (${placeholders(episodeIds)}) AND deleted_at IS NULL
+       GROUP BY episode_id`
+    ).all(...episodeIds);
+    for (const row of rows) {
+      countByEpisode.set(Number(row.episode_id), {
+        storyboard_count: Number(row.storyboard_count || 0),
+        storyboard_duration: Number(row.storyboard_duration || 0),
+      });
+    }
+  }
+  drama.episodes = episodes.map((ep) => {
+    const stats = countByEpisode.get(Number(ep.id)) || { storyboard_count: 0, storyboard_duration: 0 };
+    const duration = stats.storyboard_duration > 0 ? Math.ceil(stats.storyboard_duration / 60) : ep.duration;
+    return {
+      ...ep,
+      duration,
+      storyboard_count: stats.storyboard_count,
+    };
+  });
+  return drama;
+}
+
 function listDramas(db, query) {
   let sql = 'FROM dramas WHERE deleted_at IS NULL';
   const params = [];
@@ -905,6 +940,7 @@ function downloadEpisodeVideo(db, episodeId) {
 module.exports = {
   createDrama,
   getDrama,
+  getDramaBasic,
   getDramaById,
   listDramas,
   updateDrama,

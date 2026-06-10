@@ -55,7 +55,7 @@
           <template v-for="(sb, i) in storyboardNavItems" :key="sb.id">
             <!-- 段落标题行 -->
             <div
-              v-if="sb.segment_title && (i === 0 || sb.segment_index !== storyboardNavItems[i - 1].segment_index)"
+              v-if="sb.segment_title && (i === 0 || segmentKey(sb) !== segmentKey(storyboardNavItems[i - 1]))"
               class="nav-segment-label"
             >
               <span class="nav-segment-dot" />
@@ -154,6 +154,7 @@ export default {
         return Array.isArray(boards) ? boards : []
       },
     })
+    exposed.segmentKey = (sb) => `${sb?.segment_index ?? ''}::${sb?.segment_title || ''}`
     return exposed
   },
 }
