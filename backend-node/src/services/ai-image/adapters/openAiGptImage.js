@@ -352,6 +352,27 @@ async function readResponseTextWithMetrics(res, log, label, imageGenId, startedA
   return text;
 }
 
+async function fetchTextWithTimeout(url, options, timeoutMs, log, label, imageGenId, startedAt) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    const raw = await readResponseTextWithMetrics(res, log, label, imageGenId, startedAt);
+    return { res, raw };
+  } catch (e) {
+    if (timedOut && e && e.name !== 'AbortError') {
+      e.name = 'AbortError';
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function callOpenAiGptImageApi(db, config, log, opts) {
   const { prompt, model, size, quality, image_gen_id, reference_image_urls, files_base_url, storage_local_path } = opts;
   const base = (config.base_url || 'https://api.openai.com/v1').replace(/\/$/, '');
@@ -442,17 +463,17 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
     let status;
     let contentType = '';
     try {
-      const res = await fetchWithTimeout(url, {
+      const { res, raw: responseText } = await fetchTextWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + (config.api_key || ''),
         },
         body: JSON.stringify(body),
-      }, requestTimeoutMs);
+      }, requestTimeoutMs, log, logLabel, image_gen_id, startedAt);
       status = res.status;
       contentType = res.headers.get('content-type') || '';
-      raw = await readResponseTextWithMetrics(res, log, logLabel, image_gen_id, startedAt);
+      raw = responseText;
     } catch (e) {
       const msg = e.name === 'AbortError' ? `Image generation HTTP timeout after ${requestTimeoutMs}ms` : e.message;
       log.error(`[${logLabel}] network error`, { image_gen_id, error: msg, total_ms: Date.now() - startedAt });
@@ -541,17 +562,17 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
   let contentType = '';
   try {
     if (resolvedRefs.length === 0) {
-      const res = await fetchWithTimeout(url, {
+      const { res, raw: responseText } = await fetchTextWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + (config.api_key || ''),
         },
         body: JSON.stringify(commonFields),
-      }, requestTimeoutMs);
+      }, requestTimeoutMs, log, logLabel, image_gen_id, startedAt);
       status = res.status;
       contentType = res.headers.get('content-type') || '';
-      raw = await readResponseTextWithMetrics(res, log, logLabel, image_gen_id, startedAt);
+      raw = responseText;
     } else {
       const form = new FormData();
       Object.entries(commonFields).forEach(([key, value]) => {
@@ -581,14 +602,14 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
           form.append('image[]', blob, `reference_${i}.${ext}`);
         }
       }
-      const res = await fetchWithTimeout(url, {
+      const { res, raw: responseText } = await fetchTextWithTimeout(url, {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + (config.api_key || '') },
         body: form,
-      }, requestTimeoutMs);
+      }, requestTimeoutMs, log, logLabel, image_gen_id, startedAt);
       status = res.status;
       contentType = res.headers.get('content-type') || '';
-      raw = await readResponseTextWithMetrics(res, log, logLabel, image_gen_id, startedAt);
+      raw = responseText;
     }
   } catch (e) {
     const msg = e.name === 'AbortError' ? `Image generation HTTP timeout after ${requestTimeoutMs}ms` : e.message;
@@ -659,5 +680,6 @@ module.exports = {
     normalizeGptImageBackground,
     normalizeGptImageApiMode,
     buildResponsesImageBody,
+    fetchTextWithTimeout,
   },
 };

@@ -105,6 +105,38 @@ test('normalizes GPT Image API mode aliases', () => {
   assert.equal(_test.normalizeGptImageApiMode('images'), 'images');
 });
 
+test('times out when a streaming image response body never completes', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => new Response(new ReadableStream({
+    start(controller) {
+      options.signal.addEventListener('abort', () => {
+        controller.error(new DOMException('Aborted', 'AbortError'));
+      });
+      controller.enqueue(Buffer.from('data: {"type":"response.created"}\n\n'));
+    },
+  }), {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  });
+
+  try {
+    await assert.rejects(
+      _test.fetchTextWithTimeout(
+        'https://relay.example/v1/responses',
+        { method: 'POST' },
+        20,
+        { info() {} },
+        'test',
+        1,
+        Date.now(),
+      ),
+      (err) => err?.name === 'AbortError',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('resolves /static reference images from local storage before public URL fallback', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qnvideo-image-ref-'));
   const rel = path.join('projects', 'demo', 'images', 'ref.png');
