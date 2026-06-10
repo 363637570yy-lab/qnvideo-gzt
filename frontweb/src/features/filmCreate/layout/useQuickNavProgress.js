@@ -8,6 +8,34 @@ function hasSetItems(source) {
   return Number(source?.size || 0) > 0
 }
 
+function normalizeStatus(status) {
+  return ['pending', 'partial', 'done', 'generating'].includes(status) ? status : 'pending'
+}
+
+function progressStepsByKey(summary) {
+  const source = readValue(summary)
+  const steps = Array.isArray(source?.progress_steps) ? source.progress_steps : []
+  return Object.fromEntries(steps.map((step) => [step.key, step]))
+}
+
+function numberValue(value, fallback = 0) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function mergeSummaryStep(summaryMap, key, fallback, forceGenerating = false) {
+  const step = summaryMap[key]
+  if (!step) return forceGenerating ? { ...fallback, status: 'generating' } : fallback
+  return {
+    ...fallback,
+    status: forceGenerating ? 'generating' : normalizeStatus(step.status),
+    count: numberValue(step.count, fallback.count),
+    total_count: numberValue(step.total_count, step.count ?? fallback.count),
+    ready_count: numberValue(step.ready_count, 0),
+    running_tasks: numberValue(step.running_tasks, 0),
+  }
+}
+
 export function useQuickNavProgress(deps = {}) {
   const {
     GEN_RESOURCE = {},
@@ -36,13 +64,16 @@ export function useQuickNavProgress(deps = {}) {
     storyboardGenerating,
     storyGenerating,
     universalOmniPolishRunning,
+    workbenchSummary,
   } = deps
 
   const navSteps = computed(() => {
+    const summaryMap = progressStepsByKey(workbenchSummary)
     const epRunning = genStore?.getRunningForEpisode?.(readValue(dramaId), readValue(currentEpisodeId)) || []
 
     const hasScript = !!(readValue(scriptContent, '')?.trim?.())
-    const scriptStatus = readValue(storyGenerating, false) || readValue(scriptGenerating, false)
+    const scriptGen = readValue(storyGenerating, false) || readValue(scriptGenerating, false)
+    const scriptStatus = scriptGen
       ? 'generating'
       : hasScript ? 'done' : 'pending'
 
@@ -85,13 +116,13 @@ export function useQuickNavProgress(deps = {}) {
     const videoStatus = sbVideoGen ? 'generating' : sbVideoAllDone ? 'done' : sbVideoSome ? 'partial' : 'pending'
 
     return [
-      { key: 'script', label: '故事剧本', anchor: 'anchor-script', status: scriptStatus, count: hasScript ? 1 : 0 },
-      { key: 'chars', label: '角色', anchor: 'anchor-characters', status: charStatus, count: charList.length },
-      { key: 'props', label: '道具', anchor: 'anchor-props', status: propStatus, count: propList.length },
-      { key: 'scenes', label: '场景', anchor: 'anchor-scenes', status: sceneStatus, count: sceneList.length },
-      { key: 'sb', label: '分镜脚本', anchor: 'anchor-storyboard', status: sbScriptStatus, count: sbList.length },
-      { key: 'sbimg', label: '分镜图', anchor: 'anchor-storyboard', status: sbImgStatus, count: sbList.length },
-      { key: 'video', label: '分镜视频', anchor: 'anchor-video', status: videoStatus, count: 0 },
+      mergeSummaryStep(summaryMap, 'script', { key: 'script', label: '故事剧本', anchor: 'anchor-script', status: scriptStatus, count: hasScript ? 1 : 0 }, scriptGen),
+      mergeSummaryStep(summaryMap, 'chars', { key: 'chars', label: '角色', anchor: 'anchor-characters', status: charStatus, count: charList.length }, charGen),
+      mergeSummaryStep(summaryMap, 'props', { key: 'props', label: '道具', anchor: 'anchor-props', status: propStatus, count: propList.length }, propGen),
+      mergeSummaryStep(summaryMap, 'scenes', { key: 'scenes', label: '场景', anchor: 'anchor-scenes', status: sceneStatus, count: sceneList.length }, sceneGen),
+      mergeSummaryStep(summaryMap, 'sb', { key: 'sb', label: '分镜脚本', anchor: 'anchor-storyboard', status: sbScriptStatus, count: sbList.length }, sbScriptGen),
+      mergeSummaryStep(summaryMap, 'sbimg', { key: 'sbimg', label: '分镜图', anchor: 'anchor-storyboard', status: sbImgStatus, count: sbList.length }, sbImgGen),
+      mergeSummaryStep(summaryMap, 'video', { key: 'video', label: '分镜视频', anchor: 'anchor-video', status: videoStatus, count: sbList.length }, sbVideoGen),
     ]
   })
 

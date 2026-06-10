@@ -69,6 +69,22 @@ function countSafe(db, sql, ...params) {
   return Number(row?.count || row?.c || 0);
 }
 
+function tableColumns(db, table) {
+  return safeAll(db, `PRAGMA table_info(${table})`).map((row) => row.name).filter(Boolean);
+}
+
+function existingColumns(db, table, candidates = []) {
+  const columns = new Set(tableColumns(db, table));
+  return candidates.filter((name) => columns.has(name));
+}
+
+function nonEmptyColumnExpr(alias, columns = []) {
+  if (!columns.length) return '0';
+  return columns
+    .map((column) => `COALESCE(TRIM(${alias}.${column}), '') <> ''`)
+    .join(' OR ');
+}
+
 function buildVersion(count, latest) {
   return `${Number(count || 0)}:${latest || ''}`;
 }
@@ -109,7 +125,19 @@ function countRunningMediaRows(db, table, dramaId, predicateSql = '', ...params)
 }
 
 function taskCounts(db, dramaId) {
+  const storyboardTextRunning = countRunningTasks(
+    db,
+    dramaId,
+    "type IN ('storyboard_generation', 'frame_prompt_generation')"
+  );
+  const storyboardImageRunning =
+    countRunningTasks(
+      db,
+      dramaId,
+      "type = 'image_generation' AND (resource_type IS NULL OR resource_type IN ('storyboard', 'sb_image', 'sb_first_image', 'sb_last_image'))"
+    ) + countRunningMediaRows(db, 'image_generations', dramaId, 'storyboard_id IS NOT NULL');
   return {
+    script: countRunningTasks(db, dramaId, "type IN ('story_generation', 'script_generation')"),
     characters:
       countRunningTasks(
         db,
@@ -124,12 +152,9 @@ function taskCounts(db, dramaId) {
       ) + countRunningMediaRows(db, 'image_generations', dramaId, 'scene_id IS NOT NULL'),
     props:
       countRunningTasks(db, dramaId, "type IN ('prop_extraction', 'prop_image_generation')"),
-    storyboards:
-      countRunningTasks(
-        db,
-        dramaId,
-        "type IN ('storyboard_generation', 'frame_prompt_generation') OR (type = 'image_generation' AND (resource_type IS NULL OR resource_type IN ('storyboard', 'sb_image', 'sb_first_image', 'sb_last_image')))"
-      ) + countRunningMediaRows(db, 'image_generations', dramaId, 'storyboard_id IS NOT NULL'),
+    storyboardText: storyboardTextRunning,
+    storyboardImages: storyboardImageRunning,
+    storyboards: storyboardTextRunning + storyboardImageRunning,
     videoCompose:
       countRunningTasks(db, dramaId, "type IN ('video_generation', 'video_merge')")
       + countRunningMediaRows(db, 'video_generations', dramaId)
@@ -223,7 +248,10 @@ function projectSettingsFromDrama(drama) {
   };
 }
 
-function scriptTabSummary(db, dramaId) {
+function scriptTabSummary(db, dramaId, episodeId = null) {
+  const epId = parsePositiveId(episodeId);
+  const episodeWhere = epId ? ' AND id = ?' : '';
+  const params = epId ? [dramaId, epId] : [dramaId];
   const row = safeGet(
     db,
     `SELECT
@@ -231,8 +259,8 @@ function scriptTabSummary(db, dramaId) {
        SUM(CASE WHEN COALESCE(TRIM(script_content), '') <> '' THEN 1 ELSE 0 END) AS ready_count,
        MAX(updated_at) AS latest
      FROM episodes
-     WHERE drama_id = ? AND deleted_at IS NULL`,
-    dramaId
+     WHERE drama_id = ? AND deleted_at IS NULL${episodeWhere}`,
+    ...params
   ) || {};
   const count = Number(row.count || 0);
   const readyCount = Number(row.ready_count || 0);
@@ -265,14 +293,31 @@ function simpleProjectCountTab(db, key, table, dramaId, runningTasks, extraWhere
   };
 }
 
-function storyboardsTabSummary(db, dramaId, runningTasks) {
+function assetReadyCount(db, table, dramaId) {
+  const readyColumns = existingColumns(db, table, ['image_url', 'local_path']);
+  const readyExpr = nonEmptyColumnExpr(table, readyColumns);
+  if (readyExpr === '0') return 0;
+  const row = safeGet(
+    db,
+    `SELECT COUNT(*) AS count
+     FROM ${table}
+     WHERE drama_id = ? AND deleted_at IS NULL AND (${readyExpr})`,
+    dramaId
+  ) || {};
+  return Number(row.count || 0);
+}
+
+function storyboardsTabSummary(db, dramaId, runningTasks, episodeId = null) {
+  const epId = parsePositiveId(episodeId);
+  const episodeWhere = epId ? ' AND e.id = ?' : '';
+  const params = epId ? [dramaId, epId] : [dramaId];
   const row = safeGet(
     db,
     `SELECT COUNT(*) AS count, MAX(s.updated_at) AS latest
      FROM storyboards s
      INNER JOIN episodes e ON e.id = s.episode_id AND e.deleted_at IS NULL
-     WHERE e.drama_id = ? AND s.deleted_at IS NULL`,
-    dramaId
+     WHERE e.drama_id = ? AND s.deleted_at IS NULL${episodeWhere}`,
+    ...params
   ) || {};
   const count = Number(row.count || 0);
   return {
@@ -281,6 +326,56 @@ function storyboardsTabSummary(db, dramaId, runningTasks) {
     count,
     running_tasks: Number(runningTasks || 0),
     version: buildVersion(count, row.latest),
+  };
+}
+
+function storyboardProgressStats(db, dramaId, episodeId = null) {
+  const sbImageColumns = existingColumns(db, 'storyboards', ['image_url', 'local_path', 'composed_image']);
+  const sbVideoColumns = existingColumns(db, 'storyboards', ['video_url']);
+  const imageGenColumns = existingColumns(db, 'image_generations', ['image_url', 'local_path']);
+  const videoGenColumns = existingColumns(db, 'video_generations', ['video_url', 'local_path']);
+  const sbImageExpr = nonEmptyColumnExpr('s', sbImageColumns);
+  const sbVideoExpr = nonEmptyColumnExpr('s', sbVideoColumns);
+  const imageGenReadyExpr = imageGenColumns.length
+    ? `EXISTS (
+         SELECT 1
+         FROM image_generations ig
+         WHERE ig.deleted_at IS NULL
+           AND ig.storyboard_id = s.id
+           AND ig.status = 'completed'
+           AND (${nonEmptyColumnExpr('ig', imageGenColumns)})
+       )`
+    : '0';
+  const videoGenReadyExpr = videoGenColumns.length
+    ? `EXISTS (
+         SELECT 1
+         FROM video_generations vg
+         WHERE vg.deleted_at IS NULL
+           AND vg.storyboard_id = s.id
+           AND vg.status = 'completed'
+           AND (${nonEmptyColumnExpr('vg', videoGenColumns)})
+       )`
+    : '0';
+  const epId = parsePositiveId(episodeId);
+  const episodeWhere = epId ? ' AND e.id = ?' : '';
+  const params = epId ? [dramaId, epId] : [dramaId];
+  const row = safeGet(
+    db,
+    `SELECT
+       COUNT(*) AS count,
+       SUM(CASE WHEN (${sbImageExpr}) OR (${imageGenReadyExpr}) THEN 1 ELSE 0 END) AS image_ready_count,
+       SUM(CASE WHEN (${sbVideoExpr}) OR (${videoGenReadyExpr}) THEN 1 ELSE 0 END) AS video_ready_count,
+       MAX(s.updated_at) AS latest
+     FROM storyboards s
+     INNER JOIN episodes e ON e.id = s.episode_id AND e.deleted_at IS NULL
+     WHERE e.drama_id = ? AND s.deleted_at IS NULL${episodeWhere}`,
+    ...params
+  ) || {};
+  return {
+    count: Number(row.count || 0),
+    image_ready_count: Number(row.image_ready_count || 0),
+    video_ready_count: Number(row.video_ready_count || 0),
+    latest: row.latest || null,
   };
 }
 
@@ -310,9 +405,51 @@ function videoComposeTabSummary(db, dramaId, runningTasks) {
   };
 }
 
-function getWorkbenchSummary(db, dramaId) {
+function progressStatus(total, ready, running = 0) {
+  const totalCount = Number(total || 0);
+  const readyCount = Number(ready || 0);
+  const runningCount = Number(running || 0);
+  if (runningCount > 0) return 'generating';
+  if (totalCount <= 0) return 'pending';
+  if (readyCount >= totalCount) return 'done';
+  return 'partial';
+}
+
+function buildProgressStep(key, total, ready, running = 0) {
+  const totalCount = Number(total || 0);
+  const readyCount = Number(ready || 0);
+  const runningCount = Number(running || 0);
+  return {
+    key,
+    status: progressStatus(totalCount, readyCount, runningCount),
+    count: totalCount,
+    total_count: totalCount,
+    ready_count: readyCount,
+    running_tasks: runningCount,
+  };
+}
+
+function buildProgressSteps(db, dramaId, tabs, running, episodeId = null) {
+  const script = tabs.script || {};
+  const storyboardStats = storyboardProgressStats(db, dramaId, episodeId);
+  const charactersReady = assetReadyCount(db, 'characters', dramaId);
+  const propsReady = assetReadyCount(db, 'props', dramaId);
+  const scenesReady = assetReadyCount(db, 'scenes', dramaId);
+  return [
+    buildProgressStep('script', script.count, script.ready_count, running.script),
+    buildProgressStep('chars', tabs.characters?.count, charactersReady, running.characters),
+    buildProgressStep('props', tabs.props?.count, propsReady, running.props),
+    buildProgressStep('scenes', tabs.scenes?.count, scenesReady, running.scenes),
+    buildProgressStep('sb', storyboardStats.count, storyboardStats.count, running.storyboardText),
+    buildProgressStep('sbimg', storyboardStats.count, storyboardStats.image_ready_count, running.storyboardImages),
+    buildProgressStep('video', storyboardStats.count, storyboardStats.video_ready_count, running.videoCompose),
+  ];
+}
+
+function getWorkbenchSummary(db, dramaId, options = {}) {
   const id = parsePositiveId(dramaId);
   if (!id) return null;
+  const episodeId = parsePositiveId(options.episode_id);
   const drama = safeGet(
     db,
     `SELECT id, title, description, style, thumbnail, total_episodes, total_duration, status, metadata, owner_user_id, updated_at, created_at
@@ -323,6 +460,14 @@ function getWorkbenchSummary(db, dramaId) {
   if (!drama) return null;
 
   const running = taskCounts(db, id);
+  const tabs = {
+    script: scriptTabSummary(db, id, episodeId),
+    characters: simpleProjectCountTab(db, 'characters', 'characters', id, running.characters),
+    scenes: simpleProjectCountTab(db, 'scenes', 'scenes', id, running.scenes),
+    props: simpleProjectCountTab(db, 'props', 'props', id, running.props),
+    storyboards: storyboardsTabSummary(db, id, running.storyboards, episodeId),
+    videoCompose: videoComposeTabSummary(db, id, running.videoCompose),
+  };
   return {
     project: {
       id: drama.id,
@@ -337,14 +482,9 @@ function getWorkbenchSummary(db, dramaId) {
     },
     settings: projectSettingsFromDrama(drama),
     generation_strategy: generationStrategySummary(db),
-    tabs: {
-      script: scriptTabSummary(db, id),
-      characters: simpleProjectCountTab(db, 'characters', 'characters', id, running.characters),
-      scenes: simpleProjectCountTab(db, 'scenes', 'scenes', id, running.scenes),
-      props: simpleProjectCountTab(db, 'props', 'props', id, running.props),
-      storyboards: storyboardsTabSummary(db, id, running.storyboards),
-      videoCompose: videoComposeTabSummary(db, id, running.videoCompose),
-    },
+    tabs,
+    progress_scope: episodeId ? { type: 'episode', episode_id: episodeId } : { type: 'project', episode_id: null },
+    progress_steps: buildProgressSteps(db, id, tabs, running, episodeId),
   };
 }
 

@@ -76,7 +76,9 @@ export function useWorkbenchLoader(deps) {
     if (!id) return null
     workbenchSummaryLoading.value = true
     try {
-      const summary = await workbenchAPI.summary(id)
+      const summary = await workbenchAPI.summary(id, {
+        episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
+      })
       workbenchSummary.value = summary || null
       if (applySettings) applyWorkbenchSummarySettings(summary)
       return summary

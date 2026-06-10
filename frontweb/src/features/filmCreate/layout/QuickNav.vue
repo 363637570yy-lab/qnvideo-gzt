@@ -45,39 +45,6 @@
         </div>
       </div>
 
-      <div v-if="!navCollapsed" class="nav-ai-routes" :class="{ collapsed: !aiRoutesExpanded }">
-        <button type="button" class="nav-ai-routes-head" @click="toggleAiRoutesExpanded">
-          <span class="nav-ai-routes-title">本次生成模型</span>
-          <span class="nav-ai-routes-summary">{{ aiRouteSummary }}</span>
-        </button>
-        <div v-show="aiRoutesExpanded" class="nav-ai-routes-body" v-loading="aiRouteLoading">
-          <div
-            v-for="routeItem in aiRouteTypes"
-            :key="routeItem.key"
-            class="nav-ai-route-row"
-          >
-            <span class="nav-ai-route-label">{{ routeItem.label }}</span>
-            <el-select
-              v-model="selectedAiConfigIds[routeItem.key]"
-              placeholder="自动"
-              filterable
-              size="small"
-              class="nav-ai-route-select"
-              @change="() => scheduleProjectSettingsSave(false)"
-              @visible-change="(visible) => onAiRouteSelectVisible(visible)"
-            >
-              <el-option label="自动" value="" />
-              <el-option
-                v-for="cfg in runtimeAiConfigs[routeItem.key]"
-                :key="cfg.id"
-                :label="configOptionLabel(cfg)"
-                :value="String(cfg.id)"
-              />
-            </el-select>
-          </div>
-        </div>
-      </div>
-
       <!-- 分镜子列表 -->
       <div v-if="!navCollapsed && storyboards.length > 0" class="nav-group">
         <div class="nav-sub-toggle" @click="storyboardMenuExpanded = !storyboardMenuExpanded">
@@ -165,4 +132,3 @@ export default {
   },
 }
 </script>
-

@@ -196,8 +196,29 @@ test('workbench summary returns lightweight counts and project settings', () => 
   assert.equal(summary.tabs.characters.running_tasks, 1);
   assert.equal(summary.tabs.storyboards.count, 1);
   assert.equal(summary.generation_strategy.text.config_name, 'OpenAI 文本');
+  const progressByKey = Object.fromEntries(summary.progress_steps.map((step) => [step.key, step]));
+  assert.equal(progressByKey.script.status, 'done');
+  assert.equal(progressByKey.chars.status, 'generating');
+  assert.equal(progressByKey.props.status, 'partial');
+  assert.equal(progressByKey.scenes.status, 'partial');
+  assert.equal(progressByKey.sb.status, 'done');
+  assert.equal(progressByKey.sbimg.status, 'done');
+  assert.equal(progressByKey.video.status, 'done');
+  assert.equal(progressByKey.sbimg.ready_count, 1);
+  assert.equal(progressByKey.video.ready_count, 1);
   assert.equal(Object.hasOwn(summary.project, 'episodes'), false);
   assert.equal(Object.hasOwn(summary, 'storyboards'), false);
+
+  db.prepare('INSERT INTO episodes (id, drama_id, episode_number, title, script_content, updated_at) VALUES (11, 1, 2, ?, ?, ?)').run('第二集', '', '2026-06-09T03:00:00.000Z');
+  db.prepare('INSERT INTO storyboards (id, episode_id, storyboard_number, title, duration, updated_at, created_at) VALUES (51, 11, 1, ?, 15, ?, ?)').run('第二集开场', '2026-06-09T03:10:00.000Z', '2026-06-09T03:05:00.000Z');
+  const scoped = workbenchService.getWorkbenchSummary(db, 1, { episode_id: 10 });
+  const scopedProgressByKey = Object.fromEntries(scoped.progress_steps.map((step) => [step.key, step]));
+  assert.equal(scoped.progress_scope.type, 'episode');
+  assert.equal(scoped.progress_scope.episode_id, 10);
+  assert.equal(scopedProgressByKey.script.count, 1);
+  assert.equal(scopedProgressByKey.sb.count, 1);
+  assert.equal(scopedProgressByKey.sbimg.status, 'done');
+  assert.equal(scopedProgressByKey.video.status, 'done');
 });
 
 test('workbench summary returns null for missing project', () => {

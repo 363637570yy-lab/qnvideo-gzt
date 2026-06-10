@@ -1,7 +1,10 @@
 <template>
   <section class="section card pipeline-section">
     <div class="project-settings-block">
-      <span class="settings-block-title">项目整体设置</span>
+      <div class="settings-block-title-wrap">
+        <span class="settings-block-title">项目整体设置</span>
+        <span class="settings-save-hint">修改已实时保存，再次生成素材、分镜或视频时将按当前设置生效。</span>
+      </div>
       <label class="project-setting-field">
         <span>项目画幅</span>
         <el-select v-model="ctx.projectAspectRatio" style="width: 130px" @change="() => ctx.scheduleProjectSettingsSave(false)">
@@ -83,7 +86,7 @@
       </template>
     </div>
     <div class="pipeline-model-strategy" v-loading="ctx.aiRouteLoading">
-      <span class="pipeline-model-strategy-title">模型策略</span>
+      <span class="pipeline-model-strategy-title">本次生成模型</span>
       <el-tooltip
         v-for="item in ctx.pipelineModelStrategyItems"
         :key="item.key"
@@ -96,6 +99,7 @@
         </span>
       </el-tooltip>
       <el-button size="small" text @click="ctx.loadRuntimeAiConfigs(true)">刷新</el-button>
+      <el-button v-if="ctx.isAdminUser" size="small" text @click="ctx.showAiConfigDialog = true">配置</el-button>
     </div>
     <div v-if="ctx.pipelineRunning || ctx.pipelineErrorLog.length > 0" class="pipeline-status">
       <div v-if="ctx.pipelineCurrentStep" class="pipeline-current-step">
@@ -142,4 +146,3 @@ defineProps({
   ctx: { type: Object, required: true }
 })
 </script>
-

@@ -14,6 +14,7 @@ export const pipelineModelStrategyTypes = [
   { key: 'text', label: '文本' },
   { key: 'image', label: '图像' },
   { key: 'video', label: '视频' },
+  { key: 'tts', label: '音频' },
 ]
 
 function createRouteMap(initialValue) {

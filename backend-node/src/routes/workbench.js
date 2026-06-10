@@ -4,7 +4,9 @@ const workbenchService = require('../services/workbenchService');
 function summary(db, log) {
   return (req, res) => {
     try {
-      const result = workbenchService.getWorkbenchSummary(db, req.params.drama_id);
+      const result = workbenchService.getWorkbenchSummary(db, req.params.drama_id, {
+        episode_id: req.query.episode_id,
+      });
       if (!result) return response.notFound(res, '项目不存在');
       response.success(res, result);
     } catch (err) {
