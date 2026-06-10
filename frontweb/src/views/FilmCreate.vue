@@ -199,6 +199,7 @@ const {
 
 // ── Composable: Navigation ─────────────────────────────
 const filmWorkbenchTab = ref('script')
+let runWorkbenchTabLoadForNavigation = async () => {}
 const {
   anchorTabMap,
   goStoryboardAnchor,
@@ -209,7 +210,10 @@ const {
   toggleNav,
   scrollToTop,
   scrollToAnchor,
-} = useNavigation({ filmWorkbenchTab })
+} = useNavigation({
+  filmWorkbenchTab,
+  loadWorkbenchTab: (...args) => runWorkbenchTabLoadForNavigation(...args),
+})
 
 function goList() {
   router.push('/')
@@ -669,6 +673,7 @@ const {
   dramaId,
   workbenchSummary,
   workbenchSummaryLoading,
+  storyboardOutline,
   projectTitle,
   characters,
   scenes,
@@ -723,6 +728,7 @@ const {
   getSbVideosRef,
   restoreSelectionsFromBackend,
 })
+runWorkbenchTabLoadForNavigation = loadWorkbenchTab
 
 const {
   dedupeStoryboardsForAssetLink,
@@ -1088,10 +1094,17 @@ const { navSteps } = useQuickNavProgress({
   scriptContent,
   scriptGenerating,
   storyboards,
+  storyboardOutline,
   storyboardGenerating,
   storyGenerating,
   universalOmniPolishRunning,
   workbenchSummary,
+})
+
+const storyboardNavItems = computed(() => {
+  const outline = storyboardOutline.value || []
+  if (Array.isArray(outline) && outline.length > 0) return outline
+  return storyboards.value || []
 })
 
 const {
@@ -2317,6 +2330,8 @@ const filmCreateCtx = proxyRefs({
   storyboardMenuExpanded,
   storyboardRefName,
   storyboards,
+  storyboardNavItems,
+  storyboardOutline,
   storyboardsAPI,
   StoryboardWorkbench,
   storyboardUniversalOmni,

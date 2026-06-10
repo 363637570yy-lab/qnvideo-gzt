@@ -58,6 +58,7 @@ export function useFilmCreateProject(deps = {}) {
     store.setScriptContent(ep.script_content || '')
     scriptTitle.value = ep.title || '第' + (ep.episode_number || 0) + '集'
     syncStoryboardStateFromEpisode(ep)
+    loadWorkbenchSummary({ applySettings: false }).catch(() => {})
     loadWorkbenchTab(filmWorkbenchTab.value, { force: true }).catch(() => {})
     recoverAndSyncEpisodeTasks(epId)
   }

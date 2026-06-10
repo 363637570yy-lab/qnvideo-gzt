@@ -17,6 +17,7 @@ export function useNavigation(options = {}) {
   const {
     filmWorkbenchTab,
     anchorTabMap = DEFAULT_ANCHOR_TAB_MAP,
+    loadWorkbenchTab = async () => {},
   } = options
   const navCollapsed = ref(false)
   const storyboardMenuExpanded = ref(false)
@@ -57,11 +58,12 @@ export function useNavigation(options = {}) {
     if (!anchor) return
     switchWorkbenchTabForAnchor(anchor)
     await nextTick()
-    scrollToAnchor(anchor)
+    scrollToTop()
   }
 
   async function goStoryboardAnchor(sbId) {
     if (filmWorkbenchTab?.value != null) filmWorkbenchTab.value = 'storyboards'
+    await loadWorkbenchTab('storyboards').catch(() => {})
     await nextTick()
     scrollToAnchor('sb-' + sbId)
   }

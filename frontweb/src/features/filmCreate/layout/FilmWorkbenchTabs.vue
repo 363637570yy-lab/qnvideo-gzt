@@ -23,7 +23,7 @@ import { Box, Document, Film, Picture, User, VideoCamera } from '@element-plus/i
 const activeTab = defineModel({ type: String, default: 'script' })
 
 const tabs = [
-  { label: '剧本', name: 'script', icon: Document },
+  { label: '故事剧本', name: 'script', icon: Document },
   { label: '角色', name: 'characters', icon: User },
   { label: '场景', name: 'scenes', icon: Picture },
   { label: '道具', name: 'props', icon: Box },

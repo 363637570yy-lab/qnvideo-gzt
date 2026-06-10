@@ -46,16 +46,16 @@
       </div>
 
       <!-- 分镜子列表 -->
-      <div v-if="!navCollapsed && storyboards.length > 0" class="nav-group">
+      <div v-if="!navCollapsed && storyboardNavItems.length > 0" class="nav-group">
         <div class="nav-sub-toggle" @click="storyboardMenuExpanded = !storyboardMenuExpanded">
           <el-icon><Minus v-if="storyboardMenuExpanded" /><Plus v-else /></el-icon>
           <span>分镜列表</span>
         </div>
         <div v-show="storyboardMenuExpanded" class="nav-sub-list">
-          <template v-for="(sb, i) in storyboards" :key="sb.id">
+          <template v-for="(sb, i) in storyboardNavItems" :key="sb.id">
             <!-- 段落标题行 -->
             <div
-              v-if="sb.segment_title && (i === 0 || sb.segment_index !== storyboards[i - 1].segment_index)"
+              v-if="sb.segment_title && (i === 0 || sb.segment_index !== storyboardNavItems[i - 1].segment_index)"
               class="nav-segment-label"
             >
               <span class="nav-segment-dot" />

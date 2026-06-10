@@ -36,6 +36,43 @@ function mergeSummaryStep(summaryMap, key, fallback, forceGenerating = false) {
   }
 }
 
+function combinedStoryboardStep(summaryMap, fallback, forceGenerating = false) {
+  const scriptStep = summaryMap.sb
+  const imageStep = summaryMap.sbimg
+  const count = Math.max(
+    numberValue(scriptStep?.count, 0),
+    numberValue(imageStep?.count, 0),
+    fallback.count
+  )
+  const readyCount = imageStep
+    ? numberValue(imageStep.ready_count, fallback.ready_count)
+    : fallback.ready_count
+  const runningTasks = Math.max(
+    numberValue(scriptStep?.running_tasks, 0),
+    numberValue(imageStep?.running_tasks, 0)
+  )
+  let status = fallback.status
+  if (forceGenerating || runningTasks > 0) {
+    status = 'generating'
+  } else if (count <= 0) {
+    status = 'pending'
+  } else if (imageStep) {
+    status = normalizeStatus(imageStep.status)
+  } else if (scriptStep) {
+    status = normalizeStatus(scriptStep.status)
+  }
+  return {
+    ...fallback,
+    key: 'storyboards',
+    label: '分镜',
+    status,
+    count,
+    total_count: count,
+    ready_count: readyCount,
+    running_tasks: runningTasks,
+  }
+}
+
 export function useQuickNavProgress(deps = {}) {
   const {
     GEN_RESOURCE = {},
@@ -61,6 +98,7 @@ export function useQuickNavProgress(deps = {}) {
     scriptContent,
     scriptGenerating,
     storyboards,
+    storyboardOutline,
     storyboardGenerating,
     storyGenerating,
     universalOmniPolishRunning,
@@ -95,13 +133,16 @@ export function useQuickNavProgress(deps = {}) {
       || epRunning.some((task) => task.resourceType === GEN_RESOURCE.SCENE_IMAGE || task.resourceType === GEN_RESOURCE.EXTRACT_SCENES)
     const sceneStatus = sceneGen ? 'generating' : sceneDone ? 'done' : sceneList.length > 0 ? 'partial' : 'pending'
 
-    const sbList = readValue(storyboards, []) || []
+    const loadedSbList = readValue(storyboards, []) || []
+    const outlineSbList = readValue(storyboardOutline, []) || []
+    const sbList = loadedSbList.length > 0 ? loadedSbList : outlineSbList
     const sbScriptDone = sbList.length > 0
     const sbScriptGen = readValue(storyboardGenerating, false) || readValue(universalOmniPolishRunning, false)
       || epRunning.some((task) => task.resourceType === GEN_RESOURCE.GENERATE_STORYBOARD)
     const sbScriptStatus = sbScriptGen ? 'generating' : sbScriptDone ? 'done' : 'pending'
 
-    const sbImgDone = sbList.length > 0 && sbList.every((item) => hasSbImage(item))
+    const sbImgReadyCount = loadedSbList.filter((item) => hasSbImage(item)).length
+    const sbImgDone = loadedSbList.length > 0 && loadedSbList.every((item) => hasSbImage(item))
     const sbImgGen = hasSetItems(generatingSbImageIds) || readValue(batchImageRunning, false) || epRunning.some((task) =>
       task.resourceType === GEN_RESOURCE.SB_IMAGE
       || task.resourceType === GEN_RESOURCE.SB_FIRST_IMAGE
@@ -118,11 +159,10 @@ export function useQuickNavProgress(deps = {}) {
     return [
       mergeSummaryStep(summaryMap, 'script', { key: 'script', label: '故事剧本', anchor: 'anchor-script', status: scriptStatus, count: hasScript ? 1 : 0 }, scriptGen),
       mergeSummaryStep(summaryMap, 'chars', { key: 'chars', label: '角色', anchor: 'anchor-characters', status: charStatus, count: charList.length }, charGen),
-      mergeSummaryStep(summaryMap, 'props', { key: 'props', label: '道具', anchor: 'anchor-props', status: propStatus, count: propList.length }, propGen),
       mergeSummaryStep(summaryMap, 'scenes', { key: 'scenes', label: '场景', anchor: 'anchor-scenes', status: sceneStatus, count: sceneList.length }, sceneGen),
-      mergeSummaryStep(summaryMap, 'sb', { key: 'sb', label: '分镜脚本', anchor: 'anchor-storyboard', status: sbScriptStatus, count: sbList.length }, sbScriptGen),
-      mergeSummaryStep(summaryMap, 'sbimg', { key: 'sbimg', label: '分镜图', anchor: 'anchor-storyboard', status: sbImgStatus, count: sbList.length }, sbImgGen),
-      mergeSummaryStep(summaryMap, 'video', { key: 'video', label: '分镜视频', anchor: 'anchor-video', status: videoStatus, count: sbList.length }, sbVideoGen),
+      mergeSummaryStep(summaryMap, 'props', { key: 'props', label: '道具', anchor: 'anchor-props', status: propStatus, count: propList.length }, propGen),
+      combinedStoryboardStep(summaryMap, { key: 'storyboards', label: '分镜', anchor: 'anchor-storyboard', status: sbImgStatus === 'pending' ? sbScriptStatus : sbImgStatus, count: sbList.length, ready_count: sbImgReadyCount }, sbScriptGen || sbImgGen),
+      mergeSummaryStep(summaryMap, 'video', { key: 'videoCompose', label: '视频/合成', anchor: 'anchor-video', status: videoStatus, count: sbList.length }, sbVideoGen),
     ]
   })
 

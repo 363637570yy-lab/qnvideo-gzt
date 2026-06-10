@@ -1,8 +1,8 @@
 <template>
   <section class="section card pipeline-section">
     <div class="project-settings-block">
-      <div class="settings-block-title">项目整体设置</div>
       <div class="project-settings-list">
+        <div class="settings-block-title">项目整体设置</div>
         <label class="project-setting-field">
           <span>项目画幅</span>
           <el-select v-model="ctx.projectAspectRatio" @change="() => ctx.scheduleProjectSettingsSave(false)">

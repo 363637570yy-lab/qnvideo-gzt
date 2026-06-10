@@ -42,6 +42,7 @@ export function useWorkbenchLoader(deps) {
   const dramaId = computed(() => store.dramaId)
   const workbenchSummary = ref(null)
   const workbenchSummaryLoading = ref(false)
+  const storyboardOutline = ref([])
   const projectTitle = computed(() => workbenchSummary.value?.project?.title || store.drama?.title || '项目')
 
   const characters = computed(() => store.characters)
@@ -80,11 +81,13 @@ export function useWorkbenchLoader(deps) {
         episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
       })
       workbenchSummary.value = summary || null
+      storyboardOutline.value = Array.isArray(summary?.storyboard_outline) ? summary.storyboard_outline : []
       if (applySettings) applyWorkbenchSummarySettings(summary)
       return summary
     } catch (err) {
       if (!silent) ElMessage.error(err.message || '加载制作工作台摘要失败')
       workbenchSummary.value = null
+      storyboardOutline.value = []
       return null
     } finally {
       workbenchSummaryLoading.value = false
@@ -164,6 +167,15 @@ export function useWorkbenchLoader(deps) {
 
   function applyStoryboardsWorkbenchTab(data) {
     const boards = Array.isArray(data?.storyboards) ? data.storyboards : []
+    storyboardOutline.value = boards.map((item, index) => ({
+      id: item.id,
+      episode_id: item.episode_id ?? data?.episode?.id ?? currentEpisodeId.value,
+      storyboard_number: item.storyboard_number ?? index + 1,
+      title: item.title || '',
+      segment_index: item.segment_index ?? 0,
+      segment_title: item.segment_title || '',
+      updated_at: item.updated_at || null,
+    }))
     const episodePatch = {
       ...(data?.episode || {}),
       storyboards: boards,
@@ -299,6 +311,7 @@ export function useWorkbenchLoader(deps) {
     dramaId,
     workbenchSummary,
     workbenchSummaryLoading,
+    storyboardOutline,
     projectTitle,
     characters,
     scenes,

@@ -777,36 +777,49 @@ html.light .section-title { color: #1e1b4b; }
   order: 3;
 }
 .project-settings-block {
-  padding-bottom: 12px;
+  padding-bottom: 10px;
   margin-bottom: 12px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.16);
 }
 .settings-block-title {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--el-text-color-primary);
   white-space: nowrap;
   font-weight: 600;
-  margin-bottom: 10px;
+  margin: 0;
+  line-height: 18px;
+  padding-top: 1px;
 }
 .project-settings-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(260px, 1fr));
-  gap: 10px 14px;
+  grid-template-columns:
+    112px
+    minmax(132px, 0.72fr)
+    minmax(220px, 1.25fr)
+    minmax(128px, 0.72fr)
+    minmax(132px, 0.72fr)
+    minmax(110px, 0.58fr)
+    minmax(176px, 0.9fr);
+  gap: 6px 14px;
+  align-items: start;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 .project-setting-field {
   display: grid;
-  grid-template-columns: 98px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
+  grid-template-rows: 18px 32px;
+  align-items: stretch;
+  gap: 6px;
   min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.025);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .project-setting-field > span {
   font-size: 13px;
-  color: var(--el-text-color-secondary);
+  line-height: 18px;
+  color: var(--el-text-color-primary);
   white-space: nowrap;
   font-weight: 600;
 }
@@ -960,7 +973,14 @@ html.light .section-title { color: #1e1b4b; }
 }
 @media (max-width: 1180px) {
   .project-settings-list {
-    grid-template-columns: 1fr;
+    grid-template-columns:
+      112px
+      minmax(132px, 0.72fr)
+      minmax(220px, 1.25fr)
+      minmax(128px, 0.72fr)
+      minmax(132px, 0.72fr)
+      minmax(110px, 0.58fr)
+      minmax(176px, 0.9fr);
   }
   .pipeline-model-field {
     grid-template-columns: 42px minmax(150px, 1fr);
@@ -974,8 +994,12 @@ html.light .section-title { color: #1e1b4b; }
   .pipeline-section {
     padding: 14px 12px !important;
   }
-  .project-setting-field {
-    grid-template-columns: 88px minmax(0, 1fr);
+  .project-settings-list {
+    grid-template-columns: 96px repeat(6, minmax(128px, 1fr));
+  }
+  .settings-block-title,
+  .project-setting-field > span {
+    font-size: 12px;
   }
   .film-workbench-tab {
     min-width: 82px;

@@ -206,6 +206,11 @@ test('workbench summary returns lightweight counts and project settings', () => 
   assert.equal(progressByKey.video.status, 'done');
   assert.equal(progressByKey.sbimg.ready_count, 1);
   assert.equal(progressByKey.video.ready_count, 1);
+  assert.equal(summary.storyboard_outline.length, 1);
+  assert.equal(summary.storyboard_outline[0].id, 50);
+  assert.equal(summary.storyboard_outline[0].title, '开场');
+  assert.equal(Object.hasOwn(summary.storyboard_outline[0], 'image_url'), false);
+  assert.equal(Object.hasOwn(summary.storyboard_outline[0], 'video_url'), false);
   assert.equal(Object.hasOwn(summary.project, 'episodes'), false);
   assert.equal(Object.hasOwn(summary, 'storyboards'), false);
 
@@ -219,6 +224,8 @@ test('workbench summary returns lightweight counts and project settings', () => 
   assert.equal(scopedProgressByKey.sb.count, 1);
   assert.equal(scopedProgressByKey.sbimg.status, 'done');
   assert.equal(scopedProgressByKey.video.status, 'done');
+  assert.equal(scoped.storyboard_outline.length, 1);
+  assert.equal(scoped.storyboard_outline[0].id, 50);
 });
 
 test('workbench summary returns null for missing project', () => {
