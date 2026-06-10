@@ -125,6 +125,7 @@ export default {
   name: 'QuickNav',
   props: {
     ctx: { type: Object, required: true },
+    workbenchSummary: { type: Object, default: null },
     storyboardOutline: { type: Array, default: () => [] },
     storyboardsForNav: { type: Array, default: () => [] },
   },
@@ -142,7 +143,12 @@ export default {
     Object.defineProperty(exposed, 'storyboardNavItems', {
       enumerable: true,
       get: () => {
-        const outline = props.storyboardOutline || props.ctx.storyboardOutline || []
+        const summaryOutline = props.workbenchSummary?.storyboard_outline
+          || props.ctx.workbenchSummary?.storyboard_outline
+          || []
+        const outline = (props.storyboardOutline?.length ? props.storyboardOutline : summaryOutline)
+          || props.ctx.storyboardOutline
+          || []
         if (Array.isArray(outline) && outline.length > 0) return outline
         const boards = props.storyboardsForNav || props.ctx.storyboards || []
         return Array.isArray(boards) ? boards : []

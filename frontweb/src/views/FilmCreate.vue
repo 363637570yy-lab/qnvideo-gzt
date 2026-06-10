@@ -12,6 +12,7 @@
 
     <QuickNav
       :ctx="filmCreateCtx"
+      :workbench-summary="workbenchSummary"
       :storyboard-outline="storyboardOutline"
       :storyboards-for-nav="storyboards"
     />
