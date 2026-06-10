@@ -722,6 +722,7 @@ html.light .section-title { color: #1e1b4b; }
   font-weight: 700;
 }
 .script-workbench-unified,
+.resource-block,
 .resource-panel,
 #anchor-storyboard,
 .video-config-section,
