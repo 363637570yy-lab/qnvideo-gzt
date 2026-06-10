@@ -20,7 +20,7 @@ export function useNavigation(options = {}) {
     loadWorkbenchTab = async () => {},
   } = options
   const navCollapsed = ref(false)
-  const storyboardMenuExpanded = ref(false)
+  const storyboardMenuExpanded = ref(true)
   let _navAutoCollapsed = false
 
   function _syncNavCollapse() {
