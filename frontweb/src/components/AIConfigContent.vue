@@ -230,7 +230,6 @@
           </template>
           <el-select v-model="form.api_protocol" style="width: 100%" placeholder="选择接口规范（自定义厂商必选）" clearable>
             <el-option label="OpenAI 兼容（大多数中转站默认）" value="openai" />
-            <el-option label="OpenAI GPT Image（gpt-image 系列官方图片接口）" value="openai_gpt_image" />
             <el-option label="CLIProxyAPI gpt-image-2（Codex/Responses 兼容中转）" value="cliproxy_gpt_image2" />
             <el-option label="火山引擎（豆包 Seedream / Seedance）" value="volcengine" />
             <el-option label="火山即梦 Seedance 全能（方舟多图参考，Seedance 2.0 等）" value="volcengine_omni" />
@@ -1120,7 +1119,7 @@ const form = ref({
   group_id: '',
 })
 const presetModelPick = ref('')
-const OPENAI_IMAGE_PROTOCOLS = new Set(['openai_gpt_image', 'cliproxy_gpt_image2'])
+const OPENAI_IMAGE_PROTOCOLS = new Set(['cliproxy_gpt_image2'])
 const IMAGE_API_MODE_IMAGES = 'images'
 const IMAGE_API_MODE_RESPONSES = 'responses'
 const DEFAULT_RESPONSES_MAIN_MODEL = 'gpt-5.5'
@@ -1682,9 +1681,7 @@ function onProviderChange(providerId) {
     form.value.deepseek_reasoning_effort = 'high'
   }
   // 自动填充接口规范
-  form.value.api_protocol = st === 'image' && providerId === 'openai'
-    ? 'openai_gpt_image'
-    : (providerProtocolMap[providerId] || (st === 'text' ? '' : 'openai'))
+  form.value.api_protocol = providerProtocolMap[providerId] || (st === 'text' ? '' : 'openai')
   if (st === 'image' && isOpenAiImageProtocol(form.value.api_protocol)) {
     form.value.image_api_mode = IMAGE_API_MODE_IMAGES
     form.value.image_tool_model = DEFAULT_RESPONSES_IMAGE_TOOL_MODEL
