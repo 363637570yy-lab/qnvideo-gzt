@@ -481,7 +481,7 @@ function buildProgressSteps(db, dramaId, tabs, running, episodeId = null) {
 function getWorkbenchSummary(db, dramaId, options = {}) {
   const id = parsePositiveId(dramaId);
   if (!id) return null;
-  const episodeId = parsePositiveId(options.episode_id);
+  const requestedEpisodeId = parsePositiveId(options.episode_id);
   const drama = safeGet(
     db,
     `SELECT id, title, description, style, thumbnail, total_episodes, total_duration, status, metadata, owner_user_id, updated_at, created_at
@@ -492,7 +492,10 @@ function getWorkbenchSummary(db, dramaId, options = {}) {
   if (!drama) return null;
 
   const running = taskCounts(db, id);
-  const outlineEpisode = resolveWorkbenchEpisode(db, id, episodeId);
+  const outlineEpisode = resolveWorkbenchEpisode(db, id, requestedEpisodeId, { strict: false });
+  const episodeId = requestedEpisodeId && Number(outlineEpisode?.id) === requestedEpisodeId
+    ? requestedEpisodeId
+    : null;
   const tabs = {
     script: scriptTabSummary(db, id, episodeId),
     characters: simpleProjectCountTab(db, 'characters', 'characters', id, running.characters),
@@ -666,20 +669,24 @@ function getAssetTab(db, dramaId, options = {}) {
   };
 }
 
-function resolveWorkbenchEpisode(db, dramaId, episodeId) {
+function resolveWorkbenchEpisode(db, dramaId, episodeId, options = {}) {
   const id = parsePositiveId(dramaId);
   if (!id) return null;
   const epId = parsePositiveId(episodeId);
-  const row = epId
-    ? safeGet(
+  const strict = options.strict !== false;
+  let row = null;
+  if (epId) {
+    row = safeGet(
       db,
       `SELECT *
        FROM episodes
        WHERE id = ? AND drama_id = ? AND deleted_at IS NULL`,
       epId,
       id
-    )
-    : safeGet(
+    );
+  }
+  if (!row && (!epId || !strict)) {
+    row = safeGet(
       db,
       `SELECT *
        FROM episodes
@@ -688,7 +695,8 @@ function resolveWorkbenchEpisode(db, dramaId, episodeId) {
        LIMIT 1`,
       id
     );
-  if (epId && !row) {
+  }
+  if (epId && !row && strict) {
     const err = new Error('剧集不存在或不属于当前项目');
     err.statusCode = 404;
     throw err;

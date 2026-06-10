@@ -35,6 +35,7 @@ export function useProps(deps) {
     textAiPayload = () => ({}),
     imageAiPayload = () => ({}),
     workflowPresetPayload = () => ({}),
+    refreshAssetWorkbench = async () => loadDrama(),
   } = deps
   const genStore = useGenerationTaskStore()
 
@@ -127,12 +128,12 @@ export function useProps(deps) {
       const res = await propAPI.extractFromScript(epId, options)
       const taskId = res?.task_id
       if (taskId) {
-        const pollRes = await pollTask(taskId, () => loadDrama(), meta)
+        const pollRes = await pollTask(taskId, () => refreshAssetWorkbench('props'), meta)
         if (pollRes?.status === 'completed') {
           ElMessage.success('道具提取完成')
         }
       } else {
-        await loadDrama()
+        await refreshAssetWorkbench('props')
         genStore.markDone(meta)
         ElMessage.success('道具提取任务已提交')
       }

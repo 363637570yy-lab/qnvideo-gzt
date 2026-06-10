@@ -9,6 +9,11 @@ const IMAGE_TIER_AREAS = {
   '4K': 3840 * 2160,
 };
 
+const OPENAI_GPT_IMAGE_MAX_EDGE = 3840;
+const OPENAI_GPT_IMAGE_MAX_PIXELS = 3840 * 2160;
+const OPENAI_GPT_IMAGE_MIN_PIXELS = 655360;
+const OPENAI_GPT_IMAGE_MAX_RATIO = 3;
+
 const VIDEO_TIER_AREAS = {
   '480p': 854 * 480,
   '720p': 1280 * 720,
@@ -66,6 +71,16 @@ function even(n) {
 function multipleOf(n, multiple = 16) {
   const v = Math.max(multiple, Math.round(Number(n) || 0));
   return Math.max(multiple, Math.round(v / multiple) * multiple);
+}
+
+function multipleOfFloor(n, multiple = 16) {
+  const v = Math.max(multiple, Math.floor(Number(n) || 0));
+  return Math.max(multiple, Math.floor(v / multiple) * multiple);
+}
+
+function multipleOfCeil(n, multiple = 16) {
+  const v = Math.max(multiple, Math.ceil(Number(n) || 0));
+  return Math.max(multiple, Math.ceil(v / multiple) * multiple);
 }
 
 function dimensionsFromArea(area, ratio) {
@@ -159,22 +174,66 @@ function officialFixedOpenAiGptImageSize(size) {
   return '1024x1024';
 }
 
+function flexibleOpenAiGptImageSize(size) {
+  const m = String(size || '').trim().toLowerCase().match(/^(\d+)[x*](\d+)$/);
+  if (!m) return 'auto';
+  let w = Number(m[1]);
+  let h = Number(m[2]);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 'auto';
+
+  if (w / h > OPENAI_GPT_IMAGE_MAX_RATIO) h = w / OPENAI_GPT_IMAGE_MAX_RATIO;
+  if (h / w > OPENAI_GPT_IMAGE_MAX_RATIO) w = h / OPENAI_GPT_IMAGE_MAX_RATIO;
+
+  let alignedW = multipleOf(w, 16);
+  let alignedH = multipleOf(h, 16);
+  if (alignedW / alignedH > OPENAI_GPT_IMAGE_MAX_RATIO) {
+    alignedH = multipleOfCeil(alignedW / OPENAI_GPT_IMAGE_MAX_RATIO, 16);
+  }
+  if (alignedH / alignedW > OPENAI_GPT_IMAGE_MAX_RATIO) {
+    alignedW = multipleOfCeil(alignedH / OPENAI_GPT_IMAGE_MAX_RATIO, 16);
+  }
+
+  if (alignedW * alignedH < OPENAI_GPT_IMAGE_MIN_PIXELS) {
+    const scaleUp = Math.sqrt(OPENAI_GPT_IMAGE_MIN_PIXELS / (alignedW * alignedH));
+    alignedW = multipleOfCeil(alignedW * scaleUp, 16);
+    alignedH = multipleOfCeil(alignedH * scaleUp, 16);
+  }
+
+  const scaleDown = Math.min(
+    1,
+    OPENAI_GPT_IMAGE_MAX_EDGE / alignedW,
+    OPENAI_GPT_IMAGE_MAX_EDGE / alignedH,
+    Math.sqrt(OPENAI_GPT_IMAGE_MAX_PIXELS / (alignedW * alignedH)),
+  );
+  if (scaleDown < 1) {
+    alignedW = multipleOfFloor(alignedW * scaleDown, 16);
+    alignedH = multipleOfFloor(alignedH * scaleDown, 16);
+  }
+
+  while (
+    alignedW > OPENAI_GPT_IMAGE_MAX_EDGE ||
+    alignedH > OPENAI_GPT_IMAGE_MAX_EDGE ||
+    alignedW * alignedH > OPENAI_GPT_IMAGE_MAX_PIXELS ||
+    alignedW / alignedH > OPENAI_GPT_IMAGE_MAX_RATIO ||
+    alignedH / alignedW > OPENAI_GPT_IMAGE_MAX_RATIO
+  ) {
+    if (alignedW >= alignedH) alignedW -= 16;
+    else alignedH -= 16;
+    if (alignedW < 16 || alignedH < 16) return officialFixedOpenAiGptImageSize(size);
+  }
+
+  if (alignedW * alignedH < OPENAI_GPT_IMAGE_MIN_PIXELS) {
+    return officialFixedOpenAiGptImageSize(size);
+  }
+  return `${alignedW}x${alignedH}`;
+}
+
 function openAiGptImageSize(size, mode = 'direct') {
   const normalizedMode = String(mode || 'direct').trim().toLowerCase();
   if (normalizedMode === 'official_fixed' || normalizedMode === 'fixed') {
     return officialFixedOpenAiGptImageSize(size);
   }
-  const m = String(size || '').trim().toLowerCase().match(/^(\d+)[x*](\d+)$/);
-  if (!m) return 'auto';
-  const w = Number(m[1]);
-  const h = Number(m[2]);
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 'auto';
-  const alignedW = multipleOf(w, 16);
-  const alignedH = multipleOf(h, 16);
-  if (alignedW > 4096 || alignedH > 4096 || alignedW * alignedH > 4096 * 4096) {
-    return officialFixedOpenAiGptImageSize(size);
-  }
-  return `${alignedW}x${alignedH}`;
+  return flexibleOpenAiGptImageSize(size);
 }
 
 module.exports = {

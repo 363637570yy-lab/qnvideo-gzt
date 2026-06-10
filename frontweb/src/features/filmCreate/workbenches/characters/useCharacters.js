@@ -37,6 +37,7 @@ export function useCharacters(deps) {
     textAiPayload = () => ({}),
     imageAiPayload = () => ({}),
     workflowPresetPayload = () => ({}),
+    refreshAssetWorkbench = async () => loadDrama(),
   } = deps
   const genStore = useGenerationTaskStore()
 
@@ -157,12 +158,12 @@ export function useCharacters(deps) {
       })
       const taskId = res?.task_id
       if (taskId) {
-        const pollRes = await pollTask(taskId, () => loadDrama(), meta)
+        const pollRes = await pollTask(taskId, () => refreshAssetWorkbench('characters'), meta)
         if (pollRes?.status === 'completed') {
           ElMessage.success('角色生成完成')
         }
       } else {
-        await loadDrama()
+        await refreshAssetWorkbench('characters')
         genStore.markDone(meta)
       }
     } catch (e) {

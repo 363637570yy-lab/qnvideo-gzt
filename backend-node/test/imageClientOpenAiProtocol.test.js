@@ -62,6 +62,49 @@ test('supports CLIProxyAPI zero partial image default', () => {
   assert.equal(_test.normalizeGptImagePartialImagesWithDefault(3, 0), 3);
 });
 
+test('skips transparent background for gpt-image-2 requests', () => {
+  assert.equal(_test.normalizeGptImageBackground('transparent', 'gpt-image-2'), null);
+  assert.equal(_test.normalizeGptImageBackground('transparent', 'gpt-image-2-2026-04-21'), null);
+  assert.equal(_test.normalizeGptImageBackground('opaque', 'gpt-image-2'), 'opaque');
+  assert.equal(_test.normalizeGptImageBackground('transparent', 'gpt-image-1.5'), 'transparent');
+});
+
+test('builds Responses API image_generation body for CLIProxy mode', () => {
+  const { body, toolModel, action, toolModelSent } = _test.buildResponsesImageBody({
+    model: 'gpt-5.5',
+    prompt: 'Use the following text as the complete prompt. Do not rewrite it:\nA quiet courtyard',
+    resolvedRefs: ['data:image/png;base64,cmVm'],
+    protocol: 'cliproxy_gpt_image2',
+    settings: { api_mode: 'responses', tool_model: 'gpt-image-2' },
+    commonFields: {
+      size: '1024x1024',
+      output_format: 'png',
+      moderation: 'auto',
+    },
+    outputFormat: 'png',
+    compression: NaN,
+    streamImages: true,
+    partialImages: 0,
+  });
+
+  assert.equal(body.model, 'gpt-5.5');
+  assert.equal(body.tools[0].type, 'image_generation');
+  assert.equal(body.tools[0].model, 'gpt-image-2');
+  assert.equal(body.tools[0].action, 'edit');
+  assert.equal(body.tools[0].partial_images, 0);
+  assert.equal(body.tool_choice.type, 'image_generation');
+  assert.equal(body.input[0].content[1].type, 'input_image');
+  assert.equal(toolModel, 'gpt-image-2');
+  assert.equal(action, 'edit');
+  assert.equal(toolModelSent, true);
+});
+
+test('normalizes GPT Image API mode aliases', () => {
+  assert.equal(_test.normalizeGptImageApiMode('responses_api'), 'responses');
+  assert.equal(_test.normalizeGptImageApiMode('/v1/responses'), 'responses');
+  assert.equal(_test.normalizeGptImageApiMode('images'), 'images');
+});
+
 test('resolves /static reference images from local storage before public URL fallback', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qnvideo-image-ref-'));
   const rel = path.join('projects', 'demo', 'images', 'ref.png');

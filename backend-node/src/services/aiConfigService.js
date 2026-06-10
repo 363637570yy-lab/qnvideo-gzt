@@ -48,6 +48,27 @@ function modelFromDb(val) {
   }
 }
 
+function parseSettingsObject(raw) {
+  if (!raw) return {};
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function resolveImageSettings(raw) {
+  const settings = parseSettingsObject(raw);
+  return settings.image && typeof settings.image === 'object' ? settings.image : settings;
+}
+
+function normalizeImageApiMode(value) {
+  const s = String(value || 'images').trim().toLowerCase().replace(/[\s_-]+/g, '_');
+  return ['response', 'responses', 'responses_api', 'v1_responses', '/v1/responses'].includes(s) ? 'responses' : 'images';
+}
+
 const RUNTIME_ROUTE_TYPES = [
   { key: 'text', label: '文本' },
   { key: 'image', label: '图像' },
@@ -814,6 +835,59 @@ async function testConnection(opts) {
 
   // --- OpenAI 兼容图片生成（volcengine、OpenAI DALL·E、其他）---
   if (treatAsImage) {
+    const apiProtocol = String(opts.api_protocol || '').toLowerCase();
+    const imageSettings = resolveImageSettings(opts.settings);
+    const imageApiMode = normalizeImageApiMode(
+      imageSettings.api_mode ??
+      imageSettings.apiMode ??
+      imageSettings.api_interface ??
+      imageSettings.apiInterface
+    );
+    const useResponsesApi = imageApiMode === 'responses'
+      && (
+        apiProtocol === 'openai_gpt_image' ||
+        apiProtocol === 'cliproxy_gpt_image2' ||
+        provider === 'openai' ||
+        provider === 'cliproxy' ||
+        provider === 'cliproxyapi' ||
+        provider === 'cli_proxy_api'
+      );
+    if (useResponsesApi) {
+      const url = base + '/responses';
+      const tool = {
+        type: 'image_generation',
+        size: '1024x1024',
+      };
+      if (apiProtocol === 'cliproxy_gpt_image2') {
+        tool.model = imageSettings.tool_model || imageSettings.toolModel || 'gpt-image-2';
+      }
+      const body = {
+        model: model || 'gpt-5.5',
+        input: 'test connectivity',
+        tools: [tool],
+        tool_choice: { type: 'image_generation' },
+      };
+      console.log('[testConnection] 图片服务 Responses API', { url, serviceType, model, body });
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + (opts.api_key || ''),
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401 || res.status === 403) {
+        const text = await res.text();
+        let errMsg = `API Key 无效 (${res.status})`;
+        try {
+          const j = JSON.parse(text);
+          errMsg = j.error?.message || j.message || errMsg;
+        } catch {}
+        throw new Error(errMsg);
+      }
+      return;
+    }
+
     endpoint = endpoint || '/images/generations';
     const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
     const url = base + path;

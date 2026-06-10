@@ -244,6 +244,29 @@
             <el-option label="NanoBanana" value="nano_banana" />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="isOpenAiImageProtocolForm">
+          <template #label>
+            <span class="form-label-tip">API 接口
+              <el-tooltip placement="top" popper-class="cfg-tip-popper">
+                <template #content>
+                  <div class="cfg-tip-content">
+                    同一条图片配置内切换请求方式，不需要再新建配置。<br>
+                    <b>Images API</b>：直接请求 <code>/v1/images</code>，模型通常填 <code>gpt-image-2</code>。<br>
+                    <b>Responses API</b>：请求 <code>/v1/responses</code>，主模型通常填 <code>gpt-5.5</code>，图片工具默认 <code>gpt-image-2</code>。
+                  </div>
+                </template>
+                <el-icon class="tip-icon"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+          </template>
+          <el-select v-model="form.image_api_mode" style="width: 100%" @change="applyImageApiModeDefaults">
+            <el-option label="Images API (/v1/images)" :value="IMAGE_API_MODE_IMAGES" />
+            <el-option label="Responses API (/v1/responses)" :value="IMAGE_API_MODE_RESPONSES" />
+          </el-select>
+          <p class="field-tip" v-if="form.image_api_mode === IMAGE_API_MODE_RESPONSES">
+            Responses 模式会把图片生成作为 <code>image_generation</code> 工具调用；无需另建配置，保存后测试连接也会走 <code>/responses</code>。
+          </p>
+        </el-form-item>
 
         <!-- 接口规范帮助 Dialog -->
         <el-dialog v-model="showProtocolHelp" title="接口规范说明" width="700px" top="5vh">
@@ -262,8 +285,8 @@
                 <template #title><span class="ph-tag ph-tag-img">图片</span> CLIProxyAPI gpt-image-2 — Codex/Responses 兼容中转</template>
                 <div class="ph-body">
                   <b>适用场景：</b>router-for-me/CLIProxyAPI 暴露的 <code>gpt-image-2</code> 图片模型。<br>
-                  <b>Endpoint：</b><code>POST /v1/images/generations</code> 或 <code>/v1/images/edits</code>，由 CLIProxyAPI 内部转到 Responses 的 <code>image_generation</code> 工具。<br>
-                  <b>系统适配：</b>自动启用 Codex/CLI 兼容提示词保护，默认不发送 <code>quality</code> 和多图 <code>n</code>，流式保持连接但默认不请求中间预览图。
+                  <b>API 接口：</b>可在同一条配置里选择 <code>Images API (/v1/images)</code> 或 <code>Responses API (/v1/responses)</code>。前者模型通常填 <code>gpt-image-2</code>；后者主模型通常填 <code>gpt-5.5</code>，图片工具默认 <code>gpt-image-2</code>。<br>
+                  <b>系统适配：</b>自动启用 Codex/CLI 兼容提示词保护，按 <code>gpt-image-2</code> 尺寸约束归一化，默认不发送多图 <code>n</code>；<code>quality</code> 默认保守跳过，确认中转支持后可在配置 <code>settings.image.send_quality=true</code> 打开。
                 </div>
               </el-collapse-item>
               <el-collapse-item name="volcengine-img">
@@ -1078,6 +1101,8 @@ const form = ref({
   name: '',
   provider: '',
   api_protocol: '',
+  image_api_mode: 'images',
+  image_tool_model: 'gpt-image-2',
   base_url: '',
   api_key: '',
   endpoint: '',
@@ -1095,6 +1120,12 @@ const form = ref({
   group_id: '',
 })
 const presetModelPick = ref('')
+const OPENAI_IMAGE_PROTOCOLS = new Set(['openai_gpt_image', 'cliproxy_gpt_image2'])
+const IMAGE_API_MODE_IMAGES = 'images'
+const IMAGE_API_MODE_RESPONSES = 'responses'
+const DEFAULT_RESPONSES_MAIN_MODEL = 'gpt-5.5'
+const DEFAULT_RESPONSES_IMAGE_TOOL_MODEL = 'gpt-image-2'
+const DEFAULT_IMAGES_MODE_MODELS = ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1']
 
 async function loadRoutingPolicies() {
   try {
@@ -1378,6 +1409,35 @@ function parseSettings(settings) {
   }
 }
 
+function normalizeImageApiMode(value) {
+  const s = String(value || IMAGE_API_MODE_IMAGES).trim().toLowerCase().replace(/[\s_-]+/g, '_')
+  return ['response', 'responses', 'responses_api', 'v1_responses', '/v1/responses'].includes(s)
+    ? IMAGE_API_MODE_RESPONSES
+    : IMAGE_API_MODE_IMAGES
+}
+
+function imageSettingsFromRaw(settings) {
+  const s = parseSettings(settings)
+  return s.image && typeof s.image === 'object' ? s.image : s
+}
+
+function resolveImageFormSettings(row) {
+  const imageSettings = imageSettingsFromRaw(row?.settings)
+  return {
+    api_mode: normalizeImageApiMode(
+      imageSettings.api_mode ??
+      imageSettings.apiMode ??
+      imageSettings.api_interface ??
+      imageSettings.apiInterface
+    ),
+    tool_model: imageSettings.tool_model || imageSettings.toolModel || imageSettings.image_model || DEFAULT_RESPONSES_IMAGE_TOOL_MODEL,
+  }
+}
+
+function isOpenAiImageProtocol(protocol) {
+  return OPENAI_IMAGE_PROTOCOLS.has(String(protocol || '').toLowerCase())
+}
+
 function isDeepSeekOfficial(provider, baseUrl) {
   const p = String(provider || '').trim().toLowerCase()
   const base = String(baseUrl || '').trim().toLowerCase()
@@ -1402,6 +1462,9 @@ const isDeepSeekOfficialForm = computed(() => (
   form.value.service_type === 'text'
   && isDeepSeekOfficial(form.value.provider, form.value.base_url)
 ))
+const isOpenAiImageProtocolForm = computed(() => (
+  form.value.service_type === 'image' && isOpenAiImageProtocol(form.value.api_protocol)
+))
 
 /** 当前服务类型下的预设厂商列表（编辑时若当前 provider 不在列表则补一项；末尾始终附一项自定义入口） */
 const availableProviderOptions = computed(() => {
@@ -1422,8 +1485,35 @@ const availableModels = computed(() => {
   const provider = form.value.provider
   if (!st || !provider) return []
   const p = (providerConfigs[st] || []).find((x) => x.id === provider)
-  return p?.models || []
+  const models = p?.models || []
+  if (isOpenAiImageProtocolForm.value && form.value.image_api_mode === IMAGE_API_MODE_RESPONSES) {
+    return Array.from(new Set([DEFAULT_RESPONSES_MAIN_MODEL, ...models]))
+  }
+  return models
 })
+
+function applyImageApiModeDefaults(mode = form.value.image_api_mode) {
+  if (!isOpenAiImageProtocolForm.value) return
+  const normalized = normalizeImageApiMode(mode)
+  form.value.image_api_mode = normalized
+  if (!form.value.image_tool_model) form.value.image_tool_model = DEFAULT_RESPONSES_IMAGE_TOOL_MODEL
+
+  const currentList = parseModelText(form.value.modelText)
+  const standardModels = new Set([...DEFAULT_IMAGES_MODE_MODELS, DEFAULT_RESPONSES_MAIN_MODEL])
+  const canAutoReplace = currentList.length === 0 || currentList.every((m) => standardModels.has(m))
+  if (!canAutoReplace) return
+
+  const targetList = normalized === IMAGE_API_MODE_RESPONSES
+    ? [DEFAULT_RESPONSES_MAIN_MODEL]
+    : DEFAULT_IMAGES_MODE_MODELS
+  form.value.modelText = targetList.join('\n')
+  form.value.default_model = targetList[0] || ''
+}
+
+watch(
+  () => [form.value.service_type, form.value.api_protocol, form.value.image_api_mode],
+  () => applyImageApiModeDefaults(),
+)
 
 /** 根据当前厂商/协议/base_url 推算实际将使用的接口地址，供用户核对 */
 const endpointPreviewInfo = computed(() => {
@@ -1471,7 +1561,9 @@ const endpointPreviewInfo = computed(() => {
     } else if (proto === 'kling' || p === 'kling' || p === 'klingai') {
       submitPath = '/v1/images/generations'
     } else if (proto === 'openai_gpt_image' || proto === 'cliproxy_gpt_image2') {
-      submitPath = '/images/generations 或 /images/edits'
+      submitPath = form.value.image_api_mode === IMAGE_API_MODE_RESPONSES
+        ? '/responses'
+        : '/images/generations 或 /images/edits'
     } else {
       submitPath = '/images/generations'  // openai 兼容：base_url 已含 /v1
     }
@@ -1567,6 +1659,8 @@ function onProviderChange(providerId) {
   if (providerId === CUSTOM_PROVIDER_SENTINEL) {
     form.value.provider = ''
     form.value.api_protocol = ''
+    form.value.image_api_mode = IMAGE_API_MODE_IMAGES
+    form.value.image_tool_model = DEFAULT_RESPONSES_IMAGE_TOOL_MODEL
     form.value.base_url = ''
     form.value.modelText = ''
     form.value.default_model = ''
@@ -1591,6 +1685,11 @@ function onProviderChange(providerId) {
   form.value.api_protocol = st === 'image' && providerId === 'openai'
     ? 'openai_gpt_image'
     : (providerProtocolMap[providerId] || (st === 'text' ? '' : 'openai'))
+  if (st === 'image' && isOpenAiImageProtocol(form.value.api_protocol)) {
+    form.value.image_api_mode = IMAGE_API_MODE_IMAGES
+    form.value.image_tool_model = DEFAULT_RESPONSES_IMAGE_TOOL_MODEL
+    applyImageApiModeDefaults(IMAGE_API_MODE_IMAGES)
+  }
   if (st === 'video' && providerId === 'jimeng_ai_api') {
     form.value.endpoint = ''
     form.value.query_endpoint = ''
@@ -1703,6 +1802,8 @@ function resetForm() {
     name: '',
     provider: '',
     api_protocol: '',
+    image_api_mode: IMAGE_API_MODE_IMAGES,
+    image_tool_model: DEFAULT_RESPONSES_IMAGE_TOOL_MODEL,
     base_url: '',
     api_key: '',
     endpoint: '',
@@ -1739,6 +1840,7 @@ function openEdit(row) {
   let kling_secret_key = ''
   let kling_secret_key_base64 = false
   const deepseekSettings = resolveDeepSeekFormSettings(row)
+  const imageSettings = resolveImageFormSettings(row)
   if (row.settings) {
     try {
       const s = JSON.parse(row.settings)
@@ -1758,6 +1860,8 @@ function openEdit(row) {
     name: row.name,
     provider: row.provider,
     api_protocol: row.api_protocol || '',
+    image_api_mode: imageSettings.api_mode,
+    image_tool_model: imageSettings.tool_model,
     base_url: row.base_url,
     api_key: row.api_key,
     endpoint: row.endpoint || '',
@@ -1820,6 +1924,19 @@ async function submit() {
         delete baseS.deepseek_reasoning_effort
       }
       settings = Object.keys(baseS).length ? JSON.stringify(baseS) : null
+    } else if (form.value.service_type === 'image' && isOpenAiImageProtocol(form.value.api_protocol)) {
+      const prev = editingId.value ? list.value.find((r) => r.id === editingId.value) : null
+      const baseS = parseSettings(prev?.settings)
+      const oldNested = baseS.image && typeof baseS.image === 'object' ? baseS.image : {}
+      const rootImageSettings = { ...baseS }
+      delete rootImageSettings.image
+      const imageS = { ...rootImageSettings, ...oldNested }
+      imageS.api_mode = normalizeImageApiMode(form.value.image_api_mode)
+      if (imageS.api_mode === IMAGE_API_MODE_RESPONSES) {
+        imageS.tool_model = form.value.image_tool_model || DEFAULT_RESPONSES_IMAGE_TOOL_MODEL
+      }
+      baseS.image = imageS
+      settings = JSON.stringify(baseS)
     }
     const payload = {
       service_type: form.value.service_type,
@@ -1938,6 +2055,7 @@ async function openTest(row) {
       model: row.default_model || (Array.isArray(row.model) ? row.model[0] : row.model),
       default_model: row.default_model,
       provider: row.provider,
+      api_protocol: row.api_protocol,
       endpoint: row.endpoint,
       service_type: row.service_type,
       settings: row.settings

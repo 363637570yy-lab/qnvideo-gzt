@@ -13,6 +13,14 @@ test('OpenAI GPT Image direct size is aligned to 16-pixel multiples', () => {
   assert.equal(openAiGptImageSize('1024x1536'), '1024x1536');
 });
 
+test('OpenAI GPT Image direct size stays within gpt-image-2 flexible limits', () => {
+  assert.equal(openAiGptImageSize('3840x2160'), '3840x2160');
+  assert.equal(openAiGptImageSize('2160x3840'), '2160x3840');
+  assert.equal(openAiGptImageSize('4096x4096'), '2880x2880');
+  assert.equal(openAiGptImageSize('4096x512'), '3840x1280');
+  assert.equal(openAiGptImageSize('512x512'), '816x816');
+});
+
 test('OpenAI GPT Image fixed mode keeps official sizes', () => {
   assert.equal(openAiGptImageSize('1080x1920', 'official_fixed'), '1024x1536');
   assert.equal(openAiGptImageSize('1920x1080', 'fixed'), '1536x1024');

@@ -3,6 +3,7 @@ const { openAiGptImageSize } = require('../../projectMediaSpec');
 const { resolveImageRef, dataUrlToBlobParts } = require('../imageRefResolver');
 
 const DEFAULT_IMAGE_HTTP_TIMEOUT_MS = 900000;
+const DEFAULT_RESPONSES_IMAGE_TOOL_MODEL = 'gpt-image-2';
 
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
@@ -32,6 +33,53 @@ function normalizeGptImageQuality(value) {
 function normalizeGptImageOutputFormat(value) {
   const f = String(value || 'png').toLowerCase();
   return ['png', 'jpeg', 'webp'].includes(f) ? f : 'png';
+}
+
+function isGptImage2Model(model) {
+  return /^gpt-image-2(?:$|-)/i.test(String(model || '').trim());
+}
+
+function normalizeGptImageBackground(value, model) {
+  if (value == null || value === '') return null;
+  const background = String(value).trim().toLowerCase();
+  if (!['transparent', 'opaque', 'auto'].includes(background)) return null;
+  if (background === 'transparent' && isGptImage2Model(model)) return null;
+  return background;
+}
+
+function normalizeGptImageApiMode(value) {
+  const s = String(value || 'images').trim().toLowerCase().replace(/[\s_-]+/g, '_');
+  if (['response', 'responses', 'responses_api', 'v1_responses', '/v1/responses'].includes(s)) return 'responses';
+  return 'images';
+}
+
+function resolveGptImageApiMode(settings = {}) {
+  return normalizeGptImageApiMode(
+    settings.api_mode ??
+    settings.apiMode ??
+    settings.api_interface ??
+    settings.apiInterface ??
+    settings.endpoint_mode ??
+    settings.endpointMode
+  );
+}
+
+function resolveResponsesImageToolModel(settings = {}) {
+  return String(
+    settings.tool_model ||
+    settings.toolModel ||
+    settings.image_model ||
+    settings.imageModel ||
+    settings.gpt_image_model ||
+    DEFAULT_RESPONSES_IMAGE_TOOL_MODEL
+  ).trim() || DEFAULT_RESPONSES_IMAGE_TOOL_MODEL;
+}
+
+function shouldSendResponsesImageToolModel(protocol, settings = {}) {
+  if (settings.send_tool_model != null || settings.sendToolModel != null) {
+    return boolSetting(settings.send_tool_model ?? settings.sendToolModel, true);
+  }
+  return String(protocol || '').toLowerCase() === 'cliproxy_gpt_image2';
 }
 
 function boolSetting(value, fallback) {
@@ -196,6 +244,76 @@ function parseOpenAiImageStreamResult(raw, outputFormat) {
   return { image_url: finalImage || lastPartialImage, usage };
 }
 
+function createResponsesInput(prompt, resolvedRefs = []) {
+  const text = String(prompt || '');
+  if (!Array.isArray(resolvedRefs) || resolvedRefs.length === 0) return text;
+  return [
+    {
+      role: 'user',
+      content: [
+        { type: 'input_text', text },
+        ...resolvedRefs
+          .filter(Boolean)
+          .map((url) => ({ type: 'input_image', image_url: url })),
+      ],
+    },
+  ];
+}
+
+function buildResponsesImageBody({
+  model,
+  prompt,
+  resolvedRefs,
+  protocol,
+  settings,
+  commonFields,
+  outputFormat,
+  compression,
+  streamImages,
+  partialImages,
+}) {
+  const toolModel = resolveResponsesImageToolModel(settings);
+  const tool = {
+    type: 'image_generation',
+    action: resolvedRefs.length > 0 ? 'edit' : 'generate',
+    size: commonFields.size,
+    output_format: outputFormat,
+    moderation: commonFields.moderation,
+  };
+  if (shouldSendResponsesImageToolModel(protocol, settings)) {
+    tool.model = toolModel;
+  }
+  if (commonFields.quality != null) tool.quality = commonFields.quality;
+  if (commonFields.background != null) tool.background = commonFields.background;
+  if ((outputFormat === 'jpeg' || outputFormat === 'webp') && Number.isFinite(compression)) {
+    tool.output_compression = commonFields.output_compression;
+  }
+  if (streamImages) {
+    tool.partial_images = partialImages;
+  }
+
+  const body = {
+    model,
+    input: createResponsesInput(prompt, resolvedRefs),
+    tools: [tool],
+    tool_choice: { type: 'image_generation' },
+  };
+  if (streamImages) body.stream = true;
+  return { body, toolModel, action: tool.action, toolModelSent: tool.model != null };
+}
+
+function formatImageHttpError(raw, status) {
+  let errMsg = `图片生成请求失败: HTTP ${status}`;
+  try {
+    const errJson = JSON.parse(raw);
+    const msg = errJson.error?.message || errJson.message || errJson.error;
+    if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
+  } catch (_) {
+    if (raw) errMsg += ' - ' + raw.slice(0, 200);
+  }
+  return errMsg;
+}
+
 async function readResponseTextWithMetrics(res, log, label, imageGenId, startedAt) {
   if (!res.body || typeof res.body.getReader !== 'function') {
     const text = await res.text();
@@ -239,6 +357,7 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
   const base = (config.base_url || 'https://api.openai.com/v1').replace(/\/$/, '');
   const settings = parseImageSettings(config);
   const protocol = String(opts.protocol || config.api_protocol || 'openai_gpt_image').toLowerCase();
+  const apiMode = resolveGptImageApiMode(settings);
   const isCliProxyGptImage2 = protocol === 'cliproxy_gpt_image2';
   const logLabel = isCliProxyGptImage2 ? 'CLIProxyAPI GPT Image2' : 'OpenAI GPT Image';
   const outputFormat = normalizeGptImageOutputFormat(settings.output_format);
@@ -252,6 +371,8 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
     settings.partial_images ?? settings.streamPartialImages,
     isCliProxyGptImage2 ? 0 : 1,
   );
+  const sendQuality = !codexCompat || boolSetting(settings.send_quality ?? settings.sendQuality, false);
+  const background = normalizeGptImageBackground(settings.background, model);
   const commonFields = {
     model,
     prompt: codexCompat
@@ -261,15 +382,15 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
     output_format: outputFormat,
     moderation: settings.moderation === 'low' ? 'low' : 'auto',
   };
-  if (!codexCompat) {
+  if (sendQuality) {
     commonFields.quality = normalizeGptImageQuality(quality || settings.quality);
   }
   if (streamImages) {
     commonFields.stream = true;
     commonFields.partial_images = partialImages;
   }
-  if (settings.background && ['transparent', 'opaque', 'auto'].includes(String(settings.background))) {
-    commonFields.background = String(settings.background);
+  if (background) {
+    commonFields.background = background;
   }
   if ((outputFormat === 'jpeg' || outputFormat === 'webp') && Number.isFinite(compression)) {
     commonFields.output_compression = Math.min(100, Math.max(0, Math.trunc(compression)));
@@ -280,6 +401,117 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
 
   const rawRefs = Array.isArray(reference_image_urls) ? reference_image_urls.filter(Boolean) : [];
   const resolvedRefs = rawRefs.map((r) => resolveImageRef(r, files_base_url, storage_local_path)).filter(Boolean);
+  if (apiMode === 'responses') {
+    const endpoint = '/responses';
+    const url = base + endpoint;
+    const { body, toolModel, action, toolModelSent } = buildResponsesImageBody({
+      model,
+      prompt: commonFields.prompt,
+      resolvedRefs,
+      protocol,
+      settings,
+      commonFields,
+      outputFormat,
+      compression,
+      streamImages,
+      partialImages,
+    });
+    const startedAt = Date.now();
+    log.info(`[${logLabel}] request`, {
+      image_gen_id,
+      model,
+      protocol,
+      api_mode: apiMode,
+      endpoint,
+      tool_model: toolModelSent ? toolModel : null,
+      action,
+      size: resolvedSize,
+      size_mode: sizeMode,
+      product_size: size,
+      output_format: outputFormat,
+      codex_compat: codexCompat,
+      quality_sent: commonFields.quality != null,
+      stream: streamImages,
+      partial_images: streamImages ? partialImages : undefined,
+      ref_count: resolvedRefs.length,
+      background_sent: commonFields.background || null,
+      prompt_len: String(prompt || '').length,
+    });
+
+    let raw;
+    let status;
+    let contentType = '';
+    try {
+      const res = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + (config.api_key || ''),
+        },
+        body: JSON.stringify(body),
+      }, requestTimeoutMs);
+      status = res.status;
+      contentType = res.headers.get('content-type') || '';
+      raw = await readResponseTextWithMetrics(res, log, logLabel, image_gen_id, startedAt);
+    } catch (e) {
+      const msg = e.name === 'AbortError' ? `Image generation HTTP timeout after ${requestTimeoutMs}ms` : e.message;
+      log.error(`[${logLabel}] network error`, { image_gen_id, error: msg, total_ms: Date.now() - startedAt });
+      return { error: msg };
+    }
+
+    if (status < 200 || status >= 300) {
+      return { error: formatImageHttpError(raw, status) };
+    }
+
+    let imageUrl = null;
+    let usage = null;
+    if (contentType.toLowerCase().includes('text/event-stream')) {
+      const parsed = parseOpenAiImageStreamResult(raw, outputFormat);
+      imageUrl = parsed.image_url;
+      usage = parsed.usage;
+    } else {
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        return { error: '图片生成返回格式异常' };
+      }
+      imageUrl = parseOpenAiImageResponse(data, outputFormat);
+      usage = extractOpenAiImageUsage(data);
+    }
+    if (!imageUrl) return { error: '未返回图片地址' };
+    log.info(`[${logLabel}] parsed image`, {
+      image_gen_id,
+      content_type: contentType,
+      total_ms: Date.now() - startedAt,
+      image_url_len: String(imageUrl || '').length,
+    });
+    return {
+      image_url: imageUrl,
+      usage,
+      diagnostics: {
+        content_type: contentType,
+        stream_response: contentType.toLowerCase().includes('text/event-stream'),
+        response_chars: raw ? raw.length : 0,
+      },
+      actual_params: {
+        protocol,
+        api_mode: apiMode,
+        endpoint,
+        model,
+        tool_model: toolModelSent ? toolModel : null,
+        action,
+        size: resolvedSize,
+        size_mode: sizeMode,
+        product_size: size || null,
+        output_format: outputFormat,
+        quality: commonFields.quality,
+        background: commonFields.background,
+        stream: streamImages,
+        partial_images: streamImages ? partialImages : undefined,
+      },
+    };
+  }
   const endpoint = resolvedRefs.length > 0 ? '/images/edits' : '/images/generations';
   const url = base + endpoint;
 
@@ -288,6 +520,7 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
     image_gen_id,
     model,
     protocol,
+    api_mode: apiMode,
     endpoint,
     size: resolvedSize,
     size_mode: sizeMode,
@@ -298,6 +531,8 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
     stream: streamImages,
     partial_images: streamImages ? partialImages : undefined,
     ref_count: resolvedRefs.length,
+    background_sent: commonFields.background || null,
+    input_fidelity_requested: settings.input_fidelity || null,
     prompt_len: String(prompt || '').length,
   });
 
@@ -322,7 +557,11 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
       Object.entries(commonFields).forEach(([key, value]) => {
         if (value != null) form.append(key, String(value));
       });
-      if (settings.input_fidelity && ['high', 'low'].includes(String(settings.input_fidelity))) {
+      if (
+        !isGptImage2Model(model) &&
+        settings.input_fidelity &&
+        ['high', 'low'].includes(String(settings.input_fidelity))
+      ) {
         form.append('input_fidelity', String(settings.input_fidelity));
       }
       for (let i = 0; i < resolvedRefs.length; i += 1) {
@@ -358,15 +597,7 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
   }
 
   if (status < 200 || status >= 300) {
-    let errMsg = `图片生成请求失败: HTTP ${status}`;
-    try {
-      const errJson = JSON.parse(raw);
-      const msg = errJson.error?.message || errJson.message || errJson.error;
-      if (msg) errMsg += ' - ' + (typeof msg === 'string' ? msg : JSON.stringify(msg).slice(0, 200));
-    } catch (_) {
-      if (raw) errMsg += ' - ' + raw.slice(0, 200);
-    }
-    return { error: errMsg };
+    return { error: formatImageHttpError(raw, status) };
   }
 
   let imageUrl = null;
@@ -402,6 +633,7 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
     },
     actual_params: {
       protocol,
+      api_mode: apiMode,
       endpoint,
       model,
       size: resolvedSize,
@@ -409,6 +641,7 @@ async function callOpenAiGptImageApi(db, config, log, opts) {
       product_size: size || null,
       output_format: outputFormat,
       quality: commonFields.quality,
+      background: commonFields.background,
       stream: streamImages,
       partial_images: streamImages ? partialImages : undefined,
     },
@@ -423,5 +656,8 @@ module.exports = {
     parseOpenAiImageStreamResult,
     extractOpenAiImageUsage,
     normalizeGptImagePartialImagesWithDefault,
+    normalizeGptImageBackground,
+    normalizeGptImageApiMode,
+    buildResponsesImageBody,
   },
 };

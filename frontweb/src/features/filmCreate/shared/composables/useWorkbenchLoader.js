@@ -54,6 +54,26 @@ export function useWorkbenchLoader(deps) {
   const videoProgress = computed(() => store.videoProgress)
   const videoStatus = computed(() => store.videoStatus)
 
+  function normalizeEpisodeId(value) {
+    const n = Number(value)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+
+  function isEpisodeInCurrentProject(episodeId) {
+    const id = normalizeEpisodeId(episodeId)
+    if (!id) return false
+    const episodes = Array.isArray(store.drama?.episodes) ? store.drama.episodes : []
+    return episodes.some((episode) => Number(episode.id) === id)
+  }
+
+  function currentProjectEpisodeParam() {
+    const currentId = normalizeEpisodeId(currentEpisodeId.value)
+    if (currentId && isEpisodeInCurrentProject(currentId)) return currentId
+    const selectedId = normalizeEpisodeId(selectedEpisodeId.value)
+    if (selectedId && isEpisodeInCurrentProject(selectedId)) return selectedId
+    return undefined
+  }
+
   function applyWorkbenchSummarySettings(summary) {
     const settings = summary?.settings || {}
     if (!settings || !Object.keys(settings).length) return
@@ -78,7 +98,7 @@ export function useWorkbenchLoader(deps) {
     workbenchSummaryLoading.value = true
     try {
       const summary = await workbenchAPI.summary(id, {
-        episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
+        episode_id: currentProjectEpisodeParam(),
       })
       workbenchSummary.value = summary || null
       storyboardOutline.value = Array.isArray(summary?.storyboard_outline) ? summary.storyboard_outline : []
@@ -274,7 +294,7 @@ export function useWorkbenchLoader(deps) {
       await loadScriptWorkbenchTab({ force: false })
     }
     const data = await workbenchAPI.storyboardsTab(store.dramaId, {
-      episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
+      episode_id: currentProjectEpisodeParam(),
     })
     applyStoryboardsWorkbenchTab(data)
     workbenchTabLoaded.storyboards = true
@@ -288,7 +308,7 @@ export function useWorkbenchLoader(deps) {
       await loadScriptWorkbenchTab({ force: false })
     }
     const data = await workbenchAPI.videoComposeTab(store.dramaId, {
-      episode_id: currentEpisodeId.value || selectedEpisodeId.value || undefined,
+      episode_id: currentProjectEpisodeParam(),
     })
     applyVideoComposeWorkbenchTab(data)
     workbenchTabLoaded.videoCompose = true

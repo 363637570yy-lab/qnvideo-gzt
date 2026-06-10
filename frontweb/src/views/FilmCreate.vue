@@ -956,6 +956,12 @@ const {
   }),
 })
 
+async function refreshAssetWorkbench(tab) {
+  await loadDrama()
+  await loadWorkbenchSummary({ applySettings: false })
+  await loadWorkbenchTab(tab, { force: true })
+}
+
 // ── Composable: Characters ────────────────────────────
 const {
   showEditCharacter, editCharacterForm, editCharacterSaving, editCharacterPromptGenerating,
@@ -992,6 +998,7 @@ const {
   textAiPayload,
   imageAiPayload,
   workflowPresetPayload,
+  refreshAssetWorkbench,
 })
 
 // ── Composable: Props ──────────────────────────────────
@@ -1031,6 +1038,7 @@ const {
   textAiPayload,
   imageAiPayload,
   workflowPresetPayload,
+  refreshAssetWorkbench,
 })
 
 // ── Composable: Scenes ─────────────────────────────────
@@ -1070,6 +1078,7 @@ const {
   textAiPayload,
   imageAiPayload,
   workflowPresetPayload,
+  refreshAssetWorkbench,
 })
 
 // 资源工作台子区块折叠状态
@@ -1381,6 +1390,7 @@ const {
   pollTaskWithPause,
   pollUntilResourceHasImage,
   loadDrama,
+  refreshAssetWorkbench,
   loadStoryboardMedia,
   loadSingleStoryboardMedia,
   refreshStoryboardsOnly,

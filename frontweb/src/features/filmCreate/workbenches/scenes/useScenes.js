@@ -39,6 +39,7 @@ export function useScenes(deps) {
     textAiPayload = () => ({}),
     imageAiPayload = () => ({}),
     workflowPresetPayload = () => ({}),
+    refreshAssetWorkbench = async () => loadDrama(),
   } = deps
   const genStore = useGenerationTaskStore()
 
@@ -124,12 +125,12 @@ export function useScenes(deps) {
       })
       const taskId = res?.task_id
       if (taskId) {
-        const pollRes = await pollTask(taskId, () => loadDrama(), meta)
+        const pollRes = await pollTask(taskId, () => refreshAssetWorkbench('scenes'), meta)
         if (pollRes?.status === 'completed') {
           ElMessage.success('场景提取完成')
         }
       } else {
-        await loadDrama()
+        await refreshAssetWorkbench('scenes')
         genStore.markDone(meta)
         ElMessage.success('场景提取任务已提交')
       }

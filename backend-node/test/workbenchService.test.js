@@ -237,6 +237,22 @@ test('workbench summary returns null for missing project', () => {
   assert.equal(workbenchService.getWorkbenchSummary(db, 999), null);
 });
 
+test('workbench summary ignores stale episode id and falls back to project scope', () => {
+  const db = createDb();
+  const summary = workbenchService.getWorkbenchSummary(db, 1, { episode_id: 999 });
+  assert.equal(summary.project.id, 1);
+  assert.equal(summary.progress_scope.type, 'project');
+  assert.equal(summary.progress_scope.episode_id, null);
+  assert.equal(summary.tabs.script.count, 1);
+  assert.equal(summary.storyboard_outline.length, 1);
+  assert.equal(summary.storyboard_outline[0].id, 50);
+
+  assert.throws(
+    () => workbenchService.getStoryboardsTab(db, 1, { episode_id: 999 }),
+    /剧集不存在或不属于当前项目/
+  );
+});
+
 test('workbench tab view models return script and asset data on demand', () => {
   const db = createDb();
   const script = workbenchService.getScriptTab(db, 1);

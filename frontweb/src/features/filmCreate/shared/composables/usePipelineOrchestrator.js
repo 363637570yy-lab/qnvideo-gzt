@@ -50,6 +50,7 @@ export function usePipelineOrchestrator(deps = {}) {
     pollTaskWithPause = async () => null,
     pollUntilResourceHasImage = async () => {},
     loadDrama = async () => {},
+    refreshAssetWorkbench = async () => loadDrama(),
     loadStoryboardMedia = async () => {},
     loadSingleStoryboardMedia = async () => {},
     refreshStoryboardsOnly = async () => {},
@@ -118,11 +119,11 @@ export function usePipelineOrchestrator(deps = {}) {
           const res = await generationAPI.generateCharacters(dramaIdVal, { episode_id: store.currentEpisode?.id ?? undefined, outline: outline || undefined, ...textAiPayload() })
           const taskId = res?.task_id
           if (taskId) {
-            const result = await pollTaskWithPause(taskId, () => loadDrama())
+            const result = await pollTaskWithPause(taskId, () => refreshAssetWorkbench('characters'))
             if (result?.paused) { await waitForResume(); return }
             if (result?.error) { addPipelineError('提取角色', result.error); return }
           } else {
-            await loadDrama()
+            await refreshAssetWorkbench('characters')
           }
           await pipelineRest()
         } catch (e) {
@@ -142,11 +143,11 @@ export function usePipelineOrchestrator(deps = {}) {
           const res = await dramaAPI.extractBackgrounds(episodeId, { model: undefined, style, language: scriptLanguage.value, ...textAiPayload() })
           const taskId = res?.task_id
           if (taskId) {
-            const result = await pollTaskWithPause(taskId, () => loadDrama())
+            const result = await pollTaskWithPause(taskId, () => refreshAssetWorkbench('scenes'))
             if (result?.paused) { await waitForResume(); return }
             if (result?.error) { addPipelineError('提取场景', result.error); return }
           } else {
-            await loadDrama()
+            await refreshAssetWorkbench('scenes')
           }
           await pipelineRest()
         } catch (e) {
@@ -166,11 +167,11 @@ export function usePipelineOrchestrator(deps = {}) {
           const res = await propAPI.extractFromScript(episodeId, textAiPayload())
           const taskId = res?.task_id
           if (taskId) {
-            const result = await pollTaskWithPause(taskId, () => loadDrama())
+            const result = await pollTaskWithPause(taskId, () => refreshAssetWorkbench('props'))
             if (result?.paused) { await waitForResume(); return }
             if (result?.error) { addPipelineError('提取道具', result.error); return }
           } else {
-            await loadDrama()
+            await refreshAssetWorkbench('props')
           }
           await pipelineRest()
         } catch (e) {
@@ -518,10 +519,10 @@ export function usePipelineOrchestrator(deps = {}) {
           const res = await generationAPI.generateCharacters(dramaIdVal, { episode_id: store.currentEpisode?.id ?? undefined, outline: outline || undefined, ...textAiPayload() })
           const taskId = res?.task_id
           if (taskId) {
-            const result = await pollTaskWithPause(taskId, () => loadDrama())
+            const result = await pollTaskWithPause(taskId, () => refreshAssetWorkbench('characters'))
             if (result?.paused) { await waitForResume(); return }
             if (result?.error) { addPipelineError('生成角色', result.error); return }
-          } else await loadDrama()
+          } else await refreshAssetWorkbench('characters')
           await pipelineRest()
         } catch (e) {
           addPipelineError('生成角色', e.message || String(e))
@@ -565,10 +566,10 @@ export function usePipelineOrchestrator(deps = {}) {
           const res = await dramaAPI.extractBackgrounds(episodeId, { model: undefined, style, language: scriptLanguage.value, ...textAiPayload() })
           const taskId = res?.task_id
           if (taskId) {
-            const result = await pollTaskWithPause(taskId, () => loadDrama())
+            const result = await pollTaskWithPause(taskId, () => refreshAssetWorkbench('scenes'))
             if (result?.paused) { await waitForResume(); return }
             if (result?.error) { addPipelineError('提取场景', result.error); return }
-          } else await loadDrama()
+          } else await refreshAssetWorkbench('scenes')
           await pipelineRest()
         } catch (e) {
           addPipelineError('提取场景', e.message || String(e))
@@ -612,10 +613,10 @@ export function usePipelineOrchestrator(deps = {}) {
           const res = await propAPI.extractFromScript(episodeId, textAiPayload())
           const taskId = res?.task_id
           if (taskId) {
-            const result = await pollTaskWithPause(taskId, () => loadDrama())
+            const result = await pollTaskWithPause(taskId, () => refreshAssetWorkbench('props'))
             if (result?.paused) { await waitForResume(); return }
             if (result?.error) { addPipelineError('提取道具', result.error) }
-          } else await loadDrama()
+          } else await refreshAssetWorkbench('props')
           await pipelineRest()
         } catch (e) {
           addPipelineError('提取道具', e.message || String(e))

@@ -53,7 +53,19 @@ export function useFilmCreateProject(deps = {}) {
     resetEpisodeWorkbenches()
     const list = store.drama?.episodes || []
     const ep = list.find((item) => Number(item.id) === Number(epId))
-    if (!ep) return
+    if (!ep) {
+      const fallback = list[0] || null
+      if (!fallback) return
+      selectedEpisodeId.value = fallback.id
+      store.setCurrentEpisode(fallback)
+      store.setScriptContent(fallback.script_content || '')
+      scriptTitle.value = fallback.title || '第' + (fallback.episode_number || 0) + '集'
+      syncStoryboardStateFromEpisode(fallback)
+      loadWorkbenchSummary({ applySettings: false }).catch(() => {})
+      loadWorkbenchTab(filmWorkbenchTab.value, { force: true }).catch(() => {})
+      recoverAndSyncEpisodeTasks(fallback.id)
+      return
+    }
     store.setCurrentEpisode(ep)
     store.setScriptContent(ep.script_content || '')
     scriptTitle.value = ep.title || '第' + (ep.episode_number || 0) + '集'
@@ -123,9 +135,16 @@ export function useFilmCreateProject(deps = {}) {
     const id = route.params.id
     if (id && id !== 'new') {
       resetWorkbenchTabLoaded()
+      store.setCurrentEpisode(null)
+      store.setScriptContent('')
+      scriptTitle.value = ''
+      savedCurrentEpisodeNumber.value = 1
+      syncStoryboardStateFromEpisode(null)
       store.setDrama({ id: Number(id) })
       if (route.query.episode) {
         selectedEpisodeId.value = Number(route.query.episode)
+      } else {
+        selectedEpisodeId.value = null
       }
       loadInitialWorkbenchData({ recoverTasks: true })
     } else {

@@ -17,7 +17,7 @@
  * │   文档：https://platform.vidu.com/docs/text-to-video                       │
  * ├──────────────────────────────────────────────────────────────────────────┤
  * │ OpenAI Images POST /v1/images/generations                                  │
- * │   官方字段：size（如 DALL·E 3："1024x1024","1792x1024","1024x1792"）        │
+ * │   官方字段：size（DALL·E 3 固定枚举；gpt-image-2 支持符合约束的 WIDTHxHEIGHT）│
  * │   无标准顶层 aspect_ratio；部分 OpenAI 兼容中转会额外识别 aspect_ratio       │
  * ├──────────────────────────────────────────────────────────────────────────┤
  * │ 本项目火山/OpenAI 风格视频（contents + ratio）                              │

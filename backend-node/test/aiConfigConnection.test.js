@@ -48,6 +48,44 @@ for (const item of cases) {
   });
 }
 
+test('testConnection uses /responses when image config selects Responses API mode', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestUrl = '';
+  let requestBody = null;
+
+  globalThis.fetch = async (url, options) => {
+    requestUrl = String(url);
+    requestBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      output: [{ type: 'image_generation_call', result: 'ZmluYWw=' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await testConnection({
+      base_url: 'https://relay.example/v1',
+      api_key: 'test-key',
+      provider: 'cliproxy',
+      api_protocol: 'cliproxy_gpt_image2',
+      service_type: 'image',
+      model: ['gpt-5.5'],
+      default_model: 'gpt-5.5',
+      settings: JSON.stringify({ image: { api_mode: 'responses', tool_model: 'gpt-image-2' } }),
+    });
+
+    assert.equal(new URL(requestUrl).pathname, '/v1/responses');
+    assert.equal(requestBody.model, 'gpt-5.5');
+    assert.equal(requestBody.tools[0].type, 'image_generation');
+    assert.equal(requestBody.tools[0].model, 'gpt-image-2');
+    assert.equal(requestBody.tool_choice.type, 'image_generation');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function createAiConfigDb() {
   const db = new Database(':memory:');
   db.exec(`
