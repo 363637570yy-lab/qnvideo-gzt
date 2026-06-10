@@ -125,6 +125,8 @@ export default {
   name: 'QuickNav',
   props: {
     ctx: { type: Object, required: true },
+    storyboardOutline: { type: Array, default: () => [] },
+    storyboardsForNav: { type: Array, default: () => [] },
   },
   components: { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Setting, Plus, Minus, Sunny, Moon, MagicStick, Upload, Delete, Check, Loading, WarningFilled, User, Box, Picture, Film, VideoCamera, Document, InfoFilled, Refresh, ZoomIn, QuestionFilled, DocumentAdd, Expand, Fold, VideoPlay, DataAnalysis },
   setup(props) {
@@ -140,9 +142,9 @@ export default {
     Object.defineProperty(exposed, 'storyboardNavItems', {
       enumerable: true,
       get: () => {
-        const outline = props.ctx.storyboardOutline || []
+        const outline = props.storyboardOutline || props.ctx.storyboardOutline || []
         if (Array.isArray(outline) && outline.length > 0) return outline
-        const boards = props.ctx.storyboards || []
+        const boards = props.storyboardsForNav || props.ctx.storyboards || []
         return Array.isArray(boards) ? boards : []
       },
     })

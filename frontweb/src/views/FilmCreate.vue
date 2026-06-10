@@ -10,7 +10,11 @@
       <span>生成、停止、上传、删除等操作会先二次确认。</span>
     </div>
 
-    <QuickNav :ctx="filmCreateCtx" />
+    <QuickNav
+      :ctx="filmCreateCtx"
+      :storyboard-outline="storyboardOutline"
+      :storyboards-for-nav="storyboards"
+    />
 
     <main class="main">
       <!-- 角色/道具/场景上传图片用，单例放在外层避免 v-for 导致 ref 为数组 -->
