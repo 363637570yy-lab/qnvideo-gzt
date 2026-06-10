@@ -34,6 +34,8 @@
         style="display: none"
         @change="onSbImageFileChange"
       />
+      <ProjectPipelinePanel :ctx="filmCreateCtx" />
+
       <FilmWorkbenchTabs v-model="filmWorkbenchTab" />
       <ScriptWorkbench
         v-show="filmWorkbenchTab === 'script'"
@@ -61,8 +63,6 @@
         @generate-script="onGenerateScript"
         @open-select-script="openSelectScriptDialog"
       />
-
-      <ProjectPipelinePanel :ctx="filmCreateCtx" />
 
       <CharacterWorkbench
         v-show="filmWorkbenchTab === 'characters'"
@@ -160,6 +160,7 @@ import UniversalSegmentOmniAtEditor from '@/components/UniversalSegmentOmniAtEdi
 import { backfillDramaStylePromptMetadataIfNeeded } from '@/constants/styleOptions'
 import { useNavigation } from '@/features/filmCreate/shared/composables/useNavigation'
 import { useAiRouteSelection } from '@/features/filmCreate/shared/composables/useAiRouteSelection'
+import { createProjectSettingsSaver } from '@/features/filmCreate/shared/composables/projectSettingsSaver'
 import { useProjectSettings } from '@/features/filmCreate/shared/composables/useProjectSettings'
 import { useWorkflowPresets } from '@/features/filmCreate/shared/composables/useWorkflowPresets'
 import { useFilmCreateProject } from '@/features/filmCreate/shared/composables/useFilmCreateProject'
@@ -193,6 +194,7 @@ const store = useFilmStore()
 const genStore = useGenerationTaskStore()
 const { isDark, toggle: toggleTheme } = useTheme()
 let loadDrama = async () => {}
+let saveProjectSettings = async () => {}
 const {
   canManageLibrary,
   confirmAdminProjectOperation,
@@ -356,7 +358,7 @@ const {
   videoTierOptions,
 } = useProjectSettings({
   store,
-  saveProjectSettings: (includeGenerationStyle) => saveProjectSettings(includeGenerationStyle),
+  saveProjectSettings: (includeGenerationStyle, options) => saveProjectSettings(includeGenerationStyle, options),
 })
 
 const {
@@ -1534,48 +1536,26 @@ function updateStoryboardDialogue(sbId) {
   // 可在此防抖后调用后端更新 dialogue
 }
 
-/**
- * @param {boolean} includeGenerationStyle - 仅在选择「画面风格」为 true：写入 dramas.style 与 style_prompt_*。
- * 其它项目设置改为 false，避免界面未刷新时仍用旧的 generationStyle 覆盖外部已更新的画风（如直接调 API PUT outline）。
- */
-async function saveProjectSettings(includeGenerationStyle = false) {
-  if (!store.dramaId) return
-  const metadata = {
-    ...projectMediaSpecMetadata(),
-    [AI_ROUTE_METADATA_KEY]: projectAiRouteSelectionForSave(),
-    story_style: storyStyle.value || undefined,
-    aspect_ratio: projectAspectRatio.value || '16:9',
-    video_clip_duration: videoClipDuration.value || 10,
-    script_language: scriptLanguage.value || 'zh',
-    storyboard_include_narration: !!storyboardIncludeNarration.value,
-    storyboard_universal_omni: !!storyboardUniversalOmni.value,
-    storyboard_use_first_last_frame: !!storyboardUseFirstLastFrame.value,
-    storyboard_frame_count: normalizeStoryboardFrameCount(storyboardFrameCount.value),
-    last_frame_use_first_layout_lock: !!lastFrameUseFirstLayoutLock.value,
-  }
-  if (includeGenerationStyle) {
-    Object.assign(metadata, projectStylePromptMetadata())
-  }
-  const payload = {
-    genre: storyType.value || undefined,
-    metadata,
-  }
-  if (includeGenerationStyle) {
-    payload.style = generationStyle.value || undefined
-  }
-  try {
-    await dramaAPI.saveOutline(store.dramaId, payload)
-    ElMessage({
-      type: 'success',
-      message: '修改已实时保存，再次生成素材、分镜或视频时将按当前设置生效。',
-      duration: 2600,
-      showClose: true,
-    })
-  } catch (e) {
-    console.error('Settings auto-save failed', e)
-    ElMessage.error(e?.message || '项目设置保存失败')
-  }
-}
+saveProjectSettings = createProjectSettingsSaver({
+  AI_ROUTE_METADATA_KEY,
+  dramaAPI,
+  generationStyle,
+  lastFrameUseFirstLayoutLock,
+  normalizeStoryboardFrameCount,
+  projectAiRouteSelectionForSave,
+  projectMediaSpecMetadata,
+  projectStylePromptMetadata,
+  projectAspectRatio,
+  scriptLanguage,
+  store,
+  storyboardFrameCount,
+  storyboardIncludeNarration,
+  storyboardUniversalOmni,
+  storyboardUseFirstLastFrame,
+  storyStyle,
+  storyType,
+  videoClipDuration,
+})
 
 onBeforeUnmount(() => {
   clearPendingProjectSettingsSave()
@@ -2493,17 +2473,17 @@ watch(
     storyboardFrameCount.value,
     lastFrameUseFirstLayoutLock.value,
   ],
-  () => scheduleProjectSettingsSave(false)
+  () => scheduleProjectSettingsSave(false, { notify: false })
 )
 
 watch(
   () => generationStyle.value,
-  () => scheduleProjectSettingsSave(true)
+  () => scheduleProjectSettingsSave(true, { notify: false })
 )
 
 watch(
   () => aiRouteTypes.map(({ key }) => selectedAiConfigIds[key]).join('|'),
-  () => scheduleProjectSettingsSave(false)
+  () => scheduleProjectSettingsSave(false, { notify: false })
 )
 </script>
 

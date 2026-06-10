@@ -1,336 +1,76 @@
 <template>
   <div class="drama-detail">
-    <header class="header">
-      <div class="header-inner">
-        <h1 class="logo" @click="router.push('/')">
-          <span class="logo-main">芊柠AI视频工作台</span>
-          <span class="logo-sub">QN AI Video</span>
-        </h1>
-        <span class="breadcrumb-sep">›</span>
-        <span class="page-title">{{ drama?.title || '剧集管理' }}</span>
-        <el-button class="btn-back-list" @click="router.push('/')">
-          <el-icon><ArrowLeft /></el-icon>返回列表
-        </el-button>
-        <div class="header-actions">
-          <el-button class="btn-theme" :title="isDark ? '切换到浅色模式' : '切换到暗色模式'" @click="toggleTheme">
-            <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
-            {{ isDark ? '浅色' : '暗色' }}
-          </el-button>
-          <el-button type="primary" @click="goCreate">
-            <el-icon><VideoPlay /></el-icon>进入制作
-          </el-button>
-        </div>
-      </div>
-    </header>
+    <DramaDetailHeader
+      :title="drama?.title || '剧集管理'"
+      :is-dark="isDark"
+      @go-list="router.push('/')"
+      @toggle-theme="toggleTheme"
+      @go-create="goCreate"
+    />
 
     <main class="main" v-loading="loading">
-      <!-- 基本信息 + 设置 -->
-      <section class="section card">
-        <div class="section-title">剧集信息</div>
-        <el-form :model="infoForm" label-width="110px" label-position="left" class="info-form">
-          <el-row :gutter="24">
-            <el-col :span="12">
-              <el-form-item label="标题">
-                <el-input v-model="infoForm.title" placeholder="剧集标题" @blur="saveInfo" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="12">
-              <el-form-item label="图片/视频风格">
-                <el-select v-model="infoForm.style" placeholder="选择全剧统一风格" clearable style="width: 100%" @change="saveInfo">
-                  <el-option-group label="写实 / 影视">
-                    <el-option label="写实" value="realistic" />
-                    <el-option label="电影感" value="cinematic" />
-                    <el-option label="纪录片" value="documentary" />
-                    <el-option label="黑色电影" value="noir" />
-                    <el-option label="复古胶片" value="retro film" />
-                    <el-option label="恐怖" value="horror" />
-                  </el-option-group>
-                  <el-option-group label="动漫 / 卡通">
-                    <el-option label="日本动漫" value="anime style" />
-                    <el-option label="欧美漫画" value="comic style" />
-                    <el-option label="卡通" value="cartoon" />
-                  </el-option-group>
-                  <el-option-group label="中国风格">
-                    <el-option label="国画水墨" value="ink wash" />
-                    <el-option label="中国风" value="chinese style" />
-                    <el-option label="古装" value="historical" />
-                    <el-option label="武侠" value="wuxia" />
-                  </el-option-group>
-                  <el-option-group label="绘画艺术">
-                    <el-option label="水彩" value="watercolor" />
-                    <el-option label="油画" value="oil painting" />
-                    <el-option label="素描" value="sketch" />
-                    <el-option label="版画" value="woodblock print" />
-                    <el-option label="印象派" value="impressionist" />
-                  </el-option-group>
-                  <el-option-group label="幻想 / 科幻">
-                    <el-option label="奇幻" value="fantasy" />
-                    <el-option label="暗黑奇幻" value="dark fantasy" />
-                    <el-option label="科幻" value="sci-fi" />
-                    <el-option label="赛博朋克" value="cyberpunk" />
-                    <el-option label="蒸汽朋克" value="steampunk" />
-                    <el-option label="末世废土" value="post-apocalyptic" />
-                  </el-option-group>
-                  <el-option-group label="数字 / 现代">
-                    <el-option label="3D 渲染" value="3d render" />
-                    <el-option label="像素风" value="pixel art" />
-                    <el-option label="低多边形" value="low poly" />
-                    <el-option label="极简" value="minimalist" />
-                    <el-option label="唯美梦幻" value="dreamy" />
-                  </el-option-group>
-                </el-select>
-              </el-form-item>
-            </el-col>
-            <el-col :span="12">
-              <el-form-item label="画面比例">
-                <el-select v-model="infoForm.aspect_ratio" style="width: 100%" @change="saveInfo">
-                  <el-option label="16:9 横屏（默认）" value="16:9" />
-                  <el-option label="9:16 竖屏（短视频）" value="9:16" />
-                  <el-option label="3:4 竖版" value="3:4" />
-                  <el-option label="1:1 方形" value="1:1" />
-                  <el-option label="4:3 传统横屏" value="4:3" />
-                  <el-option label="21:9 宽银幕" value="21:9" />
-                </el-select>
-              </el-form-item>
-            </el-col>
-            <el-col :span="24">
-              <el-form-item label="故事梗概">
-                <el-input v-model="infoForm.description" type="textarea" :rows="3" placeholder="一句话描述故事梗概" @blur="saveInfo" />
-              </el-form-item>
-            </el-col>
-          </el-row>
-        </el-form>
-      </section>
+      <DramaInfoSection :info-form="infoForm" @save-info="saveInfo" />
 
-      <!-- 分集列表 -->
-      <section class="section card">
-        <div class="section-header">
-          <div class="section-title">分集列表</div>
-          <span class="section-count">共 {{ episodes.length }} 集</span>
-          <EpisodeBatchImportDialog ref="episodeBatchImportDialogRef" :start-episode-number="nextEpisodeNumber" style="margin-left: auto" @import="onBatchImportEpisodes" />
-          <el-button size="small" type="primary" :loading="addingEpisode" @click="onAddEpisode">
-            <el-icon><Plus /></el-icon>新增一集
-          </el-button>
-        </div>
-        <div v-if="episodes.length === 0" class="empty-tip">暂无分集，点击「新增一集」开始创作</div>
-        <div v-else class="episode-grid">
-          <div
-            v-for="ep in episodes"
-            :key="ep.id"
-            class="episode-card"
-            title="点击进入制作页"
-            @click="goEpisode(ep.id)"
-          >
-            <div class="episode-card-header">
-              <span class="episode-num">第 {{ ep.episode_number ?? ep.number ?? '?' }} 集</span>
-              <el-button
-                size="small"
-                type="danger"
-                plain
-                circle
-                :icon="Delete"
-                :loading="deletingEpisodeId === ep.id"
-                @click.stop="onDeleteEpisode(ep)"
-              />
-            </div>
-            <div class="episode-title">{{ ep.title || '未命名' }}</div>
-            <div class="episode-preview">{{ (ep.script_content || '').slice(0, 20) || '暂无剧本' }}</div>
-            <div class="episode-stats">
-              <span class="ep-stat">
-                <span class="ep-stat-num">{{ ep.storyboard_count ?? ep.storyboards?.length ?? 0 }}</span> 分镜
-              </span>
-              <span v-if="ep.status" class="ep-stat ep-stat--status" :class="'ep-status--' + ep.status">{{ epStatusLabel(ep.status) }}</span>
-            </div>
-            <div class="episode-enter">
-              <el-icon class="episode-enter-icon"><VideoPlay /></el-icon>
-              进入制作
-            </div>
-          </div>
-        </div>
-      </section>
+      <DramaEpisodeSection
+        ref="episodeSectionRef"
+        :episodes="episodes"
+        :next-episode-number="nextEpisodeNumber"
+        :adding-episode="addingEpisode"
+        :deleting-episode-id="deletingEpisodeId"
+        :ep-status-label="epStatusLabel"
+        @batch-import="onBatchImportEpisodes"
+        @add-episode="onAddEpisode"
+        @delete-episode="onDeleteEpisode"
+        @go-episode="goEpisode"
+      />
 
-      <!-- 本剧资源库（Tab 切换） -->
-      <section class="section card res-section">
-        <nav class="res-tabbar">
-          <span class="res-tab-group-label">资源库</span>
-          <button
-            v-for="t in [{v:'lib-char',label:'角色'},{v:'lib-scene',label:'场景'},{v:'lib-prop',label:'道具'}]"
-            :key="t.v"
-            class="res-tab res-tab--lib"
-            :class="{ active: activeResTab === t.v }"
-            @click="activeResTab = t.v"
-          >{{ t.label }}</button>
-          <span class="res-tab-spacer"></span>
-          <span class="res-tab-group-label res-tab-group-label--prod">制作资源</span>
-          <button
-            v-for="t in [{v:'drama-char',label:'角色'},{v:'drama-scene',label:'场景'},{v:'drama-prop',label:'道具'}]"
-            :key="t.v"
-            class="res-tab res-tab--drama"
-            :class="{ active: activeResTab === t.v }"
-            @click="activeResTab = t.v"
-          >{{ t.label }}</button>
-        </nav>
-
-        <!-- 角色库 -->
-        <template v-if="activeResTab === 'lib-char'">
-          <div class="library-toolbar">
-            <el-input v-model="charKw" placeholder="搜索角色" clearable style="width: 200px" @input="onCharKwInput" />
-            <el-button size="small" @click="openImport('char')">从素材库导入</el-button>
-          </div>
-          <div v-loading="charLoading" class="library-list">
-            <div v-for="item in charList" :key="item.id" class="library-item">
-              <div class="library-item-cover" @click="openPreview(assetImageUrl(item))">
-                <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
-                <span v-else class="library-placeholder">暂无图</span>
-              </div>
-              <div class="library-item-info">
-                <div class="library-item-name">{{ item.name || '未命名' }}</div>
-                <div class="library-item-desc">{{ (item.description || '').slice(0, 60) }}</div>
-                <div class="library-item-actions">
-                  <el-button size="small" @click="openEditChar(item)">编辑</el-button>
-                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="deleteChar(item)">删除</el-button>
-                </div>
-              </div>
-            </div>
-            <div v-if="!charLoading && charList.length === 0" class="library-empty">暂无本剧角色库记录，可在制作页面「加入本剧库」</div>
-          </div>
-          <div class="library-pagination">
-            <el-pagination v-model:current-page="charPage" v-model:page-size="charPageSize" :total="charTotal" :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @current-change="loadCharList" @size-change="loadCharList" />
-          </div>
-        </template>
-
-        <!-- 场景库 -->
-        <template v-if="activeResTab === 'lib-scene'">
-          <div class="library-toolbar">
-            <el-input v-model="sceneKw" placeholder="搜索场景" clearable style="width: 200px" @input="onSceneKwInput" />
-            <el-button size="small" @click="openImport('scene')">从素材库导入</el-button>
-          </div>
-          <div v-loading="sceneLoading" class="library-list">
-            <div v-for="item in sceneList" :key="item.id" class="library-item">
-              <div class="library-item-cover" @click="openPreview(assetImageUrl(item))">
-                <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
-                <span v-else class="library-placeholder">暂无图</span>
-              </div>
-              <div class="library-item-info">
-                <div class="library-item-name">{{ item.location || item.time || '未命名' }}</div>
-                <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}</div>
-                <div class="library-item-actions">
-                  <el-button size="small" @click="openEditScene(item)">编辑</el-button>
-                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="deleteScene(item)">删除</el-button>
-                </div>
-              </div>
-            </div>
-            <div v-if="!sceneLoading && sceneList.length === 0" class="library-empty">暂无本剧场景库记录，可在制作页面「加入本剧库」</div>
-          </div>
-          <div class="library-pagination">
-            <el-pagination v-model:current-page="scenePage" v-model:page-size="scenePageSize" :total="sceneTotal" :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @current-change="loadSceneList" @size-change="loadSceneList" />
-          </div>
-        </template>
-
-        <!-- 道具库 -->
-        <template v-if="activeResTab === 'lib-prop'">
-          <div class="library-toolbar">
-            <el-input v-model="propKw" placeholder="搜索道具" clearable style="width: 200px" @input="onPropKwInput" />
-            <el-button size="small" @click="openImport('prop')">从素材库导入</el-button>
-          </div>
-          <div v-loading="propLoading" class="library-list">
-            <div v-for="item in propList" :key="item.id" class="library-item">
-              <div class="library-item-cover" @click="openPreview(assetImageUrl(item))">
-                <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
-                <span v-else class="library-placeholder">暂无图</span>
-              </div>
-              <div class="library-item-info">
-                <div class="library-item-name">{{ item.name || '未命名' }}</div>
-                <div class="library-item-desc">{{ (item.description || item.prompt || '').slice(0, 60) }}</div>
-                <div class="library-item-actions">
-                  <el-button size="small" @click="openEditProp(item)">编辑</el-button>
-                  <el-button v-if="canManageLibrary(item)" size="small" type="danger" plain @click="deleteProp(item)">删除</el-button>
-                </div>
-              </div>
-            </div>
-            <div v-if="!propLoading && propList.length === 0" class="library-empty">暂无本剧道具库记录，可在制作页面「加入本剧库」</div>
-          </div>
-          <div class="library-pagination">
-            <el-pagination v-model:current-page="propPage" v-model:page-size="propPageSize" :total="propTotal" :page-sizes="[10,20,50]" layout="total, sizes, prev, pager, next" @current-change="loadPropList" @size-change="loadPropList" />
-          </div>
-        </template>
-        <!-- 本剧制作角色 -->
-        <template v-if="activeResTab === 'drama-char'">
-          <div v-loading="dramaCharLoading" class="drama-res-list">
-            <template v-if="dramaCharacters.length">
-              <div v-for="item in dramaCharacters" :key="item.id" class="drama-res-item">
-                <div class="drama-res-cover" @click="openPreview(assetImageUrl(item))">
-                  <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
-                  <span v-else class="library-placeholder">暂无图</span>
-                </div>
-                <div class="drama-res-info">
-                  <div class="drama-res-name">{{ item.name || '未命名' }}</div>
-                  <div class="drama-res-meta" v-if="item.role">
-                    <el-tag size="small" type="info">{{ item.role === 'main' ? '主角' : item.role === 'supporting' ? '配角' : item.role }}</el-tag>
-                  </div>
-                  <div class="drama-res-desc">{{ (item.description || item.prompt || '').slice(0, 80) }}</div>
-                  <div class="drama-res-actions">
-                    <el-button size="small" @click="openEditDramaChar(item)">编辑</el-button>
-                  </div>
-                </div>
-              </div>
-            </template>
-            <div v-else class="library-empty">本剧暂无制作角色，请前往剧集制作页面创建</div>
-          </div>
-        </template>
-
-        <!-- 本剧制作场景 -->
-        <template v-if="activeResTab === 'drama-scene'">
-          <div v-loading="dramaSceneLoading" class="drama-res-list">
-            <template v-if="dramaScenes.length">
-              <div v-for="item in dramaScenes" :key="item.id" class="drama-res-item">
-                <div class="drama-res-cover" @click="openPreview(assetImageUrl(item))">
-                  <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
-                  <span v-else class="library-placeholder">暂无图</span>
-                </div>
-                <div class="drama-res-info">
-                  <div class="drama-res-name">{{ item.location || '未命名' }}</div>
-                  <div class="drama-res-meta" v-if="item.time">
-                    <el-tag size="small" type="info">{{ item.time }}</el-tag>
-                  </div>
-                  <div class="drama-res-desc">{{ (item.description || item.prompt || '').slice(0, 80) }}</div>
-                  <div class="drama-res-actions">
-                    <el-button size="small" @click="openEditDramaScene(item)">编辑</el-button>
-                  </div>
-                </div>
-              </div>
-            </template>
-            <div v-else class="library-empty">本剧暂无制作场景，请前往剧集制作页面创建</div>
-          </div>
-        </template>
-
-        <!-- 本剧制作道具 -->
-        <template v-if="activeResTab === 'drama-prop'">
-          <div v-loading="dramaPropLoading" class="drama-res-list">
-            <template v-if="dramaProps.length">
-              <div v-for="item in dramaProps" :key="item.id" class="drama-res-item">
-                <div class="drama-res-cover" @click="openPreview(assetImageUrl(item))">
-                  <img v-if="item.image_url || item.local_path" :src="assetImageUrl(item)" alt="" />
-                  <span v-else class="library-placeholder">暂无图</span>
-                </div>
-                <div class="drama-res-info">
-                  <div class="drama-res-name">{{ item.name || '未命名' }}</div>
-                  <div class="drama-res-meta" v-if="item.type">
-                    <el-tag size="small" type="info">{{ item.type }}</el-tag>
-                  </div>
-                  <div class="drama-res-desc">{{ (item.description || item.prompt || '').slice(0, 80) }}</div>
-                  <div class="drama-res-actions">
-                    <el-button size="small" @click="openEditDramaProp(item)">编辑</el-button>
-                  </div>
-                </div>
-              </div>
-            </template>
-            <div v-else class="library-empty">本剧暂无制作道具，请前往剧集制作页面创建</div>
-          </div>
-        </template>
-      </section>
+      <DramaResourceSection
+        v-model:active-tab="activeResTab"
+        v-model:char-kw="charKw"
+        v-model:char-page="charPage"
+        v-model:char-page-size="charPageSize"
+        v-model:scene-kw="sceneKw"
+        v-model:scene-page="scenePage"
+        v-model:scene-page-size="scenePageSize"
+        v-model:prop-kw="propKw"
+        v-model:prop-page="propPage"
+        v-model:prop-page-size="propPageSize"
+        :asset-image-url="assetImageUrl"
+        :can-manage-library="canManageLibrary"
+        :char-list="charList"
+        :char-loading="charLoading"
+        :char-total="charTotal"
+        :scene-list="sceneList"
+        :scene-loading="sceneLoading"
+        :scene-total="sceneTotal"
+        :prop-list="propList"
+        :prop-loading="propLoading"
+        :prop-total="propTotal"
+        :drama-characters="dramaCharacters"
+        :drama-scenes="dramaScenes"
+        :drama-props="dramaProps"
+        :drama-char-loading="dramaCharLoading"
+        :drama-scene-loading="dramaSceneLoading"
+        :drama-prop-loading="dramaPropLoading"
+        @char-kw-input="onCharKwInput"
+        @scene-kw-input="onSceneKwInput"
+        @prop-kw-input="onPropKwInput"
+        @load-char-list="loadCharList"
+        @load-scene-list="loadSceneList"
+        @load-prop-list="loadPropList"
+        @open-import="openImport"
+        @preview="openPreview"
+        @edit-char="openEditChar"
+        @delete-char="deleteChar"
+        @edit-scene="openEditScene"
+        @delete-scene="deleteScene"
+        @edit-prop="openEditProp"
+        @delete-prop="deleteProp"
+        @edit-drama-char="openEditDramaChar"
+        @edit-drama-scene="openEditDramaScene"
+        @edit-drama-prop="openEditDramaProp"
+      />
     </main>
-
     <!-- 制作角色 编辑 -->
     <el-dialog v-model="editDramaCharVisible" title="编辑制作角色" width="500px" @close="editDramaCharForm = null">
       <el-form v-if="editDramaCharForm" label-width="80px">
@@ -560,8 +300,7 @@
 import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, VideoPlay, Plus, Delete, Sunny, Moon, PictureFilled } from '@element-plus/icons-vue'
-import EpisodeBatchImportDialog from '@/components/EpisodeBatchImportDialog.vue'
+import { PictureFilled } from '@element-plus/icons-vue'
 import { useTheme } from '@/composables/useTheme'
 import { dramaAPI } from '@/api/drama'
 import { characterLibraryAPI } from '@/api/characterLibrary'
@@ -575,6 +314,10 @@ import { sceneAPI } from '@/api/scenes'
 import { propAPI } from '@/api/props'
 import { stylePromptMetadataForSave, backfillDramaStylePromptMetadataIfNeeded } from '@/constants/styleOptions'
 import { isAdmin } from '@/utils/auth'
+import DramaDetailHeader from '@/features/dramaDetail/components/DramaDetailHeader.vue'
+import DramaEpisodeSection from '@/features/dramaDetail/components/DramaEpisodeSection.vue'
+import DramaInfoSection from '@/features/dramaDetail/components/DramaInfoSection.vue'
+import DramaResourceSection from '@/features/dramaDetail/components/DramaResourceSection.vue'
 
 const route = useRoute()
 const { isDark, toggle: toggleTheme } = useTheme()
@@ -607,7 +350,7 @@ const editDramaSceneSaving  = ref(false)
 const editDramaPropVisible = ref(false)
 const editDramaPropForm    = ref(null)
 const editDramaPropSaving  = ref(false)
-const episodeBatchImportDialogRef = ref(null)
+const episodeSectionRef = ref(null)
 
 // 共享：上传图片到库条目
 async function doUploadLibImg(event, form, api, reloadFn) {
@@ -1262,13 +1005,13 @@ onMounted(() => {
   loadCharList()
   if (route.query.importBatch) {
     setTimeout(() => {
-      episodeBatchImportDialogRef.value?.openDialog?.()
+      episodeSectionRef.value?.openBatchImportDialog?.()
     }, 0)
   }
 })
 </script>
 
-<style scoped>
+<style>
 .drama-detail {
   min-height: 100vh;
   background: #0f0f12;

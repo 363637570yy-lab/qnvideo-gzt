@@ -79,105 +79,28 @@
             :label="activeConfigCategoryLabel"
             @save="saveRoutingPolicy"
           />
-          <el-table
-            v-loading="loading"
-            :data="filteredConfigs"
-            stripe
-            style="width: 100%"
+          <AiConfigModelTable
+            :loading="loading"
+            :configs="filteredConfigs"
+            :vendor-lock="vendorLock"
+            :can-move-config="canMoveConfig"
+            :protocol-label="protocolLabel"
+            :quota-units-for-row="quotaUnitsForRow"
+            :format-quota-number="formatQuotaNumber"
+            :quota-used-value="quotaUsedValue"
+            :quota-limit-summary="quotaLimitSummary"
+            :service-type-label="serviceTypeLabel"
+            :health-status-tooltip="healthStatusTooltip"
+            :health-status-tag-type="healthStatusTagType"
+            :health-status-label="healthStatusLabel"
             @selection-change="onSelectionChange"
-          >
-            <el-table-column v-if="!vendorLock.enabled" type="selection" width="46" />
-            <el-table-column v-if="!vendorLock.enabled" label="优先级" width="152">
-              <template #default="{ row, $index }">
-                <div class="order-actions">
-                  <el-button link size="small" :disabled="!canMoveConfig(row, 'top')" @click="moveConfig(row, 'top')">置顶</el-button>
-                  <el-button link size="small" :disabled="!canMoveConfig(row, 'up')" @click="moveConfig(row, 'up')">上移</el-button>
-                  <el-button link size="small" :disabled="!canMoveConfig(row, 'down')" @click="moveConfig(row, 'down')">下移</el-button>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column prop="name" label="名称" min-width="130" />
-            <el-table-column prop="provider" label="提供商" width="96" />
-            <el-table-column prop="api_protocol" label="接口规范" min-width="128" show-overflow-tooltip>
-              <template #default="{ row }">{{ protocolLabel(row.api_protocol) }}</template>
-            </el-table-column>
-            <el-table-column prop="base_url" label="Base URL" min-width="170" show-overflow-tooltip />
-            <el-table-column prop="default_model" label="默认模型" min-width="130" show-overflow-tooltip>
-              <template #default="{ row }">
-                {{ row.default_model || (Array.isArray(row.model) && row.model[0]) || '—' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="能力" min-width="178">
-              <template #default="{ row }">
-                <AiCapabilityTags :capabilities="row.capabilities || []" :limit="4" />
-              </template>
-            </el-table-column>
-            <el-table-column label="今日用量" min-width="154">
-              <template #default="{ row }">
-                <div v-if="quotaUnitsForRow(row).length" class="quota-lines">
-                  <span v-for="unit in quotaUnitsForRow(row)" :key="unit.unit" class="quota-line">
-                    {{ unit.short }} {{ formatQuotaNumber(quotaUsedValue(row, unit.unit)) }}
-                  </span>
-                </div>
-                <span v-else class="no-default">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="每日限额" min-width="168">
-              <template #default="{ row }">
-                <div v-if="quotaUnitsForRow(row).length" class="quota-limit-cell">
-                  <span class="quota-limit-summary">{{ quotaLimitSummary(row) }}</span>
-                  <el-button link type="primary" size="small" @click="openQuotaDialog(row)">设置</el-button>
-                </div>
-                <span v-else class="no-default">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="service_type" label="类型" width="148">
-              <template #default="{ row }">
-                <span :class="['type-badge', 'type-' + row.service_type]">
-                  <el-icon class="type-icon">
-                    <ChatDotRound v-if="row.service_type === 'text'" />
-                    <Picture v-else-if="row.service_type === 'image'" />
-                    <VideoCamera v-else-if="row.service_type === 'video'" />
-                    <Microphone v-else-if="row.service_type === 'tts'" />
-                    <Key v-else-if="row.service_type === 'jimeng2_character_auth'" />
-                  </el-icon>
-                  {{ serviceTypeLabel(row.service_type) }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="health_status" label="状态" width="92">
-              <template #default="{ row }">
-                <el-tooltip
-                  :disabled="!row.last_error && !row.disabled_until"
-                  placement="top"
-                  :content="healthStatusTooltip(row)"
-                >
-                  <el-tag :type="healthStatusTagType(row)" size="small">
-                    {{ healthStatusLabel(row) }}
-                  </el-tag>
-                </el-tooltip>
-              </template>
-            </el-table-column>
-            <el-table-column prop="is_active" label="启用" width="78">
-              <template #default="{ row }">
-                <el-switch
-                  v-if="!vendorLock.enabled"
-                  :model-value="!!row.is_active"
-                  size="small"
-                  @change="(val) => toggleConfigActive(row, val)"
-                />
-                <el-tag v-else-if="row.is_active" type="success" size="small">启用</el-tag>
-                <el-tag v-else type="info" size="small">停用</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="180" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="openTest(row)">测试</el-button>
-                <el-button link type="primary" size="small" @click="openEdit(row)">{{ vendorLock.enabled ? '修改Key' : '编辑' }}</el-button>
-                <el-button v-if="!vendorLock.enabled" link type="danger" size="small" @click="onDelete(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+            @move-config="moveConfig"
+            @open-quota="openQuotaDialog"
+            @toggle-active="toggleConfigActive"
+            @test="openTest"
+            @edit="openEdit"
+            @delete="onDelete"
+          />
         </div>
       </el-tab-pane>
       <el-tab-pane label="高级设置（提示词）" name="prompts">
@@ -957,135 +880,58 @@ input_reference = (图片文件，可选)</pre>
       </template>
     </el-dialog>
 
-    <!-- 测试连接 -->
-    <el-dialog v-model="testVisible" title="测试连接" width="420px">
-      <p v-if="testResult === null">正在测试…</p>
-      <template v-else-if="testResult">
-        <el-alert
-          v-if="testServiceType === 'image' || testServiceType === 'video'"
-          type="success"
-          title="连接成功"
-          description="API Key 有效，网络已连通。提示：测试仅验证 Key 合法性，不实际生成图片/视频，模型名填错、账号未开通该功能或配额不足时实际生成仍可能报错。"
-          show-icon
-          :closable="false"
-        />
-        <el-alert
-          v-else
-          type="success"
-          title="连接成功"
-          description="文本生成接口已正常响应。"
-          show-icon
-          :closable="false"
-        />
-      </template>
-      <el-alert v-else type="error" :title="testError || '连接失败'" show-icon :closable="false" />
-      <template #footer>
-        <el-button @click="testVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    <AiConfigTestDialog
+      v-model:visible="testVisible"
+      :test-result="testResult"
+      :test-service-type="testServiceType"
+      :test-error="testError"
+    />
 
-    <!-- 一键换Key（锁定模式） -->
-    <el-dialog v-model="bulkKeyVisible" title="一键换Key" width="440px" :close-on-click-modal="false">
-      <el-alert
-        type="warning"
-        :closable="false"
-        style="margin-bottom: 16px"
-        title="此操作将替换所有配置的 API Key，请确认新 Key 可用后再提交。"
-        show-icon
-      />
-      <el-form label-width="80px">
-        <el-form-item label="新 API Key">
-          <el-input
-            v-model="bulkKeyInput"
-            type="password"
-            show-password
-            placeholder="粘贴新的 API Key"
-            clearable
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="bulkKeyVisible = false">取消</el-button>
-        <el-button type="primary" :loading="bulkKeySaving" :disabled="!bulkKeyInput.trim()" @click="submitBulkKey">确认替换</el-button>
-      </template>
-    </el-dialog>
+    <AiConfigBulkKeyDialog
+      v-model:visible="bulkKeyVisible"
+      v-model:input="bulkKeyInput"
+      :saving="bulkKeySaving"
+      @submit="submitBulkKey"
+    />
 
-    <el-dialog
-      v-model="quotaDialogVisible"
-      title="每日限额设置"
-      width="560px"
-      :close-on-click-modal="false"
-    >
-      <template v-if="quotaTargetRow">
-        <el-alert
-          type="info"
-          :closable="false"
-          class="quota-dialog-tip"
-          title="默认 0 表示不限制。这里的限额只作用于当前 API 配置；选择具体模型后，可细分到该配置内的单个模型。"
-        />
-        <el-form label-width="120px" class="quota-form">
-          <el-form-item label="配置">
-            <span>{{ quotaTargetRow.name || ('配置 #' + quotaTargetRow.id) }}</span>
-          </el-form-item>
-          <el-form-item label="限额对象">
-            <el-select v-model="quotaForm.model" style="width: 100%" @change="hydrateQuotaForm">
-              <el-option label="整条配置（所有模型）" value="" />
-              <el-option
-                v-for="model in quotaTargetModels"
-                :key="model"
-                :label="model"
-                :value="model"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item
-            v-for="unit in quotaUnitsForRow(quotaTargetRow)"
-            :key="unit.unit"
-            :label="'每日' + unit.label"
-          >
-            <div class="quota-input-row">
-              <el-input-number
-                v-model="quotaForm.limits[unit.unit]"
-                :min="0"
-                :step="unit.step || 1"
-                controls-position="right"
-              />
-              <span class="quota-used-hint">
-                今日已用 {{ formatQuotaNumber(quotaUsedValue(quotaTargetRow, unit.unit, quotaForm.model)) }} {{ unit.suffix }}
-              </span>
-            </div>
-          </el-form-item>
-          <el-form-item label="超额动作">
-            <el-select v-model="quotaForm.action_on_exceed" style="width: 260px">
-              <el-option
-                v-for="action in quotaActionOptions"
-                :key="action.value"
-                :label="action.label"
-                :value="action.value"
-              />
-            </el-select>
-          </el-form-item>
-        </el-form>
-      </template>
-      <template #footer>
-        <el-button @click="quotaDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="quotaSaving" @click="saveQuotaLimits">保存</el-button>
-      </template>
-    </el-dialog>
+    <AiConfigQuotaDialog
+      v-model:visible="quotaDialogVisible"
+      :target-row="quotaTargetRow"
+      :target-models="quotaTargetModels"
+      :quota-form="quotaForm"
+      :action-options="quotaActionOptions"
+      :saving="quotaSaving"
+      :quota-units-for-row="quotaUnitsForRow"
+      :format-quota-number="formatQuotaNumber"
+      :quota-used-value="quotaUsedValue"
+      @hydrate="hydrateQuotaForm"
+      @save="saveQuotaLimits"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, ChatDotRound, Picture, VideoCamera, Key, Microphone } from '@element-plus/icons-vue'
+import { Plus, MagicStick, QuestionFilled, Download, Upload, Delete, Key } from '@element-plus/icons-vue'
 import { aiAPI } from '@/api/ai'
 import PromptEditor from '@/components/PromptEditor.vue'
 import SceneModelMap from '@/components/SceneModelMap.vue'
+import AiConfigBulkKeyDialog from '@/components/aiConfig/AiConfigBulkKeyDialog.vue'
 import AiRoutingPolicyCard from '@/components/aiConfig/AiRoutingPolicyCard.vue'
-import AiCapabilityTags from '@/components/aiConfig/AiCapabilityTags.vue'
+import AiConfigModelTable from '@/components/aiConfig/AiConfigModelTable.vue'
+import AiConfigQuotaDialog from '@/components/aiConfig/AiConfigQuotaDialog.vue'
+import AiConfigTestDialog from '@/components/aiConfig/AiConfigTestDialog.vue'
 import ModelRuntimePanel from '@/components/aiConfig/ModelRuntimePanel.vue'
 import Sd2AssetManagement from '@/components/Sd2AssetManagement.vue'
+import {
+  CUSTOM_PROVIDER_SENTINEL,
+  TONGYI_CONFIGS,
+  VOLCENGINE_CONFIGS,
+  getBaseUrlForProvider,
+  providerConfigs,
+  providerProtocolMap,
+} from '@/components/aiConfig/aiConfigPresets'
 
 const activeTab = ref('configs')
 const activeConfigCategory = ref('text')
@@ -1521,116 +1367,6 @@ const oneKeyVolcVisible = ref(false)
 const oneKeyVolcKey = ref('')
 const oneKeyVolcSaving = ref(false)
 
-/** 预设厂商与模型（与参考前端一致） */
-const providerConfigs = {
-  text: [
-    { id: 'openai', name: 'OpenAI', models: ['gpt-4o', 'gpt-4', 'gpt-3.5-turbo'] },
-    { id: 'volcengine', name: '火山引擎', models: ['deepseek-v3-2-251201', 'doubao-1-5-pro-32k-250115', 'kimi-k2-thinking-251104'] },
-    // { id: 'chatfire', name: 'Chatfire', models: ['gemini-3-flash-preview', 'claude-sonnet-4-5-20250929', 'doubao-seed-1-8-251228'] },
-    { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.5-pro', 'gemini-3-flash-preview'] },
-    { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
-    { id: 'qwen', name: '通义千问', models: ['qwen3-max', 'qwen-plus', 'qwen-flash'] }
-  ],
-  image: [
-    { id: 'volcengine', name: '火山引擎', models: ['doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'] },
-    { id: 'kling', name: '可灵 Kling', models: ['kling-image', 'kling-omni-image'] },
-    { id: 'nano_banana', name: 'NanoBanana', models: ['nano-banana-2', 'nano-banana-pro', 'nano-banana'] },
-    // { id: 'chatfire', name: 'Chatfire', models: ['nano-banana-pro', 'doubao-seedream-4-5-251128', 'qwen-image'] },
-    { id: 'gemini', name: 'Google Gemini', models: ['gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'] },
-    { id: 'cliproxy', name: 'CLIProxyAPI', models: ['gpt-image-2'] },
-    { id: 'openai', name: 'OpenAI', models: ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1'] },
-    { id: 'dashscope', name: '通义万象', models: ['wan2.6-image', 'qwen-image-edit-plus-2026-01-09', 'qwen-image-edit-plus', 'qwen-image-edit-max'] },
-    { id: 'qwen_image', name: '通义千问', models: ['qwen-image-max', 'qwen-image-plus', 'qwen-image'] }
-  ],
-  video: [
-    { id: 'klingai', name: '可灵官方 Omni (api-beijing.klingai.com)', models: ['kling-video-o1', 'kling-v3-omni'] },
-    { id: 'ffir', name: '飞儿API / 可灵 Omni-Video (ffir.cn)', models: ['kling-video-o1', 'kling-v3-omni'] },
-    { id: 'kling', name: '可灵 Kling', models: ['kling-omni-video', 'kling-video', 'kling-motion-control'] },
-    { id: 'vidu', name: 'Vidu', models: ['viduq2', 'viduq2-pro', 'viduq2-turbo', 'viduq3-pro'] },
-    { id: 'volces', name: '火山引擎', models: ['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128', 'doubao-seedance-1-5-pro-251215', 'doubao-seedance-1-0-lite-i2v-250428', 'doubao-seedance-1-0-lite-t2v-250428', 'doubao-seedance-1-0-pro-250528', 'doubao-seedance-1-0-pro-fast-251015'] },
-    // { id: 'chatfire', name: 'Chatfire', models: ['doubao-seedance-1-5-pro-251215', 'doubao-seedance-1-0-lite-i2v-250428', 'doubao-seedance-1-0-lite-t2v-250428', 'doubao-seedance-1-0-pro-250528', 'doubao-seedance-1-0-pro-fast-251015', 'sora-2', 'sora-2-pro'] },
-    { id: 'minimax', name: 'MiniMax 海螺', models: ['MiniMax-Hailuo-2.3', 'MiniMax-Hailuo-2.3-Fast', 'MiniMax-Hailuo-02'] },
-    { id: 'gemini', name: 'Google Gemini (Veo)', models: ['veo-3.1-generate-preview', 'veo-3.0-generate-preview', 'veo-3.0-fast-generate-preview'] },
-    { id: 'dashscope', name: '通义万相', models: ['wan2.6-r2v-flash', 'wan2.6-t2v', 'wan2.2-kf2v-flash', 'wan2.6-i2v-flash', 'wanx2.1-vace-plus'] },
-    {
-      id: 'jimeng_ai_api',
-      name: 'Jimeng AI API（自建即梦免费 API）',
-      models: [
-        'jimeng-video-seedance-2.0',
-        'seedance-2.0',
-        'jimeng-video-seedance-2.0-fast',
-        'jimeng-video-3.0',
-        'jimeng-video-3.0-pro',
-        'jimeng-video-3.5-pro',
-      ],
-    },
-    { id: 'openai', name: 'OpenAI', models: ['sora-2', 'sora-2-pro'] },
-    { id: 'xai', name: 'xAI Grok Imagine', models: ['grok-imagine-video'] },
-  ],
-  tts: [
-    { id: 'minimax', name: 'MiniMax T2A', models: ['speech-02-hd', 'speech-02-turbo'] },
-  ],
-  jimeng2_character_auth: [
-    { id: 'jimeng_material_api', name: '即梦业务素材 API（/api/business/v1）', models: ['-'] },
-  ],
-}
-
-/** 厂商 id → 默认接口规范（api_protocol） */
-const providerProtocolMap = {
-  // image
-  volcengine: 'volcengine',
-  volces: 'volcengine',
-  volc: 'volcengine',
-  nano_banana: 'nano_banana',
-  cliproxy: 'cliproxy_gpt_image2',
-  cliproxyapi: 'cliproxy_gpt_image2',
-  cli_proxy_api: 'cliproxy_gpt_image2',
-  dashscope: 'dashscope',
-  qwen_image: 'dashscope',
-  gemini: 'gemini',
-  google: 'gemini',
-  kling: 'kling',
-  ffir: 'kling_omni',
-  klingai: 'kling_omni',
-  // video
-  vidu: 'vidu',
-  xai: 'xai',
-  grok: 'xai',
-  minimax: 'openai',
-  openai: 'openai',
-  chatfire: 'openai',
-  qwen: 'openai',
-  deepseek: 'openai',
-  jimeng_ai_api: 'jimeng_ai_api',
-  jimeng_material_api: '',
-}
-
-/** 厂商 id → 默认 Base URL（与参考前端 AIConfigDialog 757-775 一致） */
-function getBaseUrlForProvider(provider) {
-  if (!provider) return ''
-  const p = String(provider).toLowerCase()
-  if (p === 'gemini' || p === 'google') return 'https://generativelanguage.googleapis.com'
-  if (p === 'minimax') return 'https://api.minimaxi.com/v1'
-  if (p === 'volces' || p === 'volcengine') return 'https://ark.cn-beijing.volces.com/api/v3'
-  if (p === 'openai') return 'https://api.openai.com/v1'
-  if (p === 'cliproxy' || p === 'cliproxyapi' || p === 'cli_proxy_api') return ''
-  if (p === 'deepseek') return 'https://api.deepseek.com'
-  if (p === 'dashscope') return 'https://dashscope.aliyuncs.com'
-  if (p === 'qwen_image') return 'https://dashscope.aliyuncs.com'
-  if (p === 'qwen') return 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-  if (p === 'nano_banana') return 'https://api.nanobananaapi.ai'
-  if (p === 'vidu') return 'https://api.vidu.cn'
-  if (p === 'kling') return 'https://api.klingai.com'
-  if (p === 'klingai') return 'https://api-beijing.klingai.com'
-  if (p === 'ffir') return 'https://ffir.cn'
-  if (p === 'jimeng_ai_api') return 'http://127.0.0.1:8000'
-  if (p === 'jimeng_material_api') return 'https://silvamux.tingyutech.com'
-  if (p === 'xai' || p === 'grok') return 'https://api.x.ai'
-  return 'https://api.chatfire.site/v1'
-}
-
-const CUSTOM_PROVIDER_SENTINEL = '__custom__'
-
 function parseSettings(settings) {
   if (!settings) return {}
   if (typeof settings === 'object') return settings
@@ -1872,21 +1608,6 @@ function onProviderChange(providerId) {
     form.value.name = (p.name || providerId) + ' ' + serviceTypeLabel(st)
   }
 }
-
-/** 通义一键配置用 */
-const TONGYI_CONFIGS = [
-  { service_type: 'text', name: '通义千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', provider: 'qwen', model: ['qwen-plus'] },
-  { service_type: 'image', name: '通义万象 图像', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.6-image'] },
-  { service_type: 'image', name: '通义千问 文本生图', base_url: 'https://dashscope.aliyuncs.com', provider: 'qwen_image', model: ['qwen-image-max', 'qwen-image-plus', 'qwen-image'] },
-  { service_type: 'video', name: '通义万相', base_url: 'https://dashscope.aliyuncs.com', provider: 'dashscope', model: ['wan2.2-kf2v-flash'] }
-]
-
-/** 火山引擎一键配置用 */
-const VOLCENGINE_CONFIGS = [
-  { service_type: 'text', name: '火山引擎 文本', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volcengine', model: ['deepseek-v3-2-251201', 'doubao-1-5-pro-32k-250115', 'kimi-k2-thinking-251104'] },
-  { service_type: 'image', name: '火山引擎 即梦 图像', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volcengine', model: ['doubao-seedream-4-5-251128'] },
-  { service_type: 'video', name: '火山引擎 即梦 视频', base_url: 'https://ark.cn-beijing.volces.com/api/v3', provider: 'volces', model: ['doubao-seedance-1-5-pro-251215'] }
-]
 
 function serviceTypeLabel(t) {
   const map = {

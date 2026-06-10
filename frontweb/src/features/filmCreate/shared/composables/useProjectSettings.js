@@ -36,6 +36,7 @@ export function useProjectSettings(options = {}) {
   const projectSettingsHydrating = ref(false)
   const projectSettingsSaveTimer = ref(null)
   const pendingProjectStyleSave = ref(false)
+  const pendingProjectSettingsSaveNotify = ref(false)
   const projectSettingsSaveSuppressedUntil = ref(0)
 
   const scriptLanguage = ref('zh')
@@ -48,15 +49,18 @@ export function useProjectSettings(options = {}) {
   const projectVideoSpec = ref(defaultVideoSpec())
   const imageSpecDraft = ref(defaultImageSpec())
 
-  function scheduleProjectSettingsSave(includeGenerationStyle = false) {
+  function scheduleProjectSettingsSave(includeGenerationStyle = false, options = {}) {
     if (projectSettingsHydrating.value || Date.now() < projectSettingsSaveSuppressedUntil.value || !store?.dramaId) return
     pendingProjectStyleSave.value = pendingProjectStyleSave.value || !!includeGenerationStyle
+    pendingProjectSettingsSaveNotify.value = pendingProjectSettingsSaveNotify.value || options.notify !== false
     if (projectSettingsSaveTimer.value) clearTimeout(projectSettingsSaveTimer.value)
     projectSettingsSaveTimer.value = setTimeout(() => {
       projectSettingsSaveTimer.value = null
       const shouldSaveStyle = pendingProjectStyleSave.value
+      const shouldNotify = pendingProjectSettingsSaveNotify.value
       pendingProjectStyleSave.value = false
-      saveProjectSettings?.(shouldSaveStyle)
+      pendingProjectSettingsSaveNotify.value = false
+      saveProjectSettings?.(shouldSaveStyle, { notify: shouldNotify })
     }, PROJECT_SETTINGS_SAVE_DELAY_MS)
   }
 
@@ -66,6 +70,7 @@ export function useProjectSettings(options = {}) {
       projectSettingsSaveTimer.value = null
     }
     pendingProjectStyleSave.value = false
+    pendingProjectSettingsSaveNotify.value = false
   }
 
   function setProjectSettingsHydrating(value) {
@@ -219,6 +224,7 @@ export function useProjectSettings(options = {}) {
     openImageSpecDialog,
     parseRatioValue,
     pendingProjectStyleSave,
+    pendingProjectSettingsSaveNotify,
     projectAspectRatio,
     projectImageSpec,
     projectMediaSpecMetadata,
