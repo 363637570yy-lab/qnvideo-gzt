@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { aiAPI } from '@/api/ai'
 
 export const AI_ROUTE_METADATA_KEY = 'ai_route_config_ids'
@@ -63,41 +63,6 @@ export function useAiRouteSelection(options = {}) {
     const status = cfg?.health_status && cfg.health_status !== 'ok' ? ` · ${cfg.health_status}` : ''
     return `${name}${model ? ' · ' + model : ''}${status}`
   }
-
-  const aiRouteSummary = computed(() => {
-    const selected = aiRouteTypes.filter(({ key }) => selectedAiConfigIds[key]).length
-    return selected > 0 ? `${selected}项指定` : '自动'
-  })
-
-  function routePrimaryConfig(type) {
-    const selectedId = normalizeAiRouteId(selectedAiConfigIds[type])
-    if (selectedId) {
-      return (runtimeAiConfigs[type] || []).find((cfg) => String(cfg.id) === selectedId) || null
-    }
-    return (runtimeAiConfigs[type] || [])[0] || null
-  }
-
-  const pipelineModelStrategyItems = computed(() => {
-    return pipelineModelStrategyTypes.map(({ key, label }) => {
-      const selectedId = normalizeAiRouteId(selectedAiConfigIds[key])
-      const cfg = routePrimaryConfig(key)
-      const model = cfg?.default_model || (Array.isArray(cfg?.model) ? cfg.model[0] : '')
-      const name = cfg?.name || cfg?.provider || ''
-      const strategy = selectedId ? '指定' : '自动'
-      const summary = cfg ? `${strategy} · ${name || model || '未命名'}` : '未配置'
-      const tooltip = cfg
-        ? `${label} ${strategy}使用：${configOptionLabel(cfg)}`
-        : `${label} 暂无可用配置`
-      return {
-        key,
-        label,
-        summary,
-        tooltip,
-        specified: !!selectedId,
-        empty: !cfg,
-      }
-    })
-  })
 
   function aiRoutePayload(type, field = 'ai_config_id') {
     const id = Number(selectedAiConfigIds[type])
@@ -188,9 +153,6 @@ export function useAiRouteSelection(options = {}) {
     projectAiRouteSelectionForSave,
     applyProjectAiRouteSelection,
     configOptionLabel,
-    aiRouteSummary,
-    routePrimaryConfig,
-    pipelineModelStrategyItems,
     aiRoutePayload,
     textAiPayload,
     imageAiPayload,

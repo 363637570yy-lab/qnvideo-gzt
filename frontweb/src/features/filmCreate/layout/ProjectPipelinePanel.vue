@@ -1,53 +1,50 @@
 <template>
   <section class="section card pipeline-section">
     <div class="project-settings-block">
-      <div class="settings-block-title-wrap">
-        <span class="settings-block-title">项目整体设置</span>
-        <span class="settings-save-hint">修改已实时保存，再次生成素材、分镜或视频时将按当前设置生效。</span>
-      </div>
-      <label class="project-setting-field">
-        <span>项目画幅</span>
-        <el-select v-model="ctx.projectAspectRatio" style="width: 130px" @change="() => ctx.scheduleProjectSettingsSave(false)">
-          <el-option label="16:9 横屏" value="16:9" />
-          <el-option label="9:16 竖屏" value="9:16" />
-          <el-option label="3:4 竖版" value="3:4" />
-          <el-option label="1:1 方形" value="1:1" />
-          <el-option label="4:3" value="4:3" />
-          <el-option label="21:9 宽银幕" value="21:9" />
-        </el-select>
-      </label>
-      <label class="project-setting-field">
-        <span>图像规格</span>
-        <el-button class="media-spec-button" @click="ctx.openImageSpecDialog">
-          {{ ctx.imageSpecSummary }}
-        </el-button>
-      </label>
-      <label class="project-setting-field">
-        <span>视频清晰度</span>
-        <el-select v-model="ctx.projectVideoResolution" style="width: 120px" @change="ctx.onProjectVideoResolutionChange">
-          <el-option
-            v-for="tier in ctx.videoTierOptions"
-            :key="tier.value"
-            :label="tier.label"
-            :value="tier.value"
-          />
-        </el-select>
-      </label>
-      <label class="project-setting-field">
-        <span>默认每段时长</span>
-        <el-select v-model="ctx.videoClipDuration" style="width: 110px" @change="() => ctx.scheduleProjectSettingsSave(false)">
-          <el-option label="4秒/段" :value="4" />
-          <el-option label="5秒/段" :value="5" />
-          <el-option label="8秒/段" :value="8" />
-          <el-option label="10秒/段" :value="10" />
-          <el-option label="12秒/段" :value="12" />
-          <el-option label="15秒/段" :value="15" />
-        </el-select>
-      </label>
-      <div class="project-setting-inline-group">
+      <div class="settings-block-title">项目整体设置</div>
+      <div class="project-settings-list">
+        <label class="project-setting-field">
+          <span>项目画幅</span>
+          <el-select v-model="ctx.projectAspectRatio" @change="() => ctx.scheduleProjectSettingsSave(false)">
+            <el-option label="16:9 横屏" value="16:9" />
+            <el-option label="9:16 竖屏" value="9:16" />
+            <el-option label="3:4 竖版" value="3:4" />
+            <el-option label="1:1 方形" value="1:1" />
+            <el-option label="4:3" value="4:3" />
+            <el-option label="21:9 宽银幕" value="21:9" />
+          </el-select>
+        </label>
+        <label class="project-setting-field">
+          <span>图像规格</span>
+          <el-button class="media-spec-button" @click="ctx.openImageSpecDialog">
+            {{ ctx.imageSpecSummary }}
+          </el-button>
+        </label>
+        <label class="project-setting-field">
+          <span>视频清晰度</span>
+          <el-select v-model="ctx.projectVideoResolution" @change="ctx.onProjectVideoResolutionChange">
+            <el-option
+              v-for="tier in ctx.videoTierOptions"
+              :key="tier.value"
+              :label="tier.label"
+              :value="tier.value"
+            />
+          </el-select>
+        </label>
+        <label class="project-setting-field">
+          <span>默认每段时长</span>
+          <el-select v-model="ctx.videoClipDuration" @change="() => ctx.scheduleProjectSettingsSave(false)">
+            <el-option label="4秒/段" :value="4" />
+            <el-option label="5秒/段" :value="5" />
+            <el-option label="8秒/段" :value="8" />
+            <el-option label="10秒/段" :value="10" />
+            <el-option label="12秒/段" :value="12" />
+            <el-option label="15秒/段" :value="15" />
+          </el-select>
+        </label>
         <label class="project-setting-field">
           <span>默认语言</span>
-          <el-select v-model="ctx.scriptLanguage" placeholder="默认语言" style="width: 105px" @change="() => ctx.scheduleProjectSettingsSave(false)">
+          <el-select v-model="ctx.scriptLanguage" placeholder="默认语言" @change="() => ctx.scheduleProjectSettingsSave(false)">
             <el-option label="中文" value="zh" />
             <el-option label="英文" value="en" />
           </el-select>
@@ -87,19 +84,30 @@
     </div>
     <div class="pipeline-model-strategy" v-loading="ctx.aiRouteLoading">
       <span class="pipeline-model-strategy-title">本次生成模型</span>
-      <el-tooltip
-        v-for="item in ctx.pipelineModelStrategyItems"
+      <label
+        v-for="item in ctx.pipelineModelStrategyTypes"
         :key="item.key"
-        :content="item.tooltip"
-        placement="top"
+        class="pipeline-model-field"
       >
-        <span class="pipeline-model-chip" :class="{ specified: item.specified, empty: item.empty }">
-          <span class="pipeline-model-chip-label">{{ item.label }}</span>
-          <strong>{{ item.summary }}</strong>
-        </span>
-      </el-tooltip>
+        <span>{{ item.label }}</span>
+        <el-select
+          v-model="ctx.selectedAiConfigIds[item.key]"
+          clearable
+          filterable
+          placeholder="自动"
+          @visible-change="onModelSelectVisible"
+          @change="onModelSelectionChange"
+        >
+          <el-option label="自动（按全局策略）" value="" />
+          <el-option
+            v-for="cfg in modelOptions(item.key)"
+            :key="cfg.id"
+            :label="ctx.configOptionLabel(cfg)"
+            :value="String(cfg.id)"
+          />
+        </el-select>
+      </label>
       <el-button size="small" text @click="ctx.loadRuntimeAiConfigs(true)">刷新</el-button>
-      <el-button v-if="ctx.isAdminUser" size="small" text @click="ctx.showAiConfigDialog = true">配置</el-button>
     </div>
     <div v-if="ctx.pipelineRunning || ctx.pipelineErrorLog.length > 0" class="pipeline-status">
       <div v-if="ctx.pipelineCurrentStep" class="pipeline-current-step">
@@ -140,9 +148,24 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import StylePickerButton from '@/components/StylePickerButton.vue'
 
-defineProps({
+const props = defineProps({
   ctx: { type: Object, required: true }
 })
+
+const ctx = computed(() => props.ctx)
+
+function modelOptions(type) {
+  return props.ctx.runtimeAiConfigs?.[type] || []
+}
+
+function onModelSelectVisible(visible) {
+  props.ctx.onAiRouteSelectVisible?.(visible)
+}
+
+function onModelSelectionChange() {
+  props.ctx.scheduleProjectSettingsSave?.(false)
+}
 </script>

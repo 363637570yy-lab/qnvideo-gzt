@@ -275,14 +275,14 @@ const {
   aiRoutesLoaded,
   aiRouteTypes,
   pipelineModelStrategyTypes,
+  runtimeAiConfigs,
   runtimeRoutingPolicies,
   selectedAiConfigIds,
   normalizeAiRouteId,
   normalizeRuntimeConcurrency,
   projectAiRouteSelectionForSave,
   applyProjectAiRouteSelection,
-  routePrimaryConfig,
-  pipelineModelStrategyItems,
+  configOptionLabel,
   aiRoutePayload,
   textAiPayload,
   imageAiPayload,
@@ -290,6 +290,7 @@ const {
   videoAiPayload,
   ttsAiPayload,
   loadRuntimeAiConfigs,
+  onAiRouteSelectVisible,
 } = useAiRouteSelection({ pipelineConcurrency, pipelineVideoConcurrency, setPipelineConcurrencyFallback })
 const {
   DEFAULT_GENERATION_STYLE,
@@ -1550,7 +1551,18 @@ async function saveProjectSettings(includeGenerationStyle = false) {
   if (includeGenerationStyle) {
     payload.style = generationStyle.value || undefined
   }
-  dramaAPI.saveOutline(store.dramaId, payload).catch(e => console.error('Settings auto-save failed', e))
+  try {
+    await dramaAPI.saveOutline(store.dramaId, payload)
+    ElMessage({
+      type: 'success',
+      message: '修改已实时保存，再次生成素材、分镜或视频时将按当前设置生效。',
+      duration: 2600,
+      showClose: true,
+    })
+  } catch (e) {
+    console.error('Settings auto-save failed', e)
+    ElMessage.error(e?.message || '项目设置保存失败')
+  }
 }
 
 onBeforeUnmount(() => {
@@ -1673,6 +1685,7 @@ const filmCreateCtx = proxyRefs({
   collectSbVideoReferenceItems,
   compactKeyframeText,
   computed,
+  configOptionLabel,
   confirmAdminProjectOperation,
   confirmImageSpec,
   confirmUniversalNonSeedance2Video,
@@ -2054,6 +2067,7 @@ const filmCreateCtx = proxyRefs({
   openFramePromptEditor,
   openImagePreview,
   openImageSpecDialog,
+  onAiRouteSelectVisible,
   openSelectScriptDialog,
   parseExtraImages,
   parseImageParamsJson,
@@ -2068,7 +2082,6 @@ const filmCreateCtx = proxyRefs({
   pipelineCountdownMsg,
   pipelineCurrentStep,
   pipelineErrorLog,
-  pipelineModelStrategyItems,
   pipelineModelStrategyTypes,
   pipelinePaused,
   pipelineRest,
@@ -2142,12 +2155,12 @@ const filmCreateCtx = proxyRefs({
   restoreSelectionsFromBackend,
   roundToMultiple,
   route,
-  routePrimaryConfig,
   router,
   runConcurrently,
   runOneClickPipeline,
   runPipelineCountdown,
   runRepairPipeline,
+  runtimeAiConfigs,
   runtimeRoutingPolicies,
   saveCharRefImageIfAny,
   savedCurrentEpisodeNumber,
@@ -2240,6 +2253,7 @@ const filmCreateCtx = proxyRefs({
   sd2VoiceUploadingId,
   selectableScriptDramas,
   selectedEpisodeId,
+  selectedAiConfigIds,
   selectedWorkflowPreset,
   selectedWorkflowPresetIds,
   selectedWorkflowPresetName,
